@@ -10,6 +10,7 @@ Le site est 100 % statique (dossier `public/`) : les comptes et le classement so
 3. Dans **Project Settings → API**, copie l’URL du projet et la clé `anon` (publishable) dans `public/js/config.js`.
 4. En local : `npm start`, puis ouvre http://localhost:3000.
 5. En ligne : `npm run deploy` publie `public/` sur https://saloon-roulette.surge.sh.
+6. Aperçu des liens partagés (Messenger, Discord, WhatsApp…) : balises `og:` de `public/index.html` et image `public/icons/og-image.png` (1200×630).
 
 ## Jouer
 

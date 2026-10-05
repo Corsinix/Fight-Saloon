@@ -15,6 +15,7 @@ import { MineGame } from './minegame.js';
 import { CourseGame } from './coursegame.js';
 import { RtsGame } from './rtsgame.js';
 import { MODES, MAX_PLAYERS } from './worlds.js';
+import { CHAR_PARTS, CHAR_COLORS } from './data.js';
 
 const RECONNECT_GRACE = 45000;
 const HOST_GRACE = 8000;
@@ -33,18 +34,19 @@ const validUsername = (name) => typeof name === 'string' && /^[A-Za-z0-9_\-éè�
 function defaultCharacter() {
   return {
     skin: 1, hat: 'cowboy', hatColor: 1, hair: 'short', hairColor: 1,
-    eyes: 'squint', nose: 'small', mouth: 'neutral', beard: 'stubble',
-    outfit: 'poncho', outfitColor: 2,
+    eyes: 'squint', eyeColor: 0, nose: 'small', mouth: 'neutral', beard: 'stubble',
+    outfit: 'poncho', outfitColor: 2, extra: 'none',
   };
 }
 
+// Chaque partie et couleur est validée d'après les listes de l'éditeur (data.js) : une option ajoutée là-bas est acceptée d'office.
 function sanitizeCharacter(c) {
   const out = defaultCharacter();
   if (!c || typeof c !== 'object') return out;
-  for (const k of Object.keys(out)) {
-    const v = c[k];
-    if (typeof out[k] === 'number' && Number.isInteger(v) && v >= 0 && v < 32) out[k] = v;
-    if (typeof out[k] === 'string' && typeof v === 'string' && /^[a-z]{1,16}$/.test(v)) out[k] = v;
+  for (const p of CHAR_PARTS) if (p.options.some(([id]) => id === c[p.key])) out[p.key] = c[p.key];
+  for (const p of CHAR_COLORS) {
+    const v = c[p.key];
+    if (Number.isInteger(v) && v >= 0 && v < p.colors.length) out[p.key] = v;
   }
   return out;
 }
