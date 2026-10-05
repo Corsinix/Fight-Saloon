@@ -146,6 +146,7 @@ function setMusic(name) {
 
 function show(name) {
   screen = name;
+  hideSpin();
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('hidden', s.id !== `scr-${name}`);
   const game = name === 'game';
   $('bg').classList.toggle('hidden', game);
@@ -454,68 +455,346 @@ net.on('left', () => {
   showMenu();
 });
 
+// Déroulé d'une table à plusieurs : un jeu choisi par l'hôte, la roue (jeu tiré au sort), ou un championnat.
+const FORMATS = {
+  single: ['Un jeu', 'L’hôte choisit le jeu'],
+  wheel: ['La roue', 'Un jeu tiré au sort parmi la sélection, à chaque partie'],
+  champ: ['Championnat', 'Plusieurs jeux tirés au sort à la suite : des points à chaque partie (5, 3, 2, 1), classement à la fin'],
+};
+const ROUNDS = [3, 5, 7, 10];
+const playersText = (m) => (m.min === m.max ? `${m.min} joueurs` : `${m.min} à ${m.max} joueurs`);
+const fits = (m, n) => n >= m.min && n <= m.max;
+
 function showLobby() {
   if (screen !== 'lobby') { show('lobby'); setMusic('menu'); }
   const l = lobby;
+  const fmt = FORMATS[l.format] ? l.format : 'single';
+  const single = fmt === 'single';
   const mode = MODES[l.mode] || MODES.roulette;
   const isHost = isHostOf(l);
+  const n = l.players.length;
+  const pool = l.pool || Object.keys(MODES);
+  const champ = fmt === 'champ' ? l.champ : null;
+  const champOn = !!champ && !champ.done;
+  const lock = !isHost || l.spinning; // réglages réservés à l'hôte, figés pendant le tirage
   $('lobby-code').textContent = l.code;
   $('lobby-link').value = `${location.origin}/?lobby=${l.code}`;
-  // les jeux trop petits pour la table sont grisés (ex. roulette et duel au-delà de 2 joueurs)
-  $('modes').innerHTML = Object.entries(MODES).map(([id, m]) => {
-    const full = l.players.length > m.max;
-    const title = full ? `title="${m.name} se joue à ${m.max} maximum"` : '';
-    return `
-    <button class="mode${l.mode === id ? ' on' : ''}${full ? ' full' : ''}" data-mode="${id}" ${isHost && !full ? '' : 'disabled'} ${title}>
-      <b>${m.name}</b><small>${m.sub}</small><i>${m.min === m.max ? `${m.min} joueurs` : `${m.min} à ${m.max} joueurs`}</i>
-    </button>`;
-  }).join('');
+  const lk = $('btn-lock');
+  lk.textContent = l.locked ? 'Table fermée' : 'Table ouverte';
+  lk.classList.toggle('on', !!l.locked);
+  lk.disabled = !isHost;
+  lk.title = isHost
+    ? (l.locked ? 'Rouvrir la table aux nouveaux venus' : 'Fermer la table : plus personne ne peut entrer avec le code')
+    : (l.locked ? 'L’hôte a fermé la table aux nouveaux venus' : 'Tout le monde peut entrer avec le code');
+
+  $('formats').innerHTML = Object.entries(FORMATS).map(([id, [name, tip]]) =>
+    `<button type="button" class="${fmt === id ? 'on' : ''}" data-format="${id}" title="${esc(tip)}" ${lock ? 'disabled' : ''}>${name}</button>`).join('');
+  $('rounds').classList.toggle('hidden', fmt !== 'champ');
+  const nRounds = champOn ? champ.rounds : l.rounds;
+  $('rounds').innerHTML = '<span class="lbl">Jeux :</span>' + ROUNDS.map((r) =>
+    `<button type="button" class="${nRounds === r ? 'on' : ''}" data-rounds="${r}" ${lock || champOn ? 'disabled' : ''}>${r}</button>`).join('');
+
+  // un jeu : on choisit la carte ; roue et championnat : on coche les jeux qui peuvent tomber
+  const all = pool.length >= Object.keys(MODES).length;
+  $('modes-label').innerHTML = single ? '2. Choisis le jeu :'
+    : `2. Jeux dans la roue (${pool.length}) :${isHost && !all ? ' <button type="button" class="mini-link" data-poolall>tout cocher</button>' : ''}`;
+  // le jeu choisi change : on affiche sa page
+  if (single && l.mode !== modesShown) modesPage = Math.floor(Math.max(0, soloIds.indexOf(l.mode)) / MODES_PAGE);
+  modesShown = single ? l.mode : null;
+  renderModes();
+
+  renderSeats(l, isHost);
+  renderChampBoard(l, isHost);
+
+  const compat = pool.filter((id) => MODES[id] && fits(MODES[id], n));
+  const start = $('btn-start');
+  start.classList.toggle('hidden', !isHost);
+  let hint;
+  if (single) {
+    const tooMany = n > mode.max;
+    start.disabled = n < mode.min || tooMany || l.spinning;
+    start.textContent = `Lancer : ${SOLO[l.mode]?.[0] || mode.name}`;
+    hint = tooMany
+      ? `${mode.name} se joue à ${mode.max} maximum. ${isHost ? 'Choisis un autre jeu.' : 'L’hôte doit choisir un autre jeu.'}`
+      : n < mode.min
+        ? 'Partage le lien ou le code, ou ajoute un bot. La partie commence quand l’hôte la lance.'
+        : isHost ? 'Choisis le jeu et lance la partie !' : `L’hôte va lancer : ${mode.name}…`;
+  } else {
+    start.disabled = n < 2 || !compat.length || l.spinning;
+    start.textContent = fmt === 'wheel' ? 'Lancer la roue' : champOn ? `Jeu suivant (${champ.n + 1}/${champ.rounds})` : 'Lancer le championnat';
+    const what = fmt === 'wheel' ? 'la roue' : 'le championnat';
+    hint = l.spinning ? 'La roue tourne…'
+      : n < 2 ? 'Partage le lien ou le code, ou ajoute un bot.'
+        : !compat.length ? `Aucun jeu coché ne se joue à ${n}. ${isHost ? 'Ajoute des jeux à la roue.' : ''}`
+          : isHost ? `${compat.length} jeu${compat.length > 1 ? 'x' : ''} possible${compat.length > 1 ? 's' : ''} à ${n} joueurs. Lance ${what} !`
+            : `L’hôte va lancer ${what}…`;
+  }
+  $('lobby-hint').textContent = hint;
+}
+
+// Choix du jeu : les cartes du menu solo (icône, nom court), par pages de 2 × 4 parcourues avec les flèches.
+// Un jeu : on choisit la carte ; roue et championnat : on coche les jeux qui peuvent tomber.
+const MODES_PAGE = 8;
+const modesPages = Math.max(1, Math.ceil(soloIds.length / MODES_PAGE));
+let modesPage = 0;
+let modesShown = null;
+function renderModes() {
+  const l = lobby;
+  if (!l) return;
+  const single = (l.format || 'single') === 'single';
+  const isHost = isHostOf(l);
+  const n = l.players.length;
+  const pool = l.pool || soloIds;
+  const lock = !isHost || l.spinning;
+  const ids = soloIds.slice(modesPage * MODES_PAGE, (modesPage + 1) * MODES_PAGE);
+  $('modes').classList.toggle('pick', !single);
+  $('modes').innerHTML = ids.map((id) => {
+    const m = MODES[id];
+    const short = SOLO[id]?.[0] || m.name;
+    const ok = fits(m, n);
+    const head = `${icoImg(gameIcon(id))}<b>${esc(short)}</b><small>${playersText(m)}</small>`;
+    if (single) {
+      // les jeux trop petits pour la table sont grisés (ex. roulette et duel au-delà de 2 joueurs)
+      const full = n > m.max;
+      return `<button type="button" class="solo-card${l.mode === id ? ' on' : ''}${full ? ' full' : ''}" data-mode="${id}" ${lock || full ? 'disabled' : ''}
+        title="${esc(m.name)} : ${esc(m.sub)}${full ? ` (${m.max} joueurs maximum)` : ''}">${head}</button>`;
+    }
+    const on = pool.includes(id);
+    const why = ok ? '' : ` (ne tombera pas à ${n} joueur${n > 1 ? 's' : ''})`;
+    return `<button type="button" class="solo-card${on ? ' in' : ' out'}${ok ? '' : ' full'}" data-pool="${id}" ${lock ? 'disabled' : ''} aria-pressed="${on}"
+      title="${esc(m.name)} : ${esc(m.sub)}${why}${isHost ? (on ? ' · cliquer pour le retirer' : ' · cliquer pour l’ajouter') : ''}">${head}<span class="check">${on ? '✓' : ''}</span></button>`;
+  }).join('') + '<div class="solo-card ghost" aria-hidden="true"></div>'.repeat(MODES_PAGE - ids.length); // même hauteur à chaque page
+  $('modes-prev').disabled = modesPage === 0;
+  $('modes-next').disabled = modesPage >= modesPages - 1;
+  $('modes-dots').innerHTML = modesPages > 1
+    ? Array.from({ length: modesPages }, (_, k) => `<button type="button" class="${k === modesPage ? 'on' : ''}" data-page="${k}" aria-label="Page ${k + 1}"></button>`).join('')
+    : '';
+}
+const modesGo = (k) => {
+  const p = Math.max(0, Math.min(modesPages - 1, k));
+  if (p === modesPage) return;
+  modesPage = p;
+  sfx('ui');
+  renderModes();
+};
+$('modes-prev').onclick = () => modesGo(modesPage - 1);
+$('modes-next').onclick = () => modesGo(modesPage + 1);
+$('modes-dots').onclick = (e) => { const b = e.target.closest('[data-page]'); if (b) modesGo(+b.dataset.page); };
+
+// Places autour de la table : portrait, badges, et pour l'hôte « confier la table » et « expulser ».
+function renderSeats(l, isHost) {
   const seats = $('seats');
   seats.innerHTML = '';
-  // toujours 4 places affichées ; les vides servent à inviter
+  const canEdit = isHost && !l.spinning;
+  // toujours 4 places affichées ; les vides servent à inviter (ou à asseoir un bot)
   const nSeats = Math.max(l.players.length, l.max || 4);
   for (let i = 0; i < nSeats; i++) {
     const p = l.players[i];
     const d = document.createElement('div');
     if (!p) {
       d.className = 'seat empty';
-      d.title = 'Copier le lien d’invitation';
-      d.innerHTML = '<div class="box">Chaise vide…<br>Clique pour inviter</div>';
-      d.onclick = invite;
+      if (canEdit) {
+        d.innerHTML = `<div class="box acts"><button type="button" class="seat-btn" data-invite title="Copier le lien d’invitation">Inviter</button>
+          <button type="button" class="seat-btn" data-bot title="Asseoir un bot à cette place">+ Bot</button></div>`;
+      } else {
+        d.title = 'Copier le lien d’invitation';
+        d.dataset.invite = '';
+        d.innerHTML = '<div class="box">Chaise vide…<br>Clique pour inviter</div>';
+      }
     } else {
-      d.className = 'seat';
-      d.innerHTML = `<canvas width="56" height="60"></canvas><div class="nm">${esc(p.name)}</div>
-        <div class="tag">${p.name.toLowerCase() === l.host ? `<img class="px-ico" src="${ICON.star}" width="14" height="14" alt=""> hôte ` : ''}${p.name === user.username ? '(toi)' : ''} ${p.connected ? '' : '<span class="off">déconnecté</span>'}</div>`;
+      const key = p.key || p.name.toLowerCase();
+      const me = p.name === user.username;
+      const host = key === l.host;
+      d.className = `seat${p.bot ? ' bot' : ''}${host ? ' host' : ''}`;
+      const acts = canEdit && !me
+        ? `<div class="seat-acts">${!p.bot && p.connected ? `<button type="button" class="sa" data-give="${esc(key)}" data-name="${esc(p.name)}" title="Confier la table à ${esc(p.name)}"><img class="px-ico" src="${ICON.star}" width="14" height="14" alt="Hôte"></button>` : ''}
+          <button type="button" class="sa kick" data-kick="${esc(key)}" data-name="${esc(p.name)}" data-isbot="${p.bot ? 1 : ''}" title="${p.bot ? 'Retirer' : 'Expulser'} ${esc(p.name)}">${pxIcon('close', 1)}</button></div>`
+        : '';
+      d.innerHTML = `${acts}<canvas width="56" height="60"></canvas><div class="nm">${esc(p.name)}</div>
+        <div class="tag">${host ? `<img class="px-ico" src="${ICON.star}" width="14" height="14" alt=""> hôte ` : ''}${me ? '(toi)' : ''}${p.bot ? '<span class="botag">bot</span>' : ''} ${p.connected ? '' : '<span class="off">déconnecté</span>'}</div>`;
       drawPortraitInto(d.querySelector('canvas'), p.character || {});
     }
     seats.appendChild(d);
   }
-  const tooMany = l.players.length > mode.max;
-  $('btn-start').classList.toggle('hidden', !isHost);
-  $('btn-start').disabled = l.players.length < mode.min || tooMany;
-  $('btn-start').textContent = `Lancer : ${mode.name}`;
-  $('lobby-hint').textContent = tooMany
-    ? `${mode.name} se joue à ${mode.max} maximum. ${isHost ? 'Choisis un mini-jeu.' : 'L’hôte doit choisir un autre jeu.'}`
-    : l.players.length < mode.min
-      ? 'Partage le lien ou le code. La partie commence quand l’hôte la lance.'
-      : isHost ? 'Choisis le jeu et lance la partie !' : `L’hôte va lancer : ${mode.name}…`;
 }
 
-$('modes').onclick = (e) => {
-  const b = e.target.closest('[data-mode]');
-  if (b && lobby && isHostOf(lobby) && b.dataset.mode !== lobby.mode) net.send({ t: 'mode', mode: b.dataset.mode });
+$('seats').onclick = async (e) => {
+  if (!lobby) return;
+  const b = e.target.closest('[data-invite], [data-bot], [data-kick], [data-give]');
+  if (!b) return;
+  if (b.dataset.kick !== undefined) {
+    const name = b.dataset.name;
+    if (!b.dataset.isbot && !(await askConfirm({
+      title: `Expulser ${name} ?`,
+      text: `${name} quitte la table et ne pourra plus y revenir.`,
+      yes: 'Expulser', no: 'Annuler', icon: 'close', danger: true,
+    }))) return;
+    return net.send({ t: 'kick', key: b.dataset.kick });
+  }
+  if (b.dataset.give !== undefined) {
+    const name = b.dataset.name;
+    if (!(await askConfirm({
+      title: `Confier la table à ${name} ?`,
+      text: `${name} devient l’hôte : choix des jeux, lancement des parties, expulsions. Tu restes assis à la table.`,
+      yes: 'Confier la table', no: 'Annuler', icon: 'hat',
+    }))) return;
+    return net.send({ t: 'giveHost', key: b.dataset.give });
+  }
+  if (b.dataset.bot !== undefined) return net.send({ t: 'addBot' });
+  invite();
 };
+
+// Classement du championnat (lobby et fin de partie) ; ex aequo : même place.
+function champRows(l) {
+  const c = l.champ;
+  const names = new Set([...Object.keys(c.scores || {}), ...l.players.map((p) => p.name)]);
+  const rows = [...names].map((name) => ({
+    name, pts: c.scores?.[name] || 0, firsts: c.firsts?.[name] || 0, here: l.players.some((p) => p.name === name),
+  })).sort((a, b) => b.pts - a.pts || b.firsts - a.firsts || a.name.localeCompare(b.name));
+  rows.forEach((r, k) => { r.place = k && r.pts === rows[k - 1].pts && r.firsts === rows[k - 1].firsts ? rows[k - 1].place : k + 1; });
+  return rows;
+}
+
+function champHtml(l, end) {
+  const c = l.champ;
+  const rows = champRows(l);
+  const gain = {};
+  if (end && c.last) for (const r of c.last.res) gain[r.name] = r.pts;
+  const leaders = rows.filter((r) => r.place === 1);
+  const head = c.done
+    ? `<p class="champion">${pxIcon('trophy')} ${leaders.length > 1 ? `Égalité en tête : ${leaders.map((r) => esc(r.name)).join(', ')}` : `${esc(leaders[0]?.name || '')} remporte le championnat !`}</p>`
+    : '';
+  const played = (c.played || []).map((id) => `<span title="${esc(MODES[id]?.name || id)}">${icoImg(gameIcon(id))}</span>`).join('');
+  return `<h3>Championnat <small>${c.done ? 'terminé' : `${c.n}/${c.rounds} jeux`}</small></h3>${head}
+    <ol class="champ-rank">${rows.map((r) => `<li class="${r.name === user.username ? 'me' : ''}${r.here ? '' : ' gone'}">
+      <span class="rk">${r.place}</span><span class="nm">${esc(r.name)}</span>${gain[r.name] != null ? `<span class="gain">+${gain[r.name]}</span>` : ''}<span class="pts">${r.pts} pts</span></li>`).join('')}</ol>
+    ${played ? `<div class="champ-played">${played}</div>` : ''}`;
+}
+
+function renderChampBoard(l, isHost) {
+  const board = $('champ-board');
+  const c = l.format === 'champ' ? l.champ : null;
+  board.classList.toggle('hidden', !c);
+  if (!c) return (board.innerHTML = '');
+  board.innerHTML = champHtml(l, false) + (isHost && !l.spinning ? '<button type="button" class="mini-link" data-champreset>Recommencer à zéro</button>' : '');
+}
+
+$('champ-board').onclick = async (e) => {
+  if (!e.target.closest('[data-champreset]') || !lobby) return;
+  if (lobby.champ && !lobby.champ.done && !(await askConfirm({
+    title: 'Recommencer le championnat ?',
+    text: 'Les points de tout le monde repartent à zéro.',
+    yes: 'Remettre à zéro', no: 'Annuler', icon: 'trophy', danger: true,
+  }))) return;
+  net.send({ t: 'champReset' });
+};
+
+$('modes').onclick = (e) => {
+  if (!lobby || !isHostOf(lobby)) return;
+  const b = e.target.closest('[data-mode]');
+  if (b && b.dataset.mode !== lobby.mode) return net.send({ t: 'mode', mode: b.dataset.mode });
+  const p = e.target.closest('[data-pool]');
+  if (p) net.send({ t: 'pool', mode: p.dataset.pool });
+};
+$('modes-label').onclick = (e) => { if (e.target.closest('[data-poolall]')) net.send({ t: 'poolAll' }); };
+
+$('formats').onclick = async (e) => {
+  const b = e.target.closest('[data-format]');
+  if (!b || !lobby || !isHostOf(lobby) || b.dataset.format === lobby.format) return;
+  const c = lobby.format === 'champ' ? lobby.champ : null;
+  if (c && !c.done && c.n > 0 && !(await askConfirm({
+    title: 'Abandonner le championnat ?',
+    text: 'Le championnat en cours s’arrête et les points sont perdus.',
+    yes: 'Abandonner', no: 'Continuer', icon: 'trophy', danger: true,
+  }))) return;
+  net.send({ t: 'format', format: b.dataset.format });
+};
+$('rounds').onclick = (e) => {
+  const b = e.target.closest('[data-rounds]');
+  if (b && lobby && isHostOf(lobby)) net.send({ t: 'rounds', n: +b.dataset.rounds });
+};
+$('btn-lock').onclick = () => { if (lobby && isHostOf(lobby)) net.send({ t: 'lock' }); };
 
 function isHostOf(l) {
   return !!user && l.host === user.username.toLowerCase();
 }
 
+async function copyText(v, input) {
+  try { await navigator.clipboard.writeText(v); } catch {
+    if (input) { input.select(); document.execCommand('copy'); }
+  }
+}
+
 async function copyLink() {
-  const v = $('lobby-link').value;
-  try { await navigator.clipboard.writeText(v); } catch { $('lobby-link').select(); document.execCommand('copy'); }
+  await copyText($('lobby-link').value, $('lobby-link'));
   $('btn-copy').textContent = 'Copié !';
   setTimeout(() => ($('btn-copy').textContent = 'Copier'), 1500);
 }
+
+// Un clic sur le code de la table le copie (pour le dicter ou le coller dans « Rejoindre »)
+let copiedTimer = 0;
+$('lobby-code').onclick = async () => {
+  if (!lobby) return;
+  await copyText(lobby.code);
+  const c = $('code-copied');
+  c.textContent = 'code copié !';
+  c.classList.add('on');
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => c.classList.remove('on'), 1500);
+};
+
+// ------------------------------------------------------------ roue des jeux
+// Les jeux défilent comme une machine à sous puis s'arrêtent sur celui que l'hôte a tiré.
+let spinRaf = 0, spinHideTimer = 0;
+function hideSpin() {
+  cancelAnimationFrame(spinRaf);
+  clearTimeout(spinHideTimer);
+  $('spin').classList.add('hidden');
+}
+net.on('spin', ({ pick, pool, round, rounds }) => {
+  if (!MODES[pick]) return;
+  hideSpin();
+  modalDone?.(false); // une question restée ouverte n'a plus lieu d'être
+  $('tooltip').classList.add('hidden');
+  const ids = pool?.length ? pool.filter((id) => MODES[id]) : [pick];
+  const any = () => ids[Math.floor(Math.random() * ids.length)];
+  const N = 30; // case du jeu tiré
+  const seq = Array.from({ length: N }, any).concat(pick, any(), any());
+  const strip = $('spin-strip');
+  strip.style.transform = 'translateX(0)';
+  strip.innerHTML = seq.map((id) => `<div class="spin-cell">${icoImg(gameIcon(id))}<b>${esc(MODES[id].name)}</b></div>`).join('');
+  $('spin-title').textContent = round ? `Championnat · jeu ${round} sur ${rounds}` : 'La roue du saloon';
+  $('spin-result').textContent = '';
+  $('spin').classList.remove('hidden');
+  const cells = strip.children;
+  const cw = cells[1].offsetLeft - cells[0].offsetLeft;
+  const reelW = strip.parentElement.clientWidth;
+  const target = cells[N].offsetLeft - (reelW - cells[N].offsetWidth) / 2;
+  const dur = 3000;
+  let t0 = 0, last = -1;
+  const step = (now) => {
+    t0 ||= now; // horloge des images : la première peut dater d'avant ce message
+    const k = Math.max(0, Math.min(1, (now - t0) / dur));
+    const x = target * (1 - (1 - k) ** 4);
+    strip.style.transform = `translateX(${-x}px)`;
+    const at = Math.floor((x + reelW / 2) / cw);
+    if (at !== last) { last = at; sfx('hover'); }
+    if (k < 1) { spinRaf = requestAnimationFrame(step); return; }
+    cells[N].classList.add('on');
+    $('spin-result').textContent = `${MODES[pick].name} !`;
+    sfx('ding');
+    spinHideTimer = setTimeout(hideSpin, 4000); // filet de sécurité si la partie ne démarre pas
+  };
+  spinRaf = requestAnimationFrame(step);
+});
+
+// La partie a été interrompue (l'hôte est parti en plein mini-jeu) : retour à la table.
+net.on('aborted', () => {
+  if (screen !== 'game') return;
+  closeScenes();
+  if (lobby && !lobby.solo) showLobby();
+  else showMenu();
+});
 
 // Partage natif (mobile, Windows…) si dispo, sinon copie du lien
 async function invite() {
@@ -530,16 +809,12 @@ async function invite() {
 $('btn-copy').onclick = copyLink;
 $('btn-share').onclick = invite;
 $('btn-share').classList.toggle('hidden', !navigator.share);
-// Quitter la table : si on en est l'hôte et que d'autres joueurs sont assis, la table ferme pour tout le monde.
-async function leaveTable() {
-  const others = lobby && isHostOf(lobby) && !lobby.solo && lobby.players.length > 1;
-  if (others && !(await askConfirm({
-    title: 'Fermer la table ?',
-    text: 'Tu es l’hôte : si tu pars, la table ferme et les autres joueurs sont renvoyés au menu.',
-    yes: 'Fermer la table', no: 'Rester', icon: 'close', danger: true,
-  }))) return;
+// Quitter la table : si on en est l'hôte, un autre joueur la reprend (elle ne ferme que s'il ne reste que des bots).
+function leaveTable() {
   net.send({ t: 'leaveLobby' });
 }
+// d'autres humains restent assis ?
+const othersAtTable = () => !!lobby && !lobby.solo && lobby.players.some((p) => !p.bot && p.name !== user?.username);
 $('btn-leave').onclick = leaveTable;
 $('btn-start').onclick = () => net.send({ t: 'start' });
 
@@ -819,6 +1094,12 @@ function showGameOver(ev) {
 function updateGameOver() {
   if (!lobby) return;
   $('btn-go-menu').textContent = lobby.solo ? 'Retour au menu' : 'Retour à la table';
+  const fmt = lobby.solo ? 'single' : lobby.format || 'single';
+  const c = fmt === 'champ' ? lobby.champ : null;
+  $('go-champ').innerHTML = c ? champHtml(lobby, true) : '';
+  // revanche, nouveau tour de roue ou jeu suivant du championnat : chacun se dit prêt
+  $('btn-rematch').textContent = c ? (c.done ? 'Nouveau championnat' : `Jeu suivant (${c.n + 1}/${c.rounds})`)
+    : fmt === 'wheel' ? 'Relancer la roue' : 'Revanche';
   if (lobby.solo) {
     $('btn-rematch').disabled = false;
     $('go-rematch').textContent = '';
@@ -826,12 +1107,15 @@ function updateGameOver() {
   }
   const voted = lobby.rematch.includes(user.username);
   const alone = lobby.players.length < 2;
-  $('btn-rematch').disabled = voted || alone;
+  $('btn-rematch').disabled = voted || alone || !lobby.over || lobby.spinning;
+  const humans = lobby.players.filter((p) => !p.bot).length;
   $('go-rematch').textContent = alone
     ? 'Tes adversaires ont quitté la table.'
-    : lobby.rematch.length
-      ? `Revanche demandée par : ${lobby.rematch.join(', ')}`
-      : '';
+    : !lobby.over && !lobby.spinning
+      ? 'La table a changé d’hôte : retourne à la table.'
+      : lobby.rematch.length
+        ? `${fmt === 'single' ? 'Revanche demandée par' : 'Prêts'} (${lobby.rematch.length}/${humans}) : ${lobby.rematch.join(', ')}`
+        : '';
 }
 
 $('btn-rematch').onclick = () => net.send({ t: 'rematch' });
@@ -842,8 +1126,8 @@ $('btn-go-menu').onclick = () => {
 };
 
 $('btn-exit').onclick = async () => {
-  const host = lobby && isHostOf(lobby) && !lobby.solo && lobby.players.length > 1;
-  const hostNote = host ? ' Tu es l’hôte : la table fermera pour tout le monde.' : '';
+  const host = lobby && isHostOf(lobby) && othersAtTable();
+  const hostNote = host ? ' Tu es l’hôte : la table passera à un autre joueur.' : '';
   if (screen === 'game' && scene?.state?.phase === 'playing') {
     const ok = await askConfirm({
       title: 'Quitter la table ?',
@@ -854,7 +1138,9 @@ $('btn-exit').onclick = async () => {
   } else if (screen === 'game' && mini && !mini.over) {
     const ok = await askConfirm({
       title: 'Quitter la partie ?',
-      text: `Ton score sera figé et tu finiras dernier.${hostNote}`,
+      text: host
+        ? 'Tu es l’hôte : la partie s’arrête pour tout le monde et la table passe à un autre joueur.'
+        : 'Ton score sera figé et tu finiras dernier.',
       yes: 'Quitter', no: 'Rester', icon: 'close', danger: true,
     });
     if (ok) net.send({ t: 'leaveLobby' });

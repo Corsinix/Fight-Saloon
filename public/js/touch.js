@@ -2,15 +2,15 @@
 // les boutons remplacent les touches du clavier et le clic droit : les scènes n'ont rien de spécial à faire.
 // Le tir, la visée et le lasso restent un simple toucher sur l'image.
 
-// stick : déplacements ; key : touche envoyée au jeu ; arm : le prochain toucher fait l'action du clic droit ;
+// stick : déplacements (ou fonction : stick seulement quand elle est vraie) ; key : touche envoyée au jeu ; arm : le prochain toucher fait l'action du clic droit ;
 // show / on : bouton visible / allumé selon l'état de la scène
 const PADS = {
   shooter: { buttons: [{ label: 'Recharger', key: 'r' }, { label: 'Parier', key: 'b', cls: 'gold', show: (s) => s.canWager() }] },
-  wagon: { buttons: [{ label: 'Recharger', key: 'r' }] },
+  wagon: { buttons: [{ label: 'Se retourner', key: 'e', cls: 'gold', show: (s) => s.inView }, { label: 'Recharger', key: 'r' }] },
   fort: { stick: true, buttons: [{ label: 'Dynamite', arm: true, cls: 'red', on: (s) => s.altArmed }, { label: 'Recharger', key: 'r' }] },
   lasso: { stick: true, buttons: [{ label: 'Lasso doré', key: 'e', cls: 'gold', on: (s) => s.my?.bet }] },
   mine: { buttons: [{ label: '▲', key: 'arrowup', cls: 'icon', title: 'Aiguillage en haut' }, { label: '●', key: ' ', cls: 'icon', title: 'Aiguillage au neutre' }, { label: '▼', key: 'arrowdown', cls: 'icon', title: 'Aiguillage en bas' }] },
-  course: { buttons: [{ label: 'Cravache', key: 'x', cls: 'red' }, { label: 'Sauter', key: ' ' }] },
+  course: { stick: (s) => s.wild, buttons: [{ label: 'Cravache', key: 'x', cls: 'red' }, { label: 'Sauter', key: ' ' }] },
 };
 const DIRS = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
 
@@ -30,7 +30,8 @@ export class TouchPad {
     const sig = { signal: this.abort.signal };
     this.root.innerHTML = '';
     this.root.classList.remove('hidden');
-    if (pad.stick) this.root.appendChild(this.stick(sig));
+    this.pad = pad;
+    this.stickEl = pad.stick ? this.root.appendChild(this.stick(sig)) : null;
     const col = document.createElement('div');
     col.className = 'tp-buttons';
     this.buttons = pad.buttons.map((b) => {
@@ -73,6 +74,7 @@ export class TouchPad {
     const s = this.scene;
     if (!s) return;
     if (!s.cv.isConnected || s.abort.signal.aborted) return this.detach(); // la scène a été fermée
+    if (this.stickEl && typeof this.pad.stick === 'function') this.stickEl.classList.toggle('hidden', !this.pad.stick(s));
     for (const { el, b } of this.buttons) {
       el.classList.toggle('hidden', !!b.show && !b.show(s));
       el.classList.toggle('on', !!b.on?.(s));

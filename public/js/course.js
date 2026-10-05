@@ -2,6 +2,8 @@
 // Espace / ↑ / Z (ou clic) : sauter. X / → / D (ou clic droit) : coup de cravache.
 // La cravache fait galoper plus vite mais vide la barre de résilience ; à zéro, le cheval est épuisé.
 // La barre remonte avec le temps et avec les carottes. Les autres chevaux courent dans les couloirs voisins.
+// Chevauchée sauvage (une partie sur deux) : pas de couloirs, on traverse la prairie. ↑ / ↓ (Z / S) dirigent
+// le cheval, ← (Q) le retient ; Espace saute, X / → cravache. Décor et obstacles dans coursewild.js.
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
@@ -10,8 +12,9 @@ import { riderLook, horseSprite } from './lasso.js';
 import { W, H } from './worlds.js';
 import { desertOpts } from './env.js';
 import {
-  COURSE, baseSpeed, horseSpeed, courseWorld, newHorse, inAir, tired, airH, jump, whip, stepHorse, horseLive,
+  COURSE, OBSTACLES, WILD, baseSpeed, horseSpeed, courseWorld, newHorse, startY, obsY, inAir, tired, airH, jump, whip, stepHorse, horseLive,
 } from './coursegame.js';
+import { drawField, drawFlat, drawStanding, sortY } from './coursewild.js';
 
 const OUT = S.OUT;
 const rd = Math.round;
@@ -30,6 +33,11 @@ const LANES = { 1: [172], 2: [152, 192], 3: [142, 170, 198], 4: [136, 157, 178, 
 const COATS = [['#8a4a24', '#2e1a10'], ['#3a2c26', '#120c08'], ['#e8dcc8', '#8a7a68'], ['#d8a850', '#f4ecd8']];
 const JUMP_KEYS = [' ', 'arrowup', 'z', 'w'];
 const WHIP_KEYS = ['x', 'arrowright', 'd', 'c', 'shift'];
+// chevauchée sauvage : les flèches dirigent, Espace saute
+const WILD_JUMP_KEYS = [' '];
+const UP_KEYS = ['arrowup', 'z', 'w'], DOWN_KEYS = ['arrowdown', 's'], BRAKE_KEYS = ['arrowleft', 'q', 'a'];
+// ce qu'on crie en percutant un obstacle
+const OUCH = { rock: 'ROCHER !', cactus: 'AÏE, LES ÉPINES !', tumble: 'VIREVOLTANT !', hole: 'UN TERRIER !' };
 const M = 5; // px par mètre
 
 // ------------------------------------------------------------ sprites
@@ -91,8 +99,18 @@ export class CourseScene extends MiniScene {
     window.addEventListener('keydown', (e) => { this.rep = e.repeat; }, { capture: true, signal: this.abort.signal });
   }
 
-  title() { return 'LA COURSE'; }
+  title() { return this.wild ? 'LA CHEVAUCHÉE' : 'LA COURSE'; }
+  cutKind() { return this.wild ? 'course-wild' : 'course'; }
   help() {
+    if (this.wild) {
+      return [
+        this.touch ? 'STICK : DIRIGER LE CHEVAL (À GAUCHE : LE RETENIR)' : 'HAUT / BAS (Z / S) : DIRIGER - GAUCHE (Q) : RETENIR',
+        this.touch ? 'BOUTON SAUTER : BUISSONS, TRONCS, TERRIERS, RUISSEAUX' : 'ESPACE (OU CLIC) : SAUTER BUISSONS, TRONCS, RUISSEAUX',
+        'ROCHERS ET CACTUS SONT TROP HAUTS : CONTOURNE-LES',
+        this.touch ? 'CRAVACHE : PLUS VITE, MAIS ELLE VIDE LA RÉSILIENCE' : 'X / DROITE (OU CLIC DROIT) : CRAVACHE (VIDE LA RÉSILIENCE)',
+        `${this.world.len / M} M JUSQU'AU RANCH - 1ER : +${COURSE.arrival[0]}, 2E : +${COURSE.arrival[1]}`,
+      ];
+    }
     return [
       this.touch ? 'BOUTON SAUTER (OU TOUCHER L\'ÉCRAN) : SAUTER LES OBSTACLES' : 'ESPACE / HAUT (OU CLIC) : SAUTER LES OBSTACLES',
       this.touch ? 'BOUTON CRAVACHE : GALOPER PLUS VITE' : 'X / DROITE (OU CLIC DROIT) : COUP DE CRAVACHE',
@@ -105,18 +123,20 @@ export class CourseScene extends MiniScene {
 
   setup(seed) {
     this.world = courseWorld(seed);
+    this.wild = !!this.world.wild;
     this.lanes = LANES[clamp(this.n, 1, 4)];
+    this.hx = HX; // colonne de ton cheval à l'écran (dans la prairie, il avance quand il galope, recule quand on le retient)
     this.gotBy = this.state.players.map(() => new Set());
     this.got = this.gotBy[this.me];
     this.crashed = new Set();
     this.carrotN = 0;
     this.crashN = 0;
-    this.horse = newHorse();
+    this.horse = newHorse(this.wild ? startY(this.me, this.n) : 0);
     this.coast = { x: 0, v: 0 }; // après le poteau, le cheval finit sa course sur son élan
     this.finishT = null;
     this.finishNow = null;
     this.remote = {};
-    for (let i = 0; i < this.n; i++) if (i !== this.me) this.remote[i] = { x: 0, tx: 0, px: 0, airAt: -1e9, air: false, whipAt: -1e9, tired: false, stun: false, hitAt: -1e9, outAt: null };
+    for (let i = 0; i < this.n; i++) if (i !== this.me) this.remote[i] = { x: 0, tx: 0, px: 0, y: startY(i, this.n), ty: startY(i, this.n), airAt: -1e9, air: false, whipAt: -1e9, tired: false, stun: false, hitAt: -1e9, outAt: null };
     this.gait = this.state.players.map(() => 0);
     this.dustT = this.state.players.map(() => 0);
     this.riders = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `${i}:${JSON.stringify(p.character || {})}`));
@@ -132,6 +152,7 @@ export class CourseScene extends MiniScene {
     this.crashN = this.crashed.size;
     const h = this.horse;
     h.wx = st.wx || 0;
+    if (this.wild && Number.isFinite(st.y)) h.y = clamp(st.y, WILD.y0, WILD.y1);
     const me = st.players[this.me];
     if (me?.rank) { h.done = true; h.wx = this.world.len; this.finishT = me.time; this.finishNow = -1e9; }
     st.players.forEach((p, i) => { const r = this.remote[i]; if (r && p.rank) { r.x = r.tx = this.world.len + 90; r.outAt = -1e9; } });
@@ -151,25 +172,30 @@ export class CourseScene extends MiniScene {
     if (!r) return;
     sfx('whip');
     this.hooks.send({ kind: 'whip' });
-    const y = this.laneY(this.me);
+    const y = this.myY();
     if (r === 'tired') {
       sfx('neigh'); sfx('bad', 0.15);
-      this.popup(HX, y - 70, 'ÉPUISÉ !', '#f0705a', true);
+      this.popup(this.hx, y - 70, 'ÉPUISÉ !', '#f0705a', true);
       this.shake = 4;
-    } else this.spark(HX - 13, y - 23, 5, '#fdf6e0');
+    } else this.spark(this.hx - 13, y - 23, 5, '#fdf6e0');
   }
 
   onKey(k) {
     const rep = this.rep;
     this.rep = false;
     if (rep) return;
-    if (JUMP_KEYS.includes(k)) this.doJump();
+    if ((this.wild ? WILD_JUMP_KEYS : JUMP_KEYS).includes(k)) this.doJump();
     else if (WHIP_KEYS.includes(k)) this.doWhip();
   }
+
+  held(list) { return list.some((k) => this.keys.has(k)); }
+  // ce qu'on envoie à l'hôte avec chaque action (la profondeur sert à reprendre la partie après une coupure)
+  at() { return this.wild ? { wx: rd(this.horse.wx), y: rd(this.horse.y) } : { wx: rd(this.horse.wx) }; }
   onFire() { this.doJump(); }
   onAlt() { this.doWhip(); }
 
   laneY(i) { return this.lanes[i] ?? this.lanes[this.lanes.length - 1]; }
+  myY() { return this.wild ? rd(this.horse.y) : this.laneY(this.me); }
   // haut et bas de la bande de piste d'un couloir
   band(i) {
     const L = this.lanes;
@@ -178,7 +204,7 @@ export class CourseScene extends MiniScene {
     return [top, bot];
   }
   // décalage à l'écran d'un point de la piste à la profondeur yy (nul sur ton couloir)
-  skew(yy) { return rd((this.laneY(this.me) - yy) * SLANT); }
+  skew(yy) { return this.wild ? 0 : rd((this.laneY(this.me) - yy) * SLANT); }
 
   remoteLive(i, d) {
     const r = this.remote[i];
@@ -187,6 +213,7 @@ export class CourseScene extends MiniScene {
       r.tx = d.x;
       if (Math.abs(r.x - d.x) > 300) r.x = d.x;
     }
+    if (typeof d.y === 'number') r.ty = d.y;
     if (d.a && !r.air) r.airAt = this.now;
     r.air = !!d.a;
     if (d.w && this.now - r.whipAt > 280) r.whipAt = this.now;
@@ -210,7 +237,13 @@ export class CourseScene extends MiniScene {
   update(dt) {
     if (!this.world) return;
     const t = this.t, now = this.now, h = this.horse;
-    const y0 = this.laneY(this.me);
+    if (this.wild) {
+      // les flèches dirigent le cheval (le stick tactile appuie sur les mêmes touches)
+      const live = t >= 0 && !this.over && !h.done && t < this.duration;
+      h.dir = live ? (this.held(DOWN_KEYS) ? 1 : 0) - (this.held(UP_KEYS) ? 1 : 0) : 0;
+      h.brake = live && this.held(BRAKE_KEYS);
+    }
+    const y0 = this.myY(), hx = this.hx;
     if (t >= 0 && !this.over && !h.done && t < this.duration) {
       const gdt = Math.min(dt, t); // le premier pas commence pile au GO
       const res = stepHorse(h, this.world, gdt, t, this.got, this.crashed);
@@ -218,28 +251,38 @@ export class CourseScene extends MiniScene {
         h.res = Math.min(COURSE.res.max, h.res + COURSE.carrot);
         this.carrotN++;
         sfx('gulp');
-        this.popup(HX + 8, y0 - 62 - c.h, `+${COURSE.carrot}`, '#f08a30', c.h > 10);
-        this.spark(HX + 14, y0 - 20 - c.h, c.h > 10 ? 10 : 4, '#f8b060');
-        this.hooks.send({ kind: 'carrot', id: c.id, wx: rd(h.wx) });
+        this.popup(hx + 8, y0 - 62 - c.h, `+${COURSE.carrot}`, '#f08a30', c.h > 10);
+        this.spark(hx + 14, y0 - 20 - c.h, c.h > 10 ? 10 : 4, '#f8b060');
+        this.hooks.send({ kind: 'carrot', id: c.id, ...this.at() });
       }
       for (const o of res.hits) {
         this.crashN++;
         sfx('thud'); sfx('neigh', 0.1);
-        this.popup(HX, y0 - 66, 'AÏE !', '#f0705a', true);
-        this.dust(HX + 10, y0, 12);
+        this.popup(hx, y0 - 66, (this.wild && OUCH[o.kind]) || 'AÏE !', '#f0705a', true);
+        this.dust(hx + 10, y0, 12);
         this.shake = 6;
-        this.hooks.send({ kind: 'crash', id: o.id, wx: rd(h.wx) });
+        this.hooks.send({ kind: 'crash', id: o.id, ...this.at() });
       }
-      if (res.mud) { sfx('puff'); this.popup(HX, y0 - 66, 'BOUE !', '#c8a070', true); this.splash(HX + 6, y0); }
+      if (res.perfect) {
+        sfx('coin');
+        this.popup(hx, y0 - 78, 'SAUT PARFAIT !', '#fff070', true);
+        this.spark(hx - 10, y0 - 30, 8, '#fff070');
+      }
+      if (res.mud) {
+        sfx('puff');
+        const creek = res.mud.kind === 'creek';
+        this.popup(hx, y0 - 66, creek ? 'PLOUF !' : 'BOUE !', creek ? '#9ad0f8' : '#c8a070', true);
+        this.splash(hx + 6, y0, creek ? ['#7ab0f0', '#c8e8f8'] : undefined);
+      }
       const air = inAir(h, t);
-      if (this.wasAir && !air) { this.dust(HX, y0, 6); sfx('sand'); }
+      if (this.wasAir && !air) { this.dust(hx, y0, 6); sfx('sand'); }
       this.wasAir = air;
       if (res.finished) {
         this.finishT = t;
         this.finishNow = now;
         this.coast.v = horseSpeed(h, t);
         sfx('good');
-        this.hooks.send({ kind: 'finish', wx: rd(h.wx) });
+        this.hooks.send({ kind: 'finish', ...this.at() });
       }
       this.sendLive(horseLive(h, t));
     }
@@ -247,11 +290,17 @@ export class CourseScene extends MiniScene {
       this.coast.x += this.coast.v * dt;
       this.coast.v = Math.max(0, this.coast.v - 0.0003 * dt);
     }
+    // dans la prairie, ton cheval prend de l'avance à l'écran quand il galope, et recule quand on le retient
+    if (this.wild) {
+      const want = HX + (h.done || t < 0 ? 0 : 36 * h.whip - (h.brake ? 28 : 0));
+      this.hx += (want - this.hx) * Math.min(1, dt * 0.004);
+    }
     // les autres chevaux : on prolonge leur course entre deux nouvelles
     for (const [i, r] of Object.entries(this.remote)) {
       if (t >= 0 && r.outAt == null && !this.over && !r.left) r.tx = Math.min(this.world.len, r.tx + baseSpeed(r.tx) * (r.tired ? COURSE.tired.mult : 1) * dt);
       r.px = r.x;
       r.x += (r.tx - r.x) * Math.min(1, dt * 0.01);
+      r.y += (r.ty - r.y) * Math.min(1, dt * 0.012);
       const v = dt > 0 ? clamp((r.x - r.px) / dt, 0, 0.4) : 0;
       if (t >= 0) this.gait[i] += v * dt / 13;
     }
@@ -273,14 +322,14 @@ export class CourseScene extends MiniScene {
     this.fx = this.fx.filter((p) => p.t < p.max);
   }
 
-  cam() { return this.horse.wx + this.coast.x - HX; }
+  cam() { return this.horse.wx + this.coast.x - this.hx; }
 
   // position à l'écran d'un cheval (sabots), et son état
   horsePos(i, cam = this.cam()) {
-    const t = this.t, now = this.now, y = this.laneY(i);
+    const t = this.t, now = this.now, y = this.wild ? rd(i === this.me ? this.horse.y : this.remote[i]?.y ?? 0) : this.laneY(i);
     if (i === this.me) {
       const h = this.horse;
-      return { x: HX, y, air: airH(h, Math.max(0, t)), moving: t >= 0 && (h.done ? this.coast.v > 0.02 : true), whipK: (t - h.whipAt) / 300, tired: tired(h, t), stun: t < h.stunUntil };
+      return { x: rd(this.hx), y, air: airH(h, Math.max(0, t)), moving: t >= 0 && (h.done ? this.coast.v > 0.02 : true), whipK: (t - h.whipAt) / 300, tired: tired(h, t), stun: t < h.stunUntil };
     }
     const r = this.remote[i];
     if (!r || r.left) return null;
@@ -304,10 +353,10 @@ export class CourseScene extends MiniScene {
     }
   }
 
-  splash(x, y) {
+  splash(x, y, cols = ['#4a2e18', '#6a4428']) {
     for (let i = 0; i < 12; i++) {
       const a = -Math.PI * (0.15 + Math.random() * 0.7), v = 0.04 + Math.random() * 0.05;
-      this.fx.push({ x: x + (Math.random() - 0.5) * 14, y: y - 2, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 0.0003, t: 0, max: 500, col: i % 2 ? '#6a4428' : '#4a2e18' });
+      this.fx.push({ x: x + (Math.random() - 0.5) * 14, y: y - 2, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 0.0003, t: 0, max: 500, col: cols[i % 2] });
     }
   }
 
@@ -324,9 +373,12 @@ export class CourseScene extends MiniScene {
     ctx.drawImage(this.bg, 0, 0);
     this.amb.sky(ctx, now);
     const l = this.amb.begin(ctx);
-    this.drawScenery(l, cam, now);
-    this.drawTrack(l, cam, now);
-    for (let i = 0; i < this.n; i++) this.drawLane(l, i, cam, now);
+    if (this.wild) this.drawWild(l, cam, now);
+    else {
+      this.drawScenery(l, cam, now);
+      this.drawTrack(l, cam, now);
+      for (let i = 0; i < this.n; i++) this.drawLane(l, i, cam, now);
+    }
     for (const p of this.fx) {
       if (p.puff) S.disc(l, p.x, p.y, rd(1 + p.t / 250), p.col);
       else { l.fillStyle = p.col; l.fillRect(rd(p.x), rd(p.y), 1, 1); }
@@ -581,6 +633,49 @@ export class CourseScene extends MiniScene {
     }
   }
 
+  // La prairie : le décor, puis ce qui est à plat (ruisseaux, terriers), puis obstacles, carottes et chevaux,
+  // du fond vers le bord proche pour qu'ils passent les uns devant les autres. Les carottes déjà mangées par
+  // ton cheval ont disparu (celles des autres restent : chacun a les siennes).
+  drawWild(ctx, cam, now) {
+    const t = Math.max(0, this.t);
+    drawField(ctx, cam, now, this.world.len);
+    const on = (x, m = 40) => x - cam > -m && x - cam < W + m;
+    const list = [];
+    for (const o of this.world.obstacles) {
+      if (!on(o.x, 60)) continue;
+      const sx = rd(o.x - cam);
+      drawFlat(ctx, o, sx, now);
+      if (o.kind === 'creek') continue;
+      const oy = rd(obsY(o, t));
+      // ce qui est renversé reste à moitié effacé (pas les rochers ni les cactus)
+      const down = this.crashed.has(o.id) && !OBSTACLES[o.kind].slow && !OBSTACLES[o.kind].tall;
+      list.push([sortY(o, oy), () => drawStanding(ctx, o, sx, oy, now, down)]);
+    }
+    const spr = carrotSprite();
+    for (const c of this.world.carrots) {
+      if (this.got.has(c.id) || !on(c.x)) continue;
+      const cx = rd(c.x - cam);
+      const bob = c.h > 10 ? rd(Math.sin(now / 220 + c.id) * 1.5) : 0;
+      list.push([c.y, () => {
+        if (c.h > 10) { ctx.fillStyle = 'rgba(40,20,10,0.2)'; ctx.fillRect(cx - 2, c.y - 1, 5, 1); }
+        ctx.drawImage(spr, cx - spr.ox, c.y - c.h - (c.h > 10 ? 8 : 0) + bob - spr.oy);
+        if (c.h > 10 && Math.floor(now / 140 + c.id) % 5 === 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(cx + 3, c.y - c.h - 20 + bob, 1, 1); }
+      }]);
+    }
+    for (let i = 0; i < this.n; i++) {
+      const p = this.horsePos(i, cam);
+      if (p) list.push([p.y + (i === this.me ? 0.5 : 0), () => this.drawHorse(ctx, i, cam, now)]);
+    }
+    list.sort((a, b) => a[0] - b[0]);
+    for (const [, draw] of list) draw();
+    // ta trajectoire : un petit repère sous ton cheval, à ta couleur
+    const me = this.horsePos(this.me, cam);
+    if (me && !this.horse.done) {
+      ctx.fillStyle = this.color(this.me);
+      ctx.fillRect(me.x - 9, me.y + 2, 3, 1); ctx.fillRect(me.x + 7, me.y + 2, 3, 1);
+    }
+  }
+
   // la cravache : tenue haute, puis le coup sur la croupe
   drawCrop(ctx, x, y, k, b) {
     const hx = x + 3, hy = y - 37 + b;
@@ -600,22 +695,31 @@ export class CourseScene extends MiniScene {
   }
 
   // noms au-dessus des chevaux ; ceux qui sont hors de l'écran sont signalés au bord
+  // (dans la prairie, deux chevaux peuvent être à la même profondeur : leurs signaux au bord s'empilent)
   drawNames(ctx, cam) {
-    for (let i = 0; i < this.n; i++) {
-      const p = this.horsePos(i, cam);
-      if (!p) continue;
+    const used = { true: [], false: [] }, tags = [];
+    const order = [...Array(this.n).keys()].map((i) => [i, this.horsePos(i, cam)]).filter(([, p]) => p).sort((a, b) => a[1].y - b[1].y);
+    for (const [i, p] of order) {
       const label = i === this.me ? 'TOI' : this.name(i).slice(0, 8).toUpperCase();
       if (p.x < -20 || p.x > W + 20) {
         const ahead = p.x > W;
-        const gap = rd(Math.abs(p.x - this.skew(p.y) - HX) / M);
-        const ex = ahead ? W - 4 : 4, ey = p.y - 20;
+        const gap = rd(Math.abs(p.x - this.skew(p.y) - this.hx) / M);
+        let ey = p.y - 20;
+        for (const u of used[ahead]) if (ey < u + 11) ey = u + 11;
+        used[ahead].push(ey);
+        const ex = ahead ? W - 4 : 4;
         ctx.fillStyle = OUT; ctx.fillRect(ahead ? ex - 6 : ex - 1, ey - 4, 8, 9);
         ctx.fillStyle = this.color(i);
         for (let k = 0; k < 4; k++) ctx.fillRect(ahead ? ex - k : ex + k - 1, ey - 3 + k, 1, 7 - 2 * k);
         canvasText(ctx, `${label} ${ahead ? '+' : '-'}${gap} M`, ahead ? ex - 9 : ex + 9, ey - 3, { color: this.color(i), align: ahead ? 'right' : 'left' });
         continue;
       }
-      canvasText(ctx, label, rd(p.x) - 2, rd(p.y - p.air) - 64, { color: this.color(i) });
+      // deux chevaux côte à côte : le nom du plus proche descend d'un cran
+      const lx = rd(p.x) - 2;
+      let ly = rd(p.y - p.air) - 64;
+      for (let k = 0; k < 3 && tags.some(([x, y]) => Math.abs(x - lx) < 40 && Math.abs(y - ly) < 9); k++) ly += 9;
+      tags.push([lx, ly]);
+      canvasText(ctx, label, lx, ly, { color: this.color(i) });
     }
   }
 
@@ -640,13 +744,16 @@ export class CourseScene extends MiniScene {
     const pos = this.position();
     canvasText(ctx, `${pos}${pos === 1 ? 'ER' : 'E'} / ${this.n}`, 6, 4, { align: 'left', color: '#f8d070' });
     const kmh = h.done ? 0 : rd(horseSpeed(h, Math.max(0, t)) * 260);
-    const fx = h.done ? '' : tired(h, t) ? ' ÉPUISÉ' : t < h.stunUntil ? ' AÏE' : t < h.slowUntil ? ' BOUE' : h.whip > 0.5 ? ' GALOP !' : '';
+    const fx = h.done ? '' : tired(h, t) ? ' ÉPUISÉ' : t < h.stunUntil ? ' AÏE' : t < h.slowUntil ? (this.wild ? ' MOUILLÉ' : ' BOUE') : h.brake ? ' AU PAS' : h.whip > 0.5 ? ' GALOP !' : '';
     canvasText(ctx, `${t < 0 ? 0 : kmh} KM/H${fx}`, W - 6, 18, { align: 'right', color: tired(h, t) ? '#f0705a' : h.whip > 0.5 ? '#fff070' : '#e8d8b8' });
     this.drawResilience(ctx, 6, 18);
     // au départ, rappel des commandes
     if (t > 0 && t < 5000) {
       ctx.globalAlpha = t > 4000 ? (5000 - t) / 1000 : 1;
-      canvasText(ctx, this.touch ? 'SAUTER  -  CRAVACHE' : 'ESPACE : SAUTER  -  X : CRAVACHE', W / 2, 60, { color: '#fdf6e0' });
+      const hint = this.wild
+        ? (this.touch ? 'STICK : DIRIGER  -  SAUTER  -  CRAVACHE' : 'HAUT/BAS : DIRIGER  -  ESPACE : SAUTER  -  X : CRAVACHE')
+        : (this.touch ? 'SAUTER  -  CRAVACHE' : 'ESPACE : SAUTER  -  X : CRAVACHE');
+      canvasText(ctx, hint, W / 2, 60, { color: '#fdf6e0' });
       ctx.globalAlpha = 1;
     }
     if (t >= this.duration && !this.over && !h.done) canvasText(ctx, 'FIN DE LA COURSE !', W / 2, 30, { size: 16, color: '#f8d070' });

@@ -113,6 +113,312 @@ function plank(ctx, x, y, w, h, col) {
   for (let yy = y + 4; yy < y + h; yy += 5) R(ctx, x, yy, w, 1, S.shade(col, -0.25));
 }
 
+// Bouteille posée sur une étagère, fond en (x, base) ; kind : 0 whisky, 1 flasque ronde, 2 vin, 3 cruchon.
+// Renvoie sa largeur.
+function bottle(ctx, x, base, kind, col) {
+  const hi = S.shade(col, 0.35), label = '#e8dcbc';
+  const shapes = [
+    [[0, -14, 5, 14, col], [1, -19, 3, 5, col], [1, -20, 3, 1, '#c89a40']],
+    [[0, -9, 8, 9, col], [3, -13, 2, 4, col]],
+    [[0, -12, 6, 12, col], [1, -14, 4, 2, col], [2, -19, 2, 5, col]],
+    [[0, -8, 7, 8, col], [2, -10, 3, 2, col], [7, -7, 2, 4, col]],
+  ];
+  outlined(ctx, x, base, shapes[kind]);
+  const w = [5, 8, 6, 7][kind];
+  R(ctx, x + 1, base - [12, 7, 10, 6][kind], 1, [9, 5, 7, 4][kind], hi); // reflet
+  if (kind !== 1) R(ctx, x, base - [8, 0, 7, 5][kind], w, 3, label); // étiquette
+  return w;
+}
+
+// Client assis au comptoir, vu de dos ; (x, y) : le siège du tabouret. turn : -1 / 1, il tourne la tête de ce côté.
+// arm (bras droit) : 0 posé sur le comptoir, 1 levé (poing serré), 2 qui s'abat sur le comptoir, 3 tendu vers la droite
+function patronBack(ctx, x, y, { coat, hat, skin }, turn = 0, arm = 0) {
+  const dark = '#3a2414';
+  R(ctx, x - 7, y + 3, 2, H - y, dark); R(ctx, x + 5, y + 3, 2, H - y, dark); R(ctx, x - 7, y + 15, 14, 1, dark);
+  outlined(ctx, x, y, [[-10, 0, 20, 3, '#7a4a28']]);
+  const right = [
+    [[7, -28, 5, 15, coat]],
+    [[7, -44, 5, 18, coat], [7, -49, 6, 5, skin]],
+    [[7, -30, 6, 10, coat], [8, -32, 7, 5, skin]],
+    [[7, -28, 18, 5, coat], [25, -29, 5, 5, skin]],
+  ][arm];
+  outlined(ctx, x, y, [
+    [-8, -30, 16, 31, coat], [-12, -28, 5, 15, coat], ...right,
+    [-3, -34, 6, 4, skin], [-5, -42, 10, 9, '#3a2a1e'],
+    [-9, -43, 18, 2, hat], [-5, -49, 10, 6, hat],
+  ]);
+  R(ctx, x - 8, y - 30, 16, 1, S.shade(coat, 0.18));
+  R(ctx, x, y - 28, 1, 28, S.shade(coat, -0.28)); // couture du dos
+  R(ctx, x - 5, y - 45, 10, 1, S.shade(hat, -0.4)); // ruban du chapeau
+  R(ctx, x - 9, y - 4, 18, 2, '#2a1a10'); // ceinture
+  if (turn) { R(ctx, x + (turn > 0 ? 4 : -6), y - 40, 2, 6, skin); R(ctx, x + (turn > 0 ? 5 : -6), y - 38, 1, 1, S.OUT); } // la joue et l'œil
+}
+
+// Le comptoir du saloon, plan large (cinématique de la pinte). o :
+//   slam : le premier client lève le bras (1) puis frappe le comptoir (2) ; shake : tout tremble sous le coup
+//   bubble : 0 à 1, sa réplique s'écrit dans une bulle ; grab : il tend la main vers la chope
+//   bart : { look : -1 / 0 / 1, rub : il essuie son verre, throw : bras tendu, il vient de lancer la chope }
+//   mug : { x, from, moving, wob, spill } la chope qui glisse vers la gauche (null : pas de chope)
+function saloonBar(ctx, el, players, o) {
+  ctx.save();
+  if (o.shake) ctx.translate(Math.floor(el / 30) % 2 ? 1 : -1, 1);
+  // le mur : papier peint bordeaux à motifs dorés, cimaise, lambris
+  R(ctx, 0, 0, W, 104, '#4e1a18');
+  for (let y = 4; y < 100; y += 12) for (let x = (y / 12) % 2 < 1 ? 0 : 6; x < W; x += 12) {
+    R(ctx, x + 5, y, 2, 1, '#7a3a26'); R(ctx, x + 4, y + 1, 4, 1, '#6a3020'); R(ctx, x + 5, y + 2, 2, 1, '#7a3a26');
+  }
+  R(ctx, 0, 100, W, 3, '#2a140c'); R(ctx, 0, 100, W, 1, '#8a5a34');
+  plank(ctx, 0, 103, W, 37, '#3e2214');
+  // l'affiche de Black Bart, punaisée au mur
+  outlined(ctx, 6, 40, [[0, 0, 15, 20, '#e8d8a8']]);
+  R(ctx, 7, 41, 13, 3, '#a8302a'); R(ctx, 10, 46, 7, 7, '#8a7a5a'); R(ctx, 11, 47, 5, 3, '#3a2a1e'); R(ctx, 9, 55, 9, 1, '#6a5a3a'); R(ctx, 9, 57, 6, 1, '#6a5a3a');
+  // le buffet derrière le bar : corniche, colonnes, fonds en miroir, étagères de bouteilles
+  R(ctx, 26, 24, 214, 117, S.OUT);
+  R(ctx, 27, 25, 212, 115, '#2e1810');
+  for (const [x0, x1] of [[33, 130], [136, 233]]) {
+    R(ctx, x0, 33, x1 - x0, 102, '#232a30');
+    for (let s = 0; s < 3; s++) for (let d = 0; d < 26; d++) R(ctx, x0 + 8 + s * 30 + d, 34 + d * 3, 2, 3, 'rgba(190,210,220,0.07)');
+  }
+  R(ctx, 27, 25, 212, 8, '#6a4024'); R(ctx, 27, 25, 212, 1, '#a8784a'); R(ctx, 27, 31, 212, 1, '#3a2014');
+  for (const cx of [27, 130, 233]) { R(ctx, cx, 33, 6, 107, '#5a3420'); R(ctx, cx + 1, 33, 1, 107, '#8a5a34'); R(ctx, cx - 1, 33, 8, 3, '#7a4a28'); }
+  for (const sy of [66, 104]) {
+    R(ctx, 33, sy, 200, 3, '#7a4a28'); R(ctx, 33, sy, 200, 1, '#a8784a');
+    let x = 36;
+    for (let b = 0; x < 228; b++) {
+      if (x > 121 && x < 140) x = 140;
+      if (sy === 104 && x > 150 && x < 196) { // une pyramide de verres retournés
+        for (let r = 0; r < 3; r++) for (let g = 0; g < 4 - r; g++) {
+          const gx = 152 + r * 4 + g * 9, gy = sy - 8 - r * 8 - (o.shake && g % 2 ? 1 : 0);
+          R(ctx, gx - 1, gy - 1, 8, 9, S.OUT); R(ctx, gx, gy, 6, 7, '#9ab4bc'); R(ctx, gx + 1, gy + 1, 1, 5, '#e0f0f4'); R(ctx, gx, gy, 6, 1, '#c8dce0');
+        }
+        x = 198;
+      }
+      x += bottle(ctx, x, sy, Math.floor(hash(b * 3 + sy) * 4), ['#3a6a2a', '#7a2a1e', '#c89a40', '#2a4a8a', '#6a3a1a', '#d8d0b8'][Math.floor(hash(b * 5 + sy) * 6)]) + 3;
+    }
+  }
+  // l'horloge et son balancier
+  outlined(ctx, 244, 34, [[0, 0, 16, 40, '#5a3420']]);
+  S.disc(ctx, 252, 44, 7, S.OUT); S.disc(ctx, 252, 44, 6, '#e8dcbc');
+  R(ctx, 252, 40, 1, 4, INK); R(ctx, 252, 44, 3, 1, INK);
+  R(ctx, 246, 53, 12, 18, '#2a1810');
+  const pend = Math.round(Math.sin(el / 320) * 3);
+  R(ctx, 252 + Math.round(pend / 2), 54, 1, 11, '#c89a40'); S.disc(ctx, 252 + pend, 66, 2, '#e0b040');
+  // le grand miroir au cadre doré
+  R(ctx, 266, 26, 96, 80, S.OUT);
+  R(ctx, 267, 27, 94, 78, '#c89a40'); R(ctx, 267, 27, 94, 1, '#f4d47a');
+  R(ctx, 271, 31, 86, 70, '#4a5a62');
+  for (let d = 0; d < 40; d++) R(ctx, 280 + d, 32 + d, 3, 1, 'rgba(220,235,240,0.12)');
+  for (let d = 0; d < 26; d++) R(ctx, 318 + d, 32 + d, 2, 1, 'rgba(220,235,240,0.1)');
+  S.disc(ctx, 296, 40, 4, 'rgba(255,220,150,0.5)');
+  // le barman : moustache en guidon, gilet rouge, nœud papillon
+  const bart = o.bart || {};
+  const look = bart.look || 0;
+  const bx = 312, sk = SKIN[1];
+  outlined(ctx, bx, 140, [
+    [-13, -38, 26, 38, '#e8e0cc'], [12, -36, 4, 18, '#e8e0cc'],
+    bart.throw ? [-34, -24, 22, 5, '#e8e0cc'] : [-16, -36, 4, 18, '#e8e0cc'], // le bras qui vient de lancer la chope
+    [-6, -52, 12, 13, sk],
+  ]);
+  R(ctx, bx - 13, 102, 7, 38, '#8a2a20'); R(ctx, bx + 6, 102, 7, 38, '#8a2a20');
+  R(ctx, bx - 7, 110, 1, 1, '#e0b040'); R(ctx, bx - 7, 118, 1, 1, '#e0b040'); R(ctx, bx - 7, 126, 1, 1, '#e0b040');
+  R(ctx, bx + 12, 112, 4, 2, '#a8302a');
+  if (!bart.throw) R(ctx, bx - 16, 112, 4, 2, '#a8302a'); else R(ctx, bx - 28, 116, 2, 5, '#a8302a');
+  R(ctx, bx - 4, 102, 8, 3, INK); R(ctx, bx - 1, 102, 2, 3, '#3a3a3a');
+  R(ctx, bx - 6, 88, 12, 2, S.shade(sk, 0.25));
+  R(ctx, bx - 7, 92, 2, 6, '#5a4a3a'); R(ctx, bx + 5, 92, 2, 6, '#5a4a3a');
+  R(ctx, bx - 4 + look, 93, 2, 1, INK); R(ctx, bx + 2 + look, 93, 2, 1, INK);
+  R(ctx, bx - 4, 91, 3, 1, '#5a4a3a'); R(ctx, bx + 2, 91, 3, 1, '#5a4a3a');
+  R(ctx, bx - 6, 97, 12, 2, '#4a3a2a'); R(ctx, bx - 8, 95, 2, 3, '#4a3a2a'); R(ctx, bx + 6, 95, 2, 3, '#4a3a2a');
+  if (bart.throw) outlined(ctx, bx - 38, 115, [[0, 0, 5, 5, sk]]); // la main ouverte
+  else {
+    const rub = bart.rub ? Math.round(Math.sin(el / 110) * 2) : 0;
+    outlined(ctx, bx - 4, 118, [[0, 0, 8, 10, '#a8c4cc'], [1, 1, 2, 8, '#e0f0f4']]);
+    outlined(ctx, bx - 8 + rub, 122, [[0, 0, 7, 5, sk], [9, 0, 7, 5, sk], [2, -2, 12, 4, '#f4ecd8']]);
+  }
+  // deux lampes à pétrole suspendues
+  for (const lx of [100, 206]) {
+    R(ctx, lx, 0, 1, 34, '#3a3a3a');
+    outlined(ctx, lx - 7, 34, [[0, 0, 15, 3, '#c89a40'], [3, 3, 9, 8, '#fff0b0'], [1, 11, 13, 2, '#c89a40']]);
+    R(ctx, lx - 2, 38, 5, 5, '#fffbe0');
+  }
+  // le comptoir : plateau ciré, reflets des lampes
+  R(ctx, 0, 139, 354, 1, S.OUT);
+  R(ctx, 0, 140, 354, 10, '#9a6234'); R(ctx, 0, 140, 354, 2, '#c8905a'); R(ctx, 0, 148, 354, 2, '#6a3e1e');
+  for (const lx of [100, 206]) R(ctx, lx - 14, 143, 28, 1, 'rgba(255,230,170,0.35)');
+  R(ctx, 354, 139, 30, 77, '#140c08'); R(ctx, 352, 139, 2, 11, S.OUT);
+  // la chope qui glisse vers le client, et la traînée mouillée qu'elle laisse
+  const m = o.mug;
+  if (m) {
+    const mx = m.x;
+    if (m.from - mx > 4) R(ctx, mx + 12, 141, m.from - mx, 1, 'rgba(253,246,224,0.22)');
+    if (m.moving) for (let s = 1; s < 6; s++) R(ctx, mx + 10 + s * 8, 141, 5, 1, `rgba(253,246,224,${0.3 - s * 0.05})`);
+    outlined(ctx, mx, 140, [[0, -16, 12, 16, '#d8902a'], [12, -13, 4, 9, '#b8c8cc'], [-1 + m.wob, -20, 14, 5, CREAM]]);
+    R(ctx, mx + 2, 127, 2, 11, '#f8d070'); R(ctx, mx + 8, 129, 1, 9, '#a8681e');
+    for (let b = 0; b < 4; b++) R(ctx, mx + 3 + b * 2, 136 - ((el / 60 + b * 5) % 9), 1, 1, '#fff2b0');
+    R(ctx, mx + 1 + m.wob, 120, 3, 1, '#ffffff');
+    if (m.spill > 0 && m.spill < 1) for (let d = 0; d < 5; d++) R(ctx, mx + 4 + (d - 2) * 8 * m.spill, 120 - Math.sin(m.spill * Math.PI) * (6 + d), 2, 2, CREAM);
+  }
+  // sur le bord du comptoir : la bouteille et les petits verres, les cartes, le bol de cacahuètes
+  const hop = o.shake ? -1 : 0; // ils sautent quand le poing s'abat
+  outlined(ctx, 22, 149 + hop, [[0, -16, 6, 16, '#6a3a1a'], [2, -21, 2, 5, '#6a3a1a'], [0, -10, 6, 5, '#e8d8a8']]);
+  for (const gx of [32, 39]) outlined(ctx, gx, 149 + (gx === 39 ? hop * 2 : hop), [[0, -5, 4, 5, '#c8a050']]);
+  outlined(ctx, 160, 149, [[0, -2, 8, 2, CREAM], [5, -3, 8, 2, '#e8d8b8']]); R(ctx, 172, 147, 3, 2, '#a8302a'); R(ctx, 175, 146, 3, 3, '#3a6ec0');
+  outlined(ctx, 214, 149, [[0, -4, 12, 4, '#8a5a34'], [2, -6, 8, 2, '#c8905a']]);
+  // le devant du comptoir : panneaux moulurés et barre de cuivre pour les pieds
+  R(ctx, 0, 150, 354, 66, '#4a2814');
+  for (let x = 0; x < 354; x += 50) {
+    R(ctx, x, 150, 5, 66, '#5a3420'); R(ctx, x + 1, 150, 1, 66, '#7a4a28');
+    R(ctx, x + 10, 158, 34, 22, '#3a1e0e'); R(ctx, x + 10, 158, 34, 1, '#6a3e1e'); R(ctx, x + 10, 179, 34, 1, '#6a3e1e');
+  }
+  R(ctx, 0, 186, 354, 3, '#c89a40'); R(ctx, 0, 186, 354, 1, '#f4d47a');
+  for (let x = 25; x < 354; x += 50) R(ctx, x, 182, 2, 5, '#a87a28');
+  // les clients au comptoir, de dos : les joueurs d'abord ; le premier réclame à boire
+  for (let i = 0; i < 4; i++) {
+    const px = 74 + i * 62;
+    const lk = i < players.length ? looks(players[i].character) : crowdLook(i + 21);
+    const turn = m && Math.abs(m.x - px) < 34 && m.moving ? Math.sign(m.x - px) || 1 : i === 0 && o.bubble ? 1 : 0;
+    patronBack(ctx, px, 168, lk, turn, i === 0 ? (o.grab ? 3 : o.slam || 0) : 0);
+  }
+  if (o.slam === 2) for (const [dx, dy] of [[-8, -4], [0, -8], [8, -4]]) R(ctx, 74 + 14 + dx, 136 + dy, 1, 3, CREAM); // l'impact
+  puffs(ctx, 6, 260, 1500, el % 1560 + 1500, () => ({ x: 146, y: 124 }), { vx: 0.006, vy: -0.025, r0: 1, grow: 0.004, col: '220,214,200', a0: 0.45 });
+  // la lumière des lampes et la poussière qui y danse
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const lx of [100, 206]) {
+    const fl = 0.16 + 0.04 * Math.sin(el / 80 + lx);
+    const g = ctx.createRadialGradient(lx, 40, 0, lx, 40, 90);
+    g.addColorStop(0, `rgba(255,190,110,${fl})`);
+    g.addColorStop(1, 'rgba(255,190,110,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(lx - 90, 0, 180, 140);
+  }
+  for (let i = 0; i < 18; i++) {
+    const x = 70 + hash(i) * 170 + Math.sin(el / 700 + i) * 6, y = 50 + ((hash(i + 40) * 90 + el * 0.008 * (1 + (i % 3))) % 90);
+    R(ctx, x, y, 1, 1, 'rgba(255,230,180,0.5)');
+  }
+  ctx.restore();
+  const v = ctx.createRadialGradient(W / 2, 110, 90, W / 2, 110, 240);
+  v.addColorStop(0, 'rgba(10,5,3,0)');
+  v.addColorStop(1, 'rgba(10,5,3,0.6)');
+  ctx.fillStyle = v;
+  ctx.fillRect(-4, -4, W + 8, H + 8);
+  // la réplique, dans une bulle au-dessus du client
+  if (o.bubble > 0) {
+    const txt = 'UN VERRE, BARMAN !', n = Math.ceil(o.bubble * txt.length);
+    const bw = 112, bx0 = 30, by0 = 56;
+    R(ctx, bx0 - 1, by0 - 1, bw + 2, 17, S.OUT); R(ctx, bx0, by0, bw, 15, CREAM);
+    R(ctx, bx0 + 1, by0 + 14, bw - 2, 1, '#d8c8a0');
+    for (let k = 0; k < 9; k++) { R(ctx, 70 + k * 0.4 - 1, by0 + 15 + k, 4 - k * 0.35 + 2, 1, S.OUT); R(ctx, 70 + k * 0.4, by0 + 15 + k, Math.max(1, 4 - k * 0.35), 1, CREAM); }
+    canvasText(ctx, txt.slice(0, n), bx0 + 6, by0 + 4, { align: 'left', color: INK, shadow: '' });
+  }
+  ctx.restore();
+}
+
+// Très gros plan sur les yeux du barman, comme dans les vieux jeux d'aventure : peau unie, traits noirs d'un
+// pixel, yeux en amande mi-clos. Il glisse un regard vers le client, hausse un sourcil, sue, sa moustache
+// frémit, puis il plisse les yeux. e : ms depuis le début du plan (≈ 950). Dessiné en pleine résolution,
+// avec un lent zoom avant (on recalcule les tracés, les traits restent fins).
+const FACE_SKIN = '#f8b07a';
+function bartenderCloseUp(ctx, e) {
+  const z = 1 + 0.1 * ease(e / 950), cx = W / 2, cy = 100;
+  const X = (x) => Math.round(cx + (x - cx) * z), Y = (y) => Math.round(cy + (y - cy) * z);
+  const dot = (x, y, s = 1) => ctx.fillRect(X(x), Y(y), s, s);
+  // courbe de Bézier quadratique, tracée point par point (t de from à to)
+  const curve = (x0, y0, qx, qy, x1, y1, th = 1, from = 0, to = 1) => {
+    const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * z * 1.4 * (to - from)) + 2;
+    for (let i = 0; i <= n; i++) {
+      const t = from + ((to - from) * i) / n, u = 1 - t;
+      dot(u * u * x0 + 2 * u * t * qx + t * t * x1, u * u * y0 + 2 * u * t * qy + t * t * y1, th);
+    }
+  };
+  const line = (x0, y0, x1, y1, th = 1) => curve(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2, x1, y1, th);
+  const seg = (x, y0, y1, col) => { if (y1 > y0) { ctx.fillStyle = col; ctx.fillRect(X(x), Y(y0), Math.ceil(z), Math.max(1, Y(y1) - Y(y0))); } };
+
+  const look = e < 250 ? 0 : e < 450 ? -30 * ease((e - 250) / 200) : -30; // le regard glisse vers le client
+  const raise = e > 300 && e < 640 ? 5 * ease((e - 300) / 150) : 0; // un sourcil qui monte
+  const squint = e > 640 ? ease((e - 640) / 180) : 0; // les yeux qui se plissent
+  const frown = squint * 5;
+  const tw = (e > 460 && e < 540) || (e > 760 && e < 820) ? 3 : 0; // la moustache frémit
+  R(ctx, 0, 0, W, H, FACE_SKIN);
+  ctx.fillStyle = INK;
+
+  // les sourcils, broussailleux, en haut du cadre (le gauche se fronce, le droit monte puis se fronce aussi)
+  for (let i = 0; i < 170; i++) {
+    const left = i % 2 === 0, u = hash(i + 300), v = hash(i + 700);
+    const bx = left ? 8 + u * 156 : 220 + u * 156;
+    const inner = left ? u : 1 - u; // 1 : du côté du nez
+    const by = 40 - v * 16 - (left ? 0 : raise) + inner * frown + (1 - inner) * 4;
+    const dx = (left ? 1 : -1) * (5 + hash(i + 900) * 7);
+    line(bx, by, bx + dx, by - 5 - hash(i + 950) * 5, i % 5 ? 1 : 2);
+  }
+  // les plis du front entre les sourcils
+  line(187, 22, 184 - frown * 0.4, 46);
+  line(198, 22, 201 + frown * 0.4, 44);
+
+  // un œil en amande : coins xa (côté gauche de l'image) et xb, ouverture open
+  const eye = (xa, xb, ey, open, outer) => {
+    const mid = (xa + xb) / 2;
+    const uq = ey - 34 * open, lq = ey + 8 + 8 * open;
+    const yU = (t) => (1 - t) * (1 - t) * ey + 2 * t * (1 - t) * uq + t * t * ey;
+    const yL = (t) => (1 - t) * (1 - t) * ey + 2 * t * (1 - t) * lq + t * t * ey;
+    const icx = mid + look, icy = ey - 3, ir = 18, pr = 8;
+    for (let x = xa; x <= xb; x += 1 / z) {
+      const t = (x - xa) / (xb - xa), top = yU(t) + 1, bot = yL(t);
+      seg(x, top, bot, '#f2eee6');
+      const dx = x - icx;
+      if (Math.abs(dx) < ir) {
+        const h = Math.sqrt(ir * ir - dx * dx);
+        seg(x, Math.max(top, icy - h), Math.min(bot, icy + h), Math.abs(dx) > ir - 4 ? '#3e2a0c' : '#5a3e14');
+      }
+      if (Math.abs(dx) < pr) { const h = Math.sqrt(pr * pr - dx * dx); seg(x, Math.max(top, icy - h), Math.min(bot, icy + h), INK); }
+    }
+    // reflet dans l'œil, s'il n'est pas caché par la paupière
+    const tr = (icx - 6 - xa) / (xb - xa);
+    if (tr > 0 && tr < 1 && icy - 7 > yU(tr) + 1) { ctx.fillStyle = '#ffffff'; dot(icx - 6, icy - 7, 2); }
+    ctx.fillStyle = '#e89282'; dot(outer ? xb - 3 : xa + 1, ey - 1, 3); // le coin de l'œil, côté nez
+    ctx.fillStyle = INK;
+    curve(xa, ey, mid, uq, xb, ey, 2); // paupière supérieure, épaisse
+    curve(xa, ey, mid, lq, xb, ey, 1);
+    // les plis de la paupière, les poches sous les yeux
+    curve(xa + 8, ey - 7, mid, uq - 12, xb - 6, ey - 6, 1, 0.05, 0.95);
+    curve(xa + 18, ey - 12, mid, uq - 22, xb - 16, ey - 12, 1, 0.15, 0.8);
+    curve(xa + 10, ey + 7, mid, lq + 12, xb - 8, ey + 6, 1, 0.08, 0.92);
+    curve(xa + 22, ey + 15, mid, lq + 22, xb - 18, ey + 13, 1, 0.2, 0.75);
+  };
+  const open = 0.85 - 0.5 * squint;
+  eye(28, 160, 102, open, true);
+  eye(224, 356, 102, open + raise * 0.03, false);
+  // les pattes d'oie, au coin extérieur de chaque œil
+  for (const [x0, s] of [[28, -1], [356, 1]]) {
+    line(x0 + s * 4, 98, x0 + s * 22, 90 - squint * 3);
+    line(x0 + s * 6, 102, x0 + s * 26, 101);
+    line(x0 + s * 4, 106, x0 + s * 20, 113 + squint * 3);
+    line(x0 + s * 14, 94, x0 + s * 24, 86);
+  }
+
+  // le nez : l'arête qui descend entre les yeux, l'aile et la narine en bas du cadre
+  curve(180, 50, 168, 128, 150, 192);
+  curve(205, 52, 210, 70, 208, 94, 1, 0, 1);
+  curve(196, 158, 216, 156, 219, 188);
+  curve(150, 176, 160, 172, 167, 188);
+
+  // la moustache, qui déborde en bas du cadre
+  for (let i = 0; i < 120; i++) {
+    const left = i % 2 === 0, u = hash(i + 1300);
+    const bx = left ? 60 + u * 100 : 222 + u * 100;
+    const by = 176 + hash(i + 1500) * 12 - tw;
+    line(bx, by, bx + (left ? -1 : 1) * (2 + hash(i + 1700) * 5), by + 8, i % 3 ? 1 : 2);
+  }
+
+  // une grosse goutte de sueur qui coule sur la tempe
+  if (e > 350) {
+    const sy = 46 + Math.min(40, (e - 350) / 12);
+    ctx.fillStyle = INK; dot(345, sy - 1); dot(344, sy, 3); dot(343, sy + 2, 5); dot(344, sy + 6, 3);
+    ctx.fillStyle = '#bfe4f4'; dot(345, sy + 1); dot(344, sy + 3, 3);
+    ctx.fillStyle = '#ffffff'; dot(344, sy + 3);
+  }
+}
+
 function facade(ctx, x, w, h, col, sign, base = 172) {
   const top = base - h;
   R(ctx, x - 1, top - 1, w + 2, h + 1, S.OUT);
@@ -318,41 +624,33 @@ const SHOTS = {
     },
   },
 
-  // Au comptoir, une chope glisse et s'arrête au ras du bout
+  // « Un verre, barman ! » : le client tape sur le comptoir, très gros plan sur la tête du barman (façon
+  // western spaghetti), puis la chope file le long du comptoir jusqu'à lui
   pinte: {
     caption: 'LE COMPTOIR DU SALOON, SAMEDI SOIR',
     indoor: true,
-    cues: [[0, 'rope'], [1500, 'glass']],
-    draw(ctx, el) {
-      plank(ctx, 0, 0, W, 140, '#5a3420');
-      for (const sy of [46, 86]) {
-        R(ctx, 30, sy, 200, 4, '#3a2014');
-        for (let b = 0; b < 12; b++) {
-          const col = ['#4a7a3a', '#7a2a1e', '#c89a40', '#3a5a9a'][b % 4];
-          const bh = 14 + (b % 3) * 3;
-          outlined(ctx, 36 + b * 16, sy - bh, [[0, 4, 8, bh - 4, col], [2, 0, 4, 4, col]]);
-          R(ctx, 37 + b * 16, sy - bh + 6, 2, bh - 8, S.shade(col, 0.3));
-        }
+    len: 2800, // plan d'ensemble plus long que les autres : il raconte une petite scène
+    cues: [[0, 'rope'], [250, 'thud'], [960, 'whip'], [1150, 'heartbeat'], [1450, 'heartbeat'], [1640, 'ding'], [1960, 'rope'], [2390, 'glass']],
+    draw(ctx, el, players) {
+      if (el < 950) {
+        saloonBar(ctx, el, players, {
+          slam: el > 110 && el < 250 ? 1 : el >= 250 && el < 360 ? 2 : 0,
+          shake: el >= 250 && el < 330,
+          bubble: el > 300 ? clamp01((el - 300) / 450) : 0,
+          bart: { look: el > 380 ? -1 : 0, rub: el < 300 },
+        });
+      } else if (el < 1900) bartenderCloseUp(ctx, el - 950);
+      else {
+        const e = el - 1900, k = ease(e / 480);
+        saloonBar(ctx, el, players, {
+          mug: { x: Math.round(296 - 200 * k), from: 296, moving: k < 0.99, wob: e > 480 && e < 760 ? (Math.floor(e / 50) % 2 ? 1 : -1) : 0, spill: e > 480 ? (e - 480) / 400 : 0 },
+          bart: { look: -1, throw: e < 320 },
+          grab: e > 640,
+        });
       }
-      // miroir et lampe
-      R(ctx, 262, 24, 96, 72, S.OUT);
-      R(ctx, 264, 26, 92, 68, '#7a8a8a');
-      R(ctx, 264, 26, 92, 4, '#a8b4b4');
-      const fl = 0.08 + 0.03 * Math.sin(el / 90);
-      S.disc(ctx, 310, 16, 30, `rgba(255,200,120,${fl})`);
-      outlined(ctx, 306, 8, [[0, 0, 8, 8, '#c89a40']]);
-      // comptoir
-      R(ctx, 0, 140, W, 10, '#a06a38');
-      R(ctx, 0, 140, W, 2, '#c8905a');
-      plank(ctx, 0, 150, W, 66, '#5a3218');
-      R(ctx, 352, 140, 2, 10, S.OUT);
-      R(ctx, 354, 140, 30, 76, INK);
-      const k = ease(el / 1500);
-      const mx = Math.round(10 + 322 * k);
-      const wob = el > 1500 && el < 1800 ? (Math.floor(el / 50) % 2 ? 1 : -1) : 0;
-      if (k < 1) for (let s = 1; s < 6; s++) R(ctx, mx - s * 8, 141, 5, 1, `rgba(253,246,224,${0.25 - s * 0.04})`);
-      outlined(ctx, mx, 140, [[0, -16, 12, 16, '#e0a030'], [12, -12, 3, 8, '#c89a40'], [-1 + wob, -19, 14, 4, CREAM]]);
-      R(ctx, mx + 2, 140 - 13, 2, 11, '#f8d070');
+      // coupes franches entre les trois plans
+      const cut = Math.min(Math.abs(el - 950), Math.abs(el - 1900));
+      if (cut < 50) { ctx.fillStyle = `rgba(10,5,3,${0.7 * (1 - cut / 50)})`; ctx.fillRect(0, 0, W, H); }
     },
   },
 
@@ -439,6 +737,33 @@ const SHOTS = {
     },
   },
 
+  // La chevauchée sauvage (variante de la course) : les cavaliers filent dans la prairie entre rochers et cactus
+  'course-wild': {
+    caption: 'LA CHEVAUCHÉE SAUVAGE',
+    cues: [[200, 'neigh'], [900, 'whip'], [1400, 'neigh']],
+    draw(ctx, el, players) {
+      R(ctx, 0, 128, W, H - 128, '#b4a45e');
+      R(ctx, 0, 128, W, 1, '#9a8c4c');
+      for (let i = 0; i < 70; i++) R(ctx, hash(i) * W, 132 + hash(i + 9) * 84, 1, 2, '#8a7e44');
+      // le décor défile : rochers et cactus
+      const cam = el * 0.12;
+      for (let k = 0; k < 9; k++) {
+        const x = ((hash(k + 40) * 520 - cam) % 520 + 520) % 520 - 60, y = 140 + hash(k + 50) * 70;
+        if (k % 3) outlined(ctx, x, y, [[0, -9, 16, 9, '#8a8478'], [3, -12, 9, 3, '#9a9488'], [3, -10, 5, 2, '#b0aa9c'], [10, -9, 6, 9, '#6a6458']]);
+        else outlined(ctx, x, y, [[0, -22, 5, 22, '#4a7a3a'], [-3, -15, 3, 2, '#4a7a3a'], [-3, -20, 2, 6, '#4a7a3a'], [5, -12, 3, 2, '#4a7a3a'], [6, -18, 2, 7, '#4a7a3a']]);
+      }
+      // les cavaliers, qui louvoient entre les obstacles
+      for (let i = 0; i < 4; i++) {
+        const x = -40 + el * (0.16 + hash(i + 3) * 0.03) - i * 22;
+        const y = 150 + i * 16 + Math.sin(el / 260 + i * 1.7) * 7;
+        puffs(ctx, 3, 110, 330, (el % 330) + 330, () => ({ x: x - 12, y: y - 2 }), { vx: -0.03, vy: -0.01, r0: 2, col: '214,170,120', a0: 0.5 });
+        horse(ctx, x, y, ['#8a4a24', '#3a2c26', '#e8dcc8', '#d8a850'][i], el + i * 37, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 11));
+      }
+      // un virevoltant traverse le plan
+      S.tumbleweed(ctx, Math.round(W - el * 0.09), Math.round(196 - Math.abs(Math.sin(el / 160)) * 6), el);
+    },
+  },
+
   // Plan par défaut (jeu sans plan à lui) : les cavaliers des joueurs traversent le désert
   default: {
     caption: 'QUELQUE PART DANS L\'OUEST',
@@ -468,11 +793,13 @@ export class Cutscene {
     this.extra = extra;
     this.amb = env ? new Ambience(env) : null;
     this.fired = null;
-    const per = Math.min(160, 700 / Math.max(1, players.length));
-    this.faceAt = players.map((_, i) => SHOT1 + 120 + i * per);
+    // plan d'ensemble : SHOT1 ms, ou plus si le jeu a une petite scène à raconter (les gros plans sont alors plus serrés)
+    this.s1 = this.shot?.len || SHOT1;
+    const per = Math.min(160, (SHOT2 - this.s1 - 400) / Math.max(1, players.length));
+    this.faceAt = players.map((_, i) => this.s1 + 120 + i * per);
     this.cues = [
       ...(extra.cues || this.shot?.cues || []),
-      [SHOT1, 'whip'],
+      [this.s1, 'whip'],
       ...this.faceAt.map((at) => [at + 160, 'thud']),
       [SHOT2, 'revolver'],
     ];
@@ -485,12 +812,12 @@ export class Cutscene {
 
     ctx.save();
     ctx.globalAlpha = el > CUT_MS - CUT_FADE ? clamp01((CUT_MS - el) / CUT_FADE) : 1;
-    if (el < SHOT1) this.establishing(ctx, el, now);
-    else if (el < SHOT2) this.faces(ctx, el - SHOT1, now);
+    if (el < this.s1) this.establishing(ctx, el, now);
+    else if (el < SHOT2) this.faces(ctx, el - this.s1, now);
     else this.titleCard(ctx, el - SHOT2);
     if (el < SHOT2) this.bars(ctx, el);
     // ouverture au noir et coupe franche entre les plans
-    const cut = el < 250 ? 1 - el / 250 : Math.abs(el - SHOT1) < 60 || Math.abs(el - SHOT2) < 60 ? 0.6 : 0;
+    const cut = el < 250 ? 1 - el / 250 : Math.abs(el - this.s1) < 60 || Math.abs(el - SHOT2) < 60 ? 0.6 : 0;
     if (cut > 0) { ctx.fillStyle = `rgba(10,5,3,${cut})`; ctx.fillRect(0, 0, W, H); }
     if (el > 400 && el < CUT_MS - CUT_FADE) canvasText(ctx, 'CLIC : PASSER', W - 6, 7, { color: '#8a7a68', align: 'right' });
     ctx.restore();
@@ -500,7 +827,7 @@ export class Cutscene {
     const b = Math.round(BAR * ease(el / 300));
     R(ctx, 0, 0, W, b, '#0a0503');
     R(ctx, 0, H - b, W, b, '#0a0503');
-    if (el < SHOT1 && this.caption) {
+    if (el < this.s1 && this.caption) {
       const n = Math.floor(clamp01((el - 300) / 900) * this.caption.length);
       if (n > 0) canvasText(ctx, this.caption.slice(0, n), 10, H - 15, { color: '#e2d2a6', align: 'left' });
     }
@@ -549,7 +876,7 @@ export class Cutscene {
     const scale = n >= 4 ? 3 : 4;
     const sw = 28, sh = 36, sx = 10, sy = 4; // cadrage du visage dans le sprite 48×56
     this.players.forEach((p, i) => {
-      const k = ease((el + SHOT1 - this.faceAt[i]) / 260);
+      const k = ease((el + this.s1 - this.faceAt[i]) / 260);
       if (k <= 0) return;
       const x0 = Math.round(i * cw), x1 = Math.round((i + 1) * cw);
       const dir = i % 2 ? -1 : 1;

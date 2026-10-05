@@ -396,33 +396,6 @@ label, small { color: var(--sand); }
 .seats.many .seat { flex-basis: 23%; }
 .seats.many .seat.empty .box { font-size: 15px; padding: 4px; }
 
-/* choix du jeu dans le lobby */
-.modes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.mode {
-  font-family: var(--body);
-  text-align: left;
-  color: var(--cream);
-  background: rgba(0, 0, 0, 0.3);
-  border: 2px solid var(--ink);
-  box-shadow: inset 0 0 0 2px #5a3a22;
-  padding: 4px 7px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  line-height: 1.05;
-  min-width: 0;
-}
-.mode b { font-family: var(--px); font-size: clamp(10px, 1.05vw, 13px); color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mode small { font-size: 15px; color: var(--sand); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.mode i { font-style: normal; font-size: 15px; color: var(--muted); }
-.mode:hover:not(:disabled) { box-shadow: inset 0 0 0 2px var(--border); }
-.mode.on { background: rgba(194, 100, 62, 0.35); box-shadow: inset 0 0 0 2px var(--yellow); }
-.mode.on i { color: var(--green); }
-.mode:disabled { cursor: default; }
-.mode:disabled:not(.on) { opacity: 0.6; }
-.mode.full { opacity: 0.35; filter: grayscale(1); cursor: not-allowed; }
-.mode.full i { color: var(--salmon); }
 .seat.empty { cursor: pointer; }
 .seat.empty:hover .box { border-color: var(--yellow); color: var(--yellow); }
 .seat canvas { flex: 1 1 0; min-height: 0; max-width: 100%; width: auto; height: 0; aspect-ratio: 56 / 60; object-fit: contain; border: 2px solid var(--ink); }
@@ -452,11 +425,142 @@ label, small { color: var(--sand); }
 .chat-log b { color: var(--yellow); font-weight: normal; }
 .chat input { width: 100%; font-size: 18px; }
 
+/* en-tête : code à copier d'un clic, table ouverte ou fermée */
+.lobby-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lobby-head .code {
+  font: inherit; color: var(--cream); letter-spacing: 4px; text-shadow: inherit;
+  background: rgba(0, 0, 0, 0.3); border: 2px dashed var(--muted); padding: 0 4px 0 8px; cursor: copy;
+}
+.lobby-head .code:hover { border-color: var(--yellow); color: var(--yellow); }
+.copied { font-family: var(--body); font-size: 18px; font-weight: normal; color: var(--green); text-shadow: none; opacity: 0; transition: opacity 0.2s; }
+.copied.on { opacity: 1; }
+.lock-tag {
+  font-family: var(--px); font-size: 10px; color: var(--green); text-shadow: none;
+  background: rgba(0, 0, 0, 0.3); border: 2px solid var(--ink); box-shadow: inset 0 0 0 2px #3a5a22; padding: 3px 6px; cursor: pointer;
+}
+.lock-tag.on { color: var(--salmon); box-shadow: inset 0 0 0 2px #6a2a1a; }
+.lock-tag:disabled { cursor: default; }
+.lock-tag:hover:not(:disabled) { filter: brightness(1.2); }
+
+/* déroulé (un jeu, roue, championnat) et nombre de jeux du championnat */
+.lobby-opts { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; }
+.seg { display: inline-flex; align-items: center; }
+.seg button {
+  font-family: var(--px); font-size: clamp(9px, 1vw, 12px); color: var(--sand);
+  background: rgba(0, 0, 0, 0.3); border: 2px solid var(--ink); margin-left: -2px; padding: 4px 9px; cursor: pointer;
+  box-shadow: inset 0 0 0 2px #5a3a22;
+}
+.seg button:first-of-type { margin-left: 0; }
+.seg button.on { color: var(--ink); background: var(--yellow); box-shadow: inset 0 0 0 2px #fff0b8; }
+.seg button:hover:not(:disabled):not(.on) { color: var(--yellow); }
+.seg button:disabled { cursor: default; }
+.seg button:disabled:not(.on) { opacity: 0.55; }
+.seg .lbl { font-size: 17px; color: var(--muted); margin-right: 6px; }
+.mini-link { font-family: var(--body); font-size: 17px; color: var(--yellow); background: none; border: 0; padding: 0 2px; text-decoration: underline; cursor: pointer; }
+.mini-link:hover { color: var(--cream); }
+
+
+/* choix du jeu dans le lobby : les cartes du menu solo, en plus grand, par pages de 2 × 4 */
+.lobby-modes { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 1fr; }
+.lobby-modes .solo-card { position: relative; padding: 8px 4px 6px; gap: 4px; }
+.lobby-modes .solo-card img { height: clamp(24px, 3vw, 39px); }
+.lobby-modes .solo-card b { font-size: clamp(9px, 1.1vw, 13px); }
+.lobby-modes .solo-card small { font-size: clamp(13px, 1.3vw, 16px); }
+.lobby-modes .solo-card.on { background: rgba(194, 100, 62, 0.45); box-shadow: inset 0 0 0 2px var(--yellow); }
+.lobby-modes .solo-card.on small { color: var(--green); }
+.lobby-modes .solo-card:disabled { cursor: default; }
+.lobby-modes .solo-card:disabled:hover { background: rgba(26, 15, 10, 0.55); box-shadow: inset 0 0 0 2px #4a2e1a; transform: none; }
+.lobby-modes .solo-card:disabled:hover img { transform: none; }
+.lobby-modes .solo-card.on:disabled:hover { background: rgba(194, 100, 62, 0.45); box-shadow: inset 0 0 0 2px var(--yellow); }
+.lobby-modes .solo-card.full { opacity: 0.35; filter: grayscale(1); }
+.lobby-modes .solo-card.full small { color: var(--salmon); }
+/* roue et championnat : jeux cochés ou non */
+.lobby-modes.pick .solo-card.in { box-shadow: inset 0 0 0 2px var(--green); }
+.lobby-modes.pick .solo-card.in:disabled:hover { box-shadow: inset 0 0 0 2px var(--green); }
+.lobby-modes.pick .solo-card.out { opacity: 0.45; filter: grayscale(0.7); }
+.lobby-modes.pick .solo-card.full { opacity: 0.35; }
+.lobby-modes .check {
+  position: absolute; top: 3px; right: 3px; width: 14px; height: 14px; line-height: 12px; text-align: center;
+  font-family: var(--px); font-size: 11px; color: var(--ink); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--ink);
+}
+.lobby-modes .in .check { background: var(--green); }
+.lobby-modes .ghost { visibility: hidden; }
+
+/* places : actions de l'hôte (confier la table, expulser), bots, chaise vide */
+.seat { position: relative; }
+.seat-acts { position: absolute; top: 0; right: 0; display: flex; gap: 2px; z-index: 1; }
+.sa {
+  width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  background: #5a3a22; border: 2px solid var(--ink); box-shadow: inset -2px -2px 0 #3a2414, inset 2px 2px 0 #8a5a34;
+}
+.sa .px-ico { width: 12px; height: 12px; margin: 0; }
+.sa.kick { background: #8a2a20; box-shadow: inset -2px -2px 0 #5a1a14, inset 2px 2px 0 #c8503c; }
+.sa:hover { filter: brightness(1.25); }
+.seat.host canvas { border-color: var(--yellow); }
+.botag { color: var(--muted); font-family: var(--px); font-size: 10px; border: 1px solid var(--muted); padding: 0 3px; margin-left: 2px; }
+/* chaise vide côté hôte : deux boutons qui gardent leur taille quand les portraits rétrécissent */
+#seats .seat.empty .box.acts { flex: 0 0 auto; height: auto; aspect-ratio: auto; flex-direction: column; gap: 4px; padding: 6px; margin: auto 0; font-size: inherit; }
+#seats .seat.empty .box.acts::after { content: none; }
+.seat-btn {
+  font-family: var(--px); font-size: clamp(8px, 0.9vw, 11px); color: var(--cream); background: rgba(0, 0, 0, 0.35); white-space: nowrap;
+  border: 2px solid var(--ink); box-shadow: inset 0 0 0 2px #5a3a22; padding: 4px 8px; cursor: pointer; width: 100%;
+}
+.seat-btn:hover { color: var(--yellow); box-shadow: inset 0 0 0 2px var(--border); }
+
+/* classement du championnat : dans le lobby (au-dessus du comptoir) et en fin de partie */
+.champ-board { flex-shrink: 0; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px dashed #5a3a22; max-height: 55%; overflow-y: auto; }
+.champ-board h3, .go-champ h3 { margin-bottom: 4px; }
+.champ-board h3 small, .go-champ h3 small { font-family: var(--body); font-weight: normal; font-size: 17px; color: var(--muted); text-shadow: none; margin-left: 4px; }
+.champ-rank { list-style: none; margin: 0 0 4px; padding: 0; font-size: 19px; }
+.champ-rank li { display: grid; grid-template-columns: 1.4em minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 0 4px; border-left: 3px solid transparent; }
+.champ-rank li:nth-child(odd) { background: rgba(255, 240, 210, 0.04); }
+.champ-rank .rk { font-family: var(--px); font-size: 12px; color: var(--muted); text-align: right; }
+.champ-rank li:nth-child(1) .rk { color: #f8d070; }
+.champ-rank .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.champ-rank .pts { color: var(--yellow); text-align: right; min-width: 3.4em; }
+.champ-rank .gain { color: var(--green); font-size: 0.85em; }
+.champ-rank li.me { border-left-color: var(--yellow); background: rgba(248, 208, 112, 0.12); }
+.champ-rank li.gone { opacity: 0.5; }
+.champion { font-family: var(--px); font-size: clamp(11px, 1.3vw, 15px); color: var(--green); margin: 2px 0 6px; }
+.champion .px-ico { vertical-align: -6px; }
+.champ-played { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 4px; }
+.champ-played .px-ico { width: 20px; height: auto; }
+.go-champ { max-width: 420px; margin: 0 auto 12px; }
+.go-champ:empty { display: none; }
+.gameover .go-champ .champ-rank { font-size: 20px; }
+
+/* roue des jeux : machine à sous qui s'arrête sur le jeu tiré */
+.spin {
+  position: fixed; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: repeating-conic-gradient(rgba(10, 6, 4, 0.55) 0 25%, rgba(10, 6, 4, 0.35) 0 50%) 0 0 / 4px 4px;
+}
+.spin-box {
+  width: min(560px, 100%); padding: 18px 20px 14px; text-align: center;
+  background: repeating-linear-gradient(0deg, transparent 0 18px, rgba(26, 15, 10, 0.55) 18px 20px), linear-gradient(#7a4a28, #6a3e22);
+  border: 3px solid var(--ink);
+  box-shadow: inset 0 0 0 3px #a06a3c, inset 0 0 0 6px #4a2a16, 6px 6px 0 rgba(26, 15, 10, 0.6);
+}
+.spin-title { font-size: clamp(14px, 2vw, 20px); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+.spin-reel { position: relative; overflow: hidden; background: var(--frame-2); border: 3px solid var(--ink); box-shadow: inset 0 0 0 2px #3a2414; padding: 8px 0; }
+.spin-reel::before, .spin-reel::after { content: ''; position: absolute; top: 0; bottom: 0; width: 22%; z-index: 1; pointer-events: none; }
+.spin-reel::before { left: 0; background: linear-gradient(90deg, var(--frame-2), transparent); }
+.spin-reel::after { right: 0; background: linear-gradient(-90deg, var(--frame-2), transparent); }
+.spin-strip { display: flex; gap: 8px; width: max-content; will-change: transform; }
+.spin-cell {
+  flex: 0 0 108px; height: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  background: rgba(0, 0, 0, 0.35); border: 2px solid var(--ink); box-shadow: inset 0 0 0 2px #5a3a22;
+}
+.spin-cell b { font-family: var(--px); font-size: 10px; color: var(--sand); line-height: 1.1; padding: 0 4px; }
+.spin-cell.on { background: rgba(194, 100, 62, 0.45); box-shadow: inset 0 0 0 2px var(--yellow); }
+.spin-cell.on b { color: var(--yellow); }
+.spin-mark { position: absolute; left: 50%; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--yellow); z-index: 2; box-shadow: 0 0 0 1px var(--ink); }
+.spin-result { font-family: var(--px); font-size: clamp(14px, 2vw, 20px); color: var(--green); text-shadow: 2px 2px 0 var(--ink); min-height: 1.3em; margin: 10px 0 0; }
+
 /* Écrans peu hauts : le cadre rétrécit, les cartes de jeux se résument à leur nom (la description reste en infobulle). */
 @media (max-height: 820px) {
   .lobby { grid-template-columns: 2fr 1fr; }
-  .mode small { display: none; }
-  .mode b { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+  .lobby-modes .solo-card { padding: 5px 3px 4px; gap: 2px; }
+  .lobby-modes .solo-card img { height: clamp(20px, 2.4vw, 26px); }
 }
 @media (max-height: 680px) {
   .lobby-info { padding: 8px 12px; gap: 4px; }
@@ -464,21 +568,20 @@ label, small { color: var(--sand); }
   .lobby-info h2 { font-size: 15px; }
   .link-row input { font-size: 15px; padding-top: 2px; padding-bottom: 2px; }
   .link-row .btn { padding: 4px 10px; }
-  .mode { padding: 3px 5px; }
-  .mode i { font-size: 13px; }
   .lobby-buttons .btn, .lobby-buttons .btn.big { padding: 5px 12px; font-size: 12px; }
   .lobby-info .hint { font-size: 14px; }
   .seat .tag { display: none; }
+  .lobby-modes .solo-card small { display: none; }
+  .seg button { padding: 2px 6px; }
 }
 /* Très peu de hauteur : on garde de la place pour les portraits. */
 @media (max-height: 600px) {
   .lobby { grid-template-columns: 2.6fr 1fr; }
-  .mode i { display: none; }
-  .mode b { -webkit-line-clamp: 1; line-clamp: 1; }
-  .modes { gap: 4px; }
   .lobby-buttons .btn, .lobby-buttons .btn.big { white-space: nowrap; }
   .seats.many .seat.empty .box, .seats .seat.empty .box { font-size: 0; padding: 2px; }
   .seats .seat.empty .box::after { content: '?'; font-family: var(--px); font-size: 14px; }
+  .lobby-modes { gap: 4px; }
+  .lobby-modes .solo-card img { height: 18px; }
 }
 
 /* ------------------------------------------------ jeu */
@@ -719,7 +822,7 @@ body.touch #scr-game.multi .tp-chat { display: block; }
   .lobby { display: flex; flex-direction: column; height: auto; min-height: 100%; gap: 12px; }
   .lobby-info { overflow: visible; }
   .lobby-info > .seats { flex: 0 0 auto; height: 120px; }
-  .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lobby-modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .chat { display: flex; height: 220px; flex-shrink: 0; }
   /* roulette : le croupier sur toute la largeur, puis tour + pari, puis les deux tirs */
   .bottombar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 8px; padding: 8px 10px; }

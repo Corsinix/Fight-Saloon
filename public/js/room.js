@@ -49,55 +49,194 @@ function drawFly(ctx, cx, cy, now, ph = 0) {
   if (Math.floor(now / 40) % 2) { ctx.fillStyle = 'rgba(220,230,240,0.7)'; ctx.fillRect(x - 1, y - 1, 1, 1); ctx.fillRect(x + 1, y - 1, 1, 1); }
 }
 
-// Barman : il fait les cent pas derrière le comptoir et essuie un verre
+// Silhouette faite de rectangles [x, y, w, h, couleur], cernée de noir d'un seul tenant
+// (on trace tous les contours d'abord, puis tous les remplissages)
+function shape(R, parts) {
+  for (const [x, y, w, h] of parts) R(x - 1, y - 1, w + 2, h + 2, OUT);
+  for (const [x, y, w, h, c] of parts) R(x, y, w, h, c);
+}
+
+// Barman : crâne chauve et luisant, couronne de cheveux, moustache en guidon, nœud papillon, gilet,
+// brassards rouges, tablier. Il fait les cent pas derrière le comptoir et essuie un verre.
+const BAR = {
+  skin: '#eab78e', skinD: '#c98e64', skinL: '#f8d8b8', cheek: '#e89a84',
+  hair: '#7a6a5a', hairD: '#4a3e34', must: '#5a4434', mustL: '#7a604a',
+  shirt: '#ece4d4', shirtD: '#c4b8a4', vest: '#3a2a38', vestL: '#5a4458', vestD: '#241820',
+  bow: '#a02a24', bowL: '#d04a3a', garter: '#c0392b', gold: '#e0b040',
+  apron: '#f8f2e4', apronD: '#d8ccb4',
+};
 function drawBartender(ctx, x, now, wiping) {
-  const { R, box } = paint(ctx);
-  const skin = '#eab78e';
+  const { R } = paint(ctx);
+  const C = BAR;
   const step = wiping ? 0 : Math.floor(now / 160) % 2;
-  box(x - 9, 62 - step, 18, 26, '#e8e0d0');
-  R(x - 9, 62 - step, 4, 26, '#2a2622'); R(x + 5, 62 - step, 4, 26, '#2a2622');
-  R(x - 2, 63 - step, 4, 2, '#c0392b');
-  R(x - 9, 74 - step, 18, 1, '#c8c0b0'); R(x - 9, 80 - step, 18, 8, '#f4ecd8'); // tablier
-  const hy = 48 - step;
-  box(x - 6, hy, 12, 13, skin);
-  R(x - 3, hy + 1, 3, 1, '#f8d8b8');
-  R(x - 6, hy + 4, 2, 5, '#4a3a2a'); R(x + 4, hy + 4, 2, 5, '#4a3a2a');
-  if ((now % 3300) > 120) { R(x - 3, hy + 5, 1, 1, OUT); R(x + 2, hy + 5, 1, 1, OUT); }
-  R(x - 4, hy + 8, 8, 2, '#3a2a1a'); R(x - 5, hy + 9, 1, 1, '#3a2a1a'); R(x + 4, hy + 9, 1, 1, '#3a2a1a');
+  const y0 = 62 - step, hy = 48 - step;
+  // bras (derrière le corps) : pendants en marchant, pliés quand il essuie
+  const arm = (ax, ay, len, garterY) => {
+    shape(R, [[ax, ay, 4, len, C.shirt]]);
+    R(ax, ay, 1, len, C.shirtD); R(ax + 3, ay, 1, len, C.shirtD);
+    R(ax, garterY, 4, 2, C.garter); R(ax, garterY, 4, 1, C.bowL);
+  };
+  if (!wiping) {
+    arm(x - 13, y0 + 2, 15, y0 + 5); arm(x + 9, y0 + 2, 15, y0 + 5);
+    shape(R, [[x - 13, y0 + 17, 4, 4, C.skin], [x + 9, y0 + 17, 4, 4, C.skin]]);
+    R(x - 13, y0 + 20, 4, 1, C.skinD); R(x + 9, y0 + 20, 4, 1, C.skinD);
+  }
+  // le corps : chemise, gilet ouvert en V, tablier
+  shape(R, [[x - 9, y0 + 1, 18, 25, C.shirt], [x - 8, y0, 16, 1, C.shirt]]);
+  for (let k = 0; k < 25; k++) {
+    const v = Math.max(0, 4 - Math.floor(k / 2)); // le V du gilet se referme en descendant
+    R(x - 9, y0 + 1 + k, 6 - v + 1, 1, C.vest);
+    R(x + 3 + v - 1, y0 + 1 + k, 6 - v + 1, 1, C.vest);
+  }
+  R(x - 9, y0 + 1, 1, 24, C.vestL); R(x + 8, y0 + 1, 1, 24, C.vestD); // volume du gilet
+  R(x - 3, y0 + 9, 1, 14, C.vestL); R(x + 2, y0 + 9, 1, 14, C.vestD);
+  for (const by of [11, 15, 19]) R(x + 2, y0 + by, 1, 1, C.gold); // boutons
+  R(x - 7, y0 + 13, 1, 1, C.gold); R(x - 6, y0 + 14, 2, 1, C.gold); R(x - 4, y0 + 14, 1, 1, C.gold); // chaîne de montre
+  R(x - 7, y0 + 7, 3, 1, C.vestD); // poche
+  R(x - 1, y0 + 4, 1, 6, C.shirtD); // patte de la chemise
+  // nœud papillon
+  shape(R, [[x - 4, y0 + 1, 3, 3, C.bow], [x + 1, y0 + 1, 3, 3, C.bow], [x - 1, y0 + 1, 2, 2, C.bowL]]);
+  R(x - 4, y0 + 3, 3, 1, S.shade(C.bow, -0.3)); R(x + 1, y0 + 3, 3, 1, S.shade(C.bow, -0.3));
+  // tablier noué à la taille, avec ses plis
+  R(x - 9, y0 + 15, 18, 1, C.apronD);
+  R(x - 8, y0 + 16, 16, 10, C.apron);
+  for (const fx of [-5, -1, 4]) R(x + fx, y0 + 17, 1, 9, C.apronD);
+  R(x + 7, y0 + 16, 1, 10, C.apronD);
+  // la tête
+  shape(R, [[x - 6, hy + 1, 12, 12, C.skin], [x - 5, hy, 10, 1, C.skin], [x - 7, hy + 5, 1, 3, C.skin], [x + 6, hy + 5, 1, 3, C.skin], [x - 2, hy + 13, 4, 1, C.skinD]]);
+  R(x - 3, hy + 1, 4, 1, C.skinL); R(x - 4, hy + 2, 2, 1, C.skinL); R(x - 1, hy + 2, 1, 1, '#ffffff'); // crâne qui brille
+  R(x + 5, hy + 2, 1, 9, C.skinD); R(x - 4, hy + 12, 8, 1, C.skinD); // ombre du visage
+  R(x - 7, hy + 6, 1, 1, C.skinD); R(x + 6, hy + 6, 1, 1, C.skinD); // oreilles
+  // couronne de cheveux grisonnants, au-dessus des oreilles
+  R(x - 6, hy + 3, 1, 3, C.hair); R(x + 5, hy + 3, 1, 3, C.hair); R(x - 6, hy + 2, 1, 1, C.hairD); R(x + 5, hy + 2, 1, 1, C.hairD);
+  // sourcils broussailleux, yeux qui clignent
+  R(x - 4, hy + 4, 2, 1, C.hair); R(x + 2, hy + 4, 2, 1, C.hair);
+  if ((now % 3300) > 120) { R(x - 3, hy + 5, 1, 2, OUT); R(x + 2, hy + 5, 1, 2, OUT); }
+  else { R(x - 4, hy + 6, 2, 1, C.skinD); R(x + 2, hy + 6, 2, 1, C.skinD); }
+  // nez rond, joues rouges
+  R(x - 1, hy + 6, 2, 3, C.skinD); R(x - 1, hy + 6, 1, 1, C.skinL);
+  R(x - 5, hy + 8, 2, 1, C.cheek); R(x + 3, hy + 8, 2, 1, C.cheek);
+  // moustache en guidon, pointes relevées
+  R(x - 4, hy + 9, 8, 2, C.must); R(x - 3, hy + 9, 2, 1, C.mustL); R(x + 1, hy + 9, 2, 1, C.mustL);
+  R(x - 6, hy + 8, 2, 2, C.must); R(x + 4, hy + 8, 2, 2, C.must); R(x - 7, hy + 7, 1, 2, C.must); R(x + 6, hy + 7, 1, 2, C.must);
+  R(x - 1, hy + 11, 2, 1, C.skinD); // bouche
   if (wiping) {
-    // verre tenu à hauteur de poitrine, chiffon qui tourne
+    // il tient un verre vide par en dessous, à hauteur de poitrine, et frotte l'intérieur avec un chiffon
     const a = now / 160;
-    box(x - 3, 70, 6, 8, '#c8d8e0'); R(x - 2, 74, 4, 3, '#d9a040');
-    R(x - 11, 64, 3, 9, '#e8e0d0'); R(x - 9, 72, 6, 3, '#e8e0d0'); R(x - 4, 72, 2, 3, skin);
-    const cx = Math.round(x + 1 + Math.cos(a) * 2), cy = Math.round(69 + Math.sin(a) * 2);
-    R(x + 8, 64, 3, 6, '#e8e0d0'); R(cx + 2, cy, 6, 3, '#e8e0d0');
-    box(cx - 2, cy - 1, 5, 4, '#f4ecd8'); R(cx + 1, cy + 1, 2, 2, skin);
-  } else {
-    R(x - 11, 64 - step, 3, 18, '#e8e0d0'); R(x + 8, 64 - step, 3, 18, '#e8e0d0');
-    R(x - 11, 81 - step, 3, 3, skin); R(x + 8, 81 - step, 3, 3, skin);
+    const gx = x, gy = y0 + 6; // coin haut gauche du verre, devant le gilet sombre
+    // bras gauche : coude au corps, l'avant-bras remonte sous le verre
+    arm(x - 13, y0 + 2, 10, y0 + 5);
+    shape(R, [[x - 12, y0 + 13, gx - x + 11, 3, C.shirt]]); R(x - 12, y0 + 15, gx - x + 11, 1, C.shirtD);
+    // le verre (gobelet à whisky, épais, avec ses reflets)
+    shape(R, [[gx, gy, 8, 9, '#7a9eae'], [gx + 1, gy + 9, 6, 1, '#7a9eae']]);
+    R(gx + 1, gy + 1, 5, 7, '#9abccc'); R(gx + 1, gy + 1, 1, 7, '#e8f6fc'); R(gx + 3, gy + 2, 1, 3, '#c8e4f0'); R(gx + 6, gy + 1, 1, 7, '#5a7a88');
+    R(gx, gy + 8, 8, 2, '#5a7a88'); R(gx + 1, gy + 8, 3, 1, '#c8e4f0'); // fond épais
+    shape(R, [[gx - 1, gy + 9, 5, 3, C.skin]]); R(gx - 1, gy + 11, 5, 1, C.skinD); // main sous le verre
+    // bras droit : la main tourne dans le verre avec le chiffon qui dépasse
+    const cx = Math.round(gx + 4 + Math.cos(a) * 1.5), cy = Math.round(gy + 1 + Math.sin(a));
+    arm(x + 9, y0 + 2, 6, y0 + 5);
+    shape(R, [[cx + 2, cy - 1, x + 13 - cx - 2, 3, C.shirt]]); R(cx + 2, cy + 1, x + 13 - cx - 2, 1, C.shirtD);
+    shape(R, [[cx - 3, cy - 3, 5, 4, '#f4ecd8'], [cx - 4 + Math.round(Math.cos(a) * 1.5), cy + 1, 2, 3, '#f4ecd8']]);
+    R(cx - 3, cy - 3, 5, 1, '#d8ccb4');
+    shape(R, [[cx, cy - 2, 3, 3, C.skin]]);
   }
 }
 
-// Chat noir qui se promène sur le comptoir
+// Chat noir qui se promène sur le comptoir (ou s'assoit et balance la queue)
+const CAT = { fur: '#2a2428', furL: '#463e48', furD: '#18141a', ear: '#8a4a5a', eye: '#c8e040', nose: '#c87a8a', whisker: '#bab0a8' };
 function drawCat(ctx, x, base, dir, now, sitting) {
   const { R } = paint(ctx);
-  const col = '#2a2428', o = OUT;
-  const f = sitting ? 0 : Math.floor(now / 140) % 2;
+  const C = CAT;
+  const f = sitting ? 0 : Math.floor(now / 140) % 4;
   const X = (dx) => Math.round(x + dx * dir);
-  const P = (dx, dy, w, h, c) => R(dir > 0 ? x + dx : x - dx - w + 1, base + dy, w, h, c);
+  // tout est décrit tourné vers la droite, puis retourné si le chat va vers la gauche
+  const flip = ([dx, dy, w, h, c]) => [dir > 0 ? x + dx : x - dx - w + 1, base + dy, w, h, c];
+  const P = (dx, dy, w, h, c) => R(...flip([dx, dy, w, h, c]));
+  const blink = (now % 2900) < 140;
   if (sitting) {
-    P(-5, -9, 9, 9, o); P(-4, -8, 7, 8, col);
-    P(2, -14, 7, 7, o); P(3, -13, 5, 5, col); P(3, -15, 1, 2, col); P(6, -15, 1, 2, col);
-    const sw = Math.round(Math.sin(now / 300) * 2);
-    P(-8, -3 + sw, 4, 2, col); P(-9, -6 + sw, 2, 4, col);
-  } else {
-    P(-7, -8, 14, 6, o); P(-6, -7, 12, 4, col);
-    P(5, -11, 6, 6, o); P(6, -10, 4, 4, col); P(6, -12, 1, 2, col); P(9, -12, 1, 2, col);
-    P(-9, -12, 2, 6, col); P(-10, -13, 2, 2, col);
-    for (const [lx, ph] of [[-5, 0], [-2, 1], [2, 0], [5, 1]]) P(lx, -3, 1, 3 - ((f + ph) % 2), col);
+    const sw = Math.sin(now / 300);
+    const tail = [[-6, -2, 5, 2], [-9, -3, 3, 2], [-11, -5 + Math.round(sw), 2, 3], [-12, -8 + Math.round(sw * 2), 2, 3]];
+    shape(R, [
+      [-5, -9, 9, 9, C.fur], [-4, -10, 7, 1, C.fur], [-6, -6, 1, 6, C.fur], // dos rond
+      [2, -12, 4, 6, C.fur], // poitrail
+      [1, -17, 8, 6, C.fur], [2, -18, 6, 1, C.fur], [1, -20, 2, 3, C.fur], [7, -20, 2, 3, C.fur], // tête, oreilles
+      [3, -2, 2, 2, C.fur], [6, -2, 2, 2, C.fur], // pattes avant
+      ...tail.map(([a, b, w, h]) => [a, b, w, h, C.fur]),
+    ].map(flip));
+    P(-4, -9, 4, 1, C.furL); P(2, -18, 5, 1, C.furL); P(2, -19, 1, 1, C.ear); P(7, -19, 1, 1, C.ear);
+    P(-5, -1, 8, 1, C.furD);
+    if (!blink) { P(3, -15, 2, 2, C.eye); P(6, -15, 2, 2, C.eye); P(4, -15, 1, 2, OUT); P(7, -15, 1, 2, OUT); }
+    else { P(3, -14, 2, 1, OUT); P(6, -14, 2, 1, OUT); }
+    P(5, -13, 1, 1, C.nose);
+    P(9, -13, 2, 1, C.whisker); P(9, -12, 2, 1, C.whisker); P(-1, -13, 2, 1, C.whisker);
+    return X;
   }
-  if ((now % 2900) > 140) P(sitting ? 6 : 8, sitting ? -11 : -9, 1, 1, '#c8e040');
+  // en marche : le corps ondule un peu, les pattes alternent par paires en diagonale
+  const bob = f % 2;
+  const leg = (lx, ph) => { const up = (f + ph) % 4 === 0 ? 1 : 0; return [lx, -3, 2, 3 - up, C.fur]; };
+  const tw = Math.round(Math.sin(now / 260) * 1.5);
+  shape(R, [
+    [-7, -8 + bob, 13, 5, C.fur], [-6, -9 + bob, 11, 1, C.fur], // corps
+    [5, -12, 6, 6, C.fur], [6, -13, 4, 1, C.fur], [11, -10, 1, 3, C.fur], // tête, museau
+    [5, -15, 2, 2, C.fur], [9, -15, 2, 2, C.fur], // oreilles
+    leg(-6, 0), leg(-3, 2), leg(1, 2), leg(4, 0),
+    [-9, -9 + bob, 2, 2, C.fur], [-10, -12, 2, 3, C.fur], [-10 + tw, -15, 2, 3, C.fur], [-9 + tw, -16, 2, 1, C.fur], // queue dressée
+  ].map(flip));
+  P(-5, -9 + bob, 9, 1, C.furL); P(6, -13, 3, 1, C.furL); // reflets sur le dos et la tête
+  P(-6, -4 + bob, 11, 1, C.furD); // ventre dans l'ombre
+  P(5, -14, 1, 1, C.ear); P(10, -14, 1, 1, C.ear);
+  if (!blink) { P(8, -10, 2, 1, C.eye); P(9, -10, 1, 1, OUT); }
+  else P(8, -10, 2, 1, OUT);
+  P(11, -9, 1, 1, C.nose);
+  P(12, -9, 2, 1, C.whisker); P(12, -7, 2, 1, C.whisker);
   return X;
+}
+
+// Bouteille posée sur une étagère (bas en sy, bord gauche en bx) : whisky carré, vin au long col,
+// flasque ronde, cruche en grès ou fiole fine, en verre teinté avec reflet, étiquette et bouchon.
+// Renvoie sa largeur.
+const BOTTLES = ['whisky', 'wine', 'flask', 'jug', 'slim', 'wine', 'whisky'];
+function drawBottle(R, bx, sy, kind, col, rnd) {
+  const hi = S.shade(col, 0.45), lo = S.shade(col, -0.35);
+  const cork = rnd() < 0.5 ? '#c8a070' : '#a83a2a';
+  const label = rnd() < 0.7 ? ['#e8d8b0', '#f4ecd8', '#d8b878'][Math.floor(rnd() * 3)] : null;
+  let parts, w, top, lab, glint = true;
+  if (kind === 'whisky') {
+    const h = 9 + Math.floor(rnd() * 3); w = 6;
+    parts = [[0, -h, 6, h, col], [1, -h - 1, 4, 1, col], [2, -h - 4, 2, 3, col], [2, -h - 6, 2, 2, cork]];
+    top = -h; lab = [0, -h + 3, 6, 4];
+  } else if (kind === 'wine') {
+    const h = 9 + Math.floor(rnd() * 3); w = 5;
+    parts = [[0, -h, 5, h, col], [1, -h - 2, 3, 2, col], [2, -h - 7, 1, 5, col], [1, -h - 9, 3, 2, rnd() < 0.5 ? '#c0392b' : '#e0b040']];
+    top = -h; lab = [0, -h + 4, 5, 3];
+  } else if (kind === 'flask') {
+    w = 7;
+    parts = [[1, -8, 5, 8, col], [0, -7, 7, 6, col], [2, -11, 3, 3, col], [2, -13, 3, 2, cork]];
+    top = -8; lab = null;
+  } else if (kind === 'jug') {
+    // cruche en grès, sans reflet de verre
+    w = 8; glint = false;
+    const gr = rnd() < 0.5 ? '#c8b088' : '#a87850';
+    parts = [[1, -10, 6, 10, gr], [0, -8, 8, 6, gr], [2, -12, 4, 2, gr], [7, -9, 2, 1, gr], [8, -9, 1, 5, gr], [2, -14, 4, 2, '#7a4a28']];
+    top = -10; lab = null;
+  } else {
+    const h = 13 + Math.floor(rnd() * 4); w = 4;
+    parts = [[0, -h, 4, h, col], [1, -h - 4, 2, 4, col], [1, -h - 5, 2, 1, cork]];
+    top = -h; lab = [0, -h + 5, 4, 3];
+  }
+  shape(R, parts.map(([x, y, pw, ph, c]) => [bx + x, sy + y, pw, ph, c]));
+  if (kind === 'jug') R(bx + 1, sy - 10, 6, 3, '#6a4428'); // vernis brun du haut
+  if (glint) {
+    R(bx + 1, sy + top + 1, 1, -top - 2, hi); // reflet du verre
+    R(bx + w - 1, sy + top + 1, 1, -top - 1, lo); // côté dans l'ombre
+    if (kind !== 'flask') R(bx + 1, sy + top - 1, 1, 1, '#ffffff');
+  } else R(bx + w - 2, sy - 9, 1, 8, S.shade('#c8b088', -0.3));
+  if (lab && label) {
+    R(bx + lab[0], sy + lab[1], lab[2], lab[3], label);
+    R(bx + lab[0] + 1, sy + lab[1] + 1, lab[2] - 2, 1, '#7a3a1a'); // le nom
+    if (lab[3] > 3) R(bx + lab[0] + 1, sy + lab[1] + 3, lab[2] - 3, 1, '#a88a5a');
+  }
+  return w;
 }
 
 // Mariachi en traje de charro, debout derrière la table (le bas des jambes est caché) :
@@ -309,21 +448,29 @@ const ROOMS = {
       R(0, 92, W, 4, '#3a2214'); R(0, 92, W, 1, '#8a5a34'); R(0, 96, W, 44, '#4a2c18');
       for (let x = 6; x < W; x += 42) { R(x, 100, 34, 30, '#3e2414'); R(x + 1, 101, 32, 1, '#5e3a22'); }
       R(0, 0, W, 7, '#2a1810'); R(0, 7, W, 1, OUT); R(0, 5, W, 1, '#4a2c18');
-      // miroir et étagères du bar
+      // le meuble du bar : cadre mouluré, miroir piqué avec ses reflets, deux étagères chargées
       box(10, 10, 108, 72, '#4a2a18');
-      R(14, 14, 100, 20, '#6a7a80'); R(16, 16, 30, 2, '#8a9aa0'); R(60, 22, 20, 1, '#8a9aa0');
-      const bottleCols = ['#c07a2a', '#4a7a3a', '#7a3a1a', '#9ab8c8', '#d9a040', '#6a2a2a', '#3a5a2a'];
+      R(10, 10, 108, 2, '#6a3e22'); R(10, 10, 2, 72, '#5a3420'); R(116, 10, 2, 72, '#2e1a0e');
+      for (let y = 13; y < 37; y++) R(13, y, 102, 1, S.mix('#5a6c74', '#8a9ca4', (y - 13) / 24));
+      for (let k = 0; k < 14; k++) R(16 + k * 6 + (k % 3), 14 + ((k * 7) % 18), 2 - (k % 2), 1, '#a8b8bc'); // reflets en biais
+      R(18, 16, 22, 1, '#b8c8cc'); R(20, 18, 14, 1, '#a0b0b4'); R(70, 26, 16, 1, '#a0b0b4');
+      for (let k = 0; k < 18; k++) R(14 + Math.floor(rnd() * 98), 14 + Math.floor(rnd() * 22), 1, 1, '#4a5458'); // le tain piqué
+      const bottleCols = ['#c07a2a', '#4a7a3a', '#7a3a1a', '#9ab8c8', '#d9a040', '#6a2a2a', '#3a5a2a', '#8a5a9a'];
       for (const sy of [38, 64]) {
-        for (let bx = 14; bx < 112;) {
-          const bw = 4 + Math.floor(rnd() * 3), bh = 9 + Math.floor(rnd() * 7);
+        // fond d'étagère dans l'ombre
+        if (sy === 64) { R(13, 41, 102, 23, '#3a2012'); R(13, 41, 102, 1, '#2a160c'); }
+        for (let bx = 14; bx < 108;) {
+          // de temps en temps, des verres retournés
+          if (sy === 64 && rnd() < 0.18) {
+            for (let g = 0; g < 2 && bx < 106; g++) { shape(R, [[bx, sy - 6, 4, 6, '#b8d0dc'], [bx - 1, sy - 1, 6, 1, '#b8d0dc']]); R(bx, sy - 6, 1, 5, '#e8f4f8'); bx += 7; }
+            continue;
+          }
           const col = bottleCols[Math.floor(rnd() * bottleCols.length)];
-          R(bx - 1, sy - bh - 1, bw + 2, bh + 1, OUT);
-          R(bx, sy - bh + 4, bw, bh - 4, col); R(bx + Math.floor(bw / 2) - 1, sy - bh, 2, 4, col);
-          R(bx + 1, sy - bh + 5, 1, bh - 6, S.shade(col, 0.35));
-          if (rnd() < 0.6) R(bx, sy - bh + 8, bw, 3, '#e8d8b0');
-          bx += bw + 3 + Math.floor(rnd() * 3);
+          bx += drawBottle(R, bx, sy, BOTTLES[Math.floor(rnd() * BOTTLES.length)], col, rnd) + 2 + Math.floor(rnd() * 3);
         }
-        box(10, sy, 108, 3, '#7a4a28'); R(10, sy, 108, 1, '#a8703c');
+        box(10, sy, 108, 3, '#7a4a28'); R(10, sy, 108, 1, '#a8703c'); R(10, sy + 2, 108, 1, '#5a3420');
+        // consoles sous l'étagère
+        for (const cx of [14, 112]) { R(cx - 1, sy + 3, 4, 5, OUT); R(cx, sy + 3, 2, 4, '#6a3e22'); }
       }
       // affiche WANTED
       box(246, 22, 26, 34, '#d8c088');

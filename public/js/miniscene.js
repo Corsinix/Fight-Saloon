@@ -101,7 +101,7 @@ export class MiniScene {
     this.setup(seed);
     this.cutSkip = false;
     this.cut = new Cutscene({
-      kind: this.kind,
+      kind: this.cutKind?.() || this.kind, // un jeu à variantes peut avoir un plan d'ouverture par variante
       players: this.state.players.map((p, i) => ({ name: p.name, character: p.character, color: this.color(i) })),
       me: this.me,
       env: this.showEnv ? this.env : null,

@@ -138,16 +138,26 @@
       <section id="scr-lobby" class="screen hidden">
         <div class="lobby">
           <div class="panel lobby-info">
-            <h2>Table n° <span id="lobby-code" class="code"></span></h2>
-            <label>1. Invite tes adversaires (jusqu'à 4 joueurs) :</label>
+            <h2 class="lobby-head">Table n° <button id="lobby-code" class="code" type="button" title="Copier le code de la table"></button><span id="code-copied" class="copied"></span>
+              <span class="spacer"></span><button id="btn-lock" class="lock-tag" type="button"></button></h2>
+            <label>1. Invite tes adversaires (jusqu'à 4 joueurs, ou des bots) :</label>
             <div class="link-row">
               <input id="lobby-link" readonly>
               <button class="btn" id="btn-copy">Copier</button>
               <button class="btn hidden" id="btn-share">Partager</button>
             </div>
             <div class="seats many" id="seats"></div>
-            <label>2. Choisis le jeu :</label>
-            <div class="modes" id="modes"></div>
+            <div class="lobby-opts">
+              <div class="seg" id="formats" role="group" aria-label="Déroulé de la partie"></div>
+              <div class="seg rounds" id="rounds" role="group" aria-label="Nombre de jeux du championnat"></div>
+            </div>
+            <label id="modes-label">2. Choisis le jeu :</label>
+            <div class="solo-pager">
+              <button class="solo-arrow prev" id="modes-prev" type="button" aria-label="Jeux précédents"></button>
+              <div class="solo-grid lobby-modes" id="modes"></div>
+              <button class="solo-arrow next" id="modes-next" type="button" aria-label="Jeux suivants"></button>
+            </div>
+            <div class="solo-dots" id="modes-dots"></div>
             <div class="lobby-buttons">
               <button class="btn alt" id="btn-leave">Quitter la table</button>
               <button class="btn big" id="btn-start">Lancer la partie</button>
@@ -155,6 +165,7 @@
             <p id="lobby-hint" class="hint"></p>
           </div>
           <div class="panel chat">
+            <div id="champ-board" class="champ-board hidden"></div>
             <h3>Comptoir</h3>
             <div id="chat-log" class="chat-log"></div>
             <form id="chat-form"><input id="chat-input" maxlength="120" placeholder="Dire quelque chose…" autocomplete="off"></form>
@@ -175,6 +186,7 @@
           <div class="panel">
             <h1 id="go-title"></h1>
             <p id="go-sub"></p>
+            <div id="go-champ" class="go-champ"></div>
             <div class="lobby-buttons">
               <button class="btn alt" id="btn-go-menu">Retour à la table</button>
               <button class="btn big" id="btn-rematch">Revanche</button>
@@ -211,6 +223,15 @@
         <button class="btn alt" id="modal-no" type="button"></button>
         <button class="btn" id="modal-yes" type="button"></button>
       </div>
+    </div>
+  </div>
+
+  <!-- Roue des jeux : le jeu tiré au sort défile puis s'arrête (roue et championnat) -->
+  <div id="spin" class="spin hidden" role="status" aria-live="polite">
+    <div class="spin-box">
+      <h2 id="spin-title" class="spin-title"></h2>
+      <div class="spin-reel"><div id="spin-strip" class="spin-strip"></div><span class="spin-mark"></span></div>
+      <p id="spin-result" class="spin-result"></p>
     </div>
   </div>
 

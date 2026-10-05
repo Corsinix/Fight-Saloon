@@ -156,6 +156,9 @@ const SMALL = {
 };
 const small = (k) => cached(k, () => (k === 'butte' ? pixelSprite(110, 58, 55, 54, SMALL[k]) : pixelSprite(32, 26, 16, 24, SMALL[k])));
 
+// Un élément du bord de la piste (pour la vue de l'intérieur de la roulotte) : 'tree', 'cactus', 'rock', 'bones'
+export const trailProp = (k) => (k === 'tree' ? tree() : small(k));
+
 // Tout ce qui sert au décor, à préparer pendant le compte à rebours (quelques-uns par image)
 export function trailWarm() {
   return [ridge, ground, tree, () => bison(0), () => bison(1), () => tipi(0), () => tipi(1), () => tipi(2),
@@ -193,10 +196,12 @@ export function drawTrail(ctx, cam, now) {
       ctx.drawImage(spr, x - spr.ox, y - spr.oy);
       canvasText(ctx, it.name, x + it.w / 2, y - it.h + 4, { color: '#3a2214', shadow: '#c8b07c' });
     } else if (it.k === 'sign') {
+      // la planche s'allonge avec le nom (≈ 5,5 px par lettre)
+      const w = Math.max(46, Math.ceil(it.text.length * 5.5) + 12);
       R(x - 1, y - 22, 3, 22, OUT); R(x, y - 22, 1, 22, '#5a3a20');
-      R(x + 39, y - 22, 3, 22, OUT); R(x + 40, y - 22, 1, 22, '#5a3a20');
-      R(x - 4, y - 28, 48, 12, OUT); R(x - 3, y - 27, 46, 10, '#d8bc80');
-      canvasText(ctx, it.text, x + 20, y - 26, { color: '#3a2214', shadow: '#b89a60' });
+      R(x + w - 7, y - 22, 3, 22, OUT); R(x + w - 6, y - 22, 1, 22, '#5a3a20');
+      R(x - 4, y - 28, w + 2, 12, OUT); R(x - 3, y - 27, w, 10, '#d8bc80');
+      canvasText(ctx, it.text, x - 3 + w / 2, y - 26, { color: '#3a2214', shadow: '#b89a60' });
     } else if (it.k === 'tipi') {
       const spr = tipi(it.v);
       ctx.drawImage(spr, x - spr.ox, y - spr.oy);

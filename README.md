@@ -72,7 +72,7 @@ Par les fenêtres, on voit l'heure et la météo de l'ambiance : soleil, aube, c
 - **Installer l’app** : le bouton « Installer l’app sur ce téléphone » du menu ouvre la fenêtre d’installation (Android). Sur iPhone, dans Safari : Partager, puis « Sur l’écran d’accueil ». L’app s’ouvre alors en plein écran.
 - Les commandes tactiles (stick, boutons) apparaissent dès qu’on joue au doigt. Le paysage donne l’image la plus grande.
 - `public/sw.js` (service worker) : le réseau d’abord pour le code, le cache seulement hors ligne ou si le réseau traîne, ce qui garde l’hôte et les joueurs sur la même version. `public/music` n’est jamais mis en cache. Les polices sont hébergées dans `public/fonts`.
-- Stabilité : animations plafonnées à 60 images/s, bruitages limités, cache du texte pixel borné et canvas libérés dès qu’ils ne servent plus (Safari plante au-delà de sa limite de mémoire canvas).
+- Stabilité : animations plafonnées à 60 images/s, bruitages limités, cache du texte pixel borné et canvas libérés dès qu’ils ne servent plus (Safari plante au-delà de sa limite de mémoire canvas). Pas de découpe (`clip`) faite de nombreux rectangles à chaque image : elle figeait des téléphones Android entiers (fond des galeries de la mine, désormais rempli en motif).
 
 ## Mini-jeux (2 à 4 joueurs)
 
@@ -214,13 +214,23 @@ Cinq **champs de bataille**, tirés au hasard : le désert, la prairie, le canyo
 
 ### Défends la roulotte (90 s, tous ensemble)
 
-La roulotte, tirée par ses deux chevaux, quitte Dusty Gulch pour Red Rock. En chemin, le décor défile : la prairie et ses troupeaux de bisons, un campement de tipis, une butte de grès, puis la ville d'arrivée (`public/js/trail.js`). Une bande de hors-la-loi attaque le convoi tout au long du trajet. Les défenseurs tirent ensemble sur les assaillants ; chacun marque ses propres points.
+La roulotte, tirée par ses deux chevaux, quitte Dusty Gulch pour Red Rock. Une bande de hors-la-loi attaque le convoi tout au long du trajet. Les défenseurs tirent ensemble sur les assaillants ; chacun marque ses propres points. Le voyage se fait en quatre étapes, filmées tour à tour de côté et de l'intérieur de la roulotte (`public/js/wagon.js`, règles et arbitre dans `public/js/wagongame.js`) :
 
-- Souris : viser · clic : tirer (6 balles) · clic droit, **R** ou **Espace** : recharger
-- Bandits à pied et gros bras tendent des embuscades devant le convoi ; cavaliers et dynamiteurs (à cheval) l'attaquent des deux côtés.
-- Bandit à pied +100 · cavalier +150 · gros bras +250 (3 balles) · dynamiteur +150 · Black Bart, le chef, +800 (il arrive vers 70 s)
-- Les bâtons de dynamite s'abattent en plein vol : +50
-- Un bandit qui atteint le convoi le pille jusqu'à ce qu'on l'abatte, et la dynamite coûte 2 PV à la roulotte. La bande grossit avec le nombre de défenseurs.
+1. **La prairie** (de côté, le décor défile : `public/js/trail.js`) : bandits à pied, cavaliers, gros bras, dynamiteurs, et une mule chargée de dynamite.
+2. **Le canyon** (vue subjective, dans la roulotte) : on regarde devant, par-dessus l'attelage, ou on se retourne vers le hayon. Devant : embuscades derrière les rochers, barricades en travers de la piste. Derrière : cavaliers lancés à la poursuite du convoi, dynamiteurs. Des deux côtés, des bandidos qui zigzaguent d'un bord à l'autre de la piste, des éclaireurs qui la coupent au galop en tirant, et des pillards qui escaladent pour monter à bord. Le paysage tangue avec la roulotte, les vautours tournent, les cailloux défilent ; au loin, un chevron signale chaque assaillant (doré s'il porte un bonus).
+3. **Le campement** (de côté) : tireurs embusqués sur les rochers, pillards qui sautent de leur cheval sur la bâche, mules à dynamite, et la charge finale.
+4. **La bande à Black Bart** (dans la roulotte) : le chef arrive par derrière avec son escorte pendant que ses hommes barrent la route. Red Rock grandit au bout de la piste.
+
+- Souris : viser · clic : tirer (6 balles) · clic droit ou **R** : recharger (**Espace** aussi, de côté)
+- Dans la roulotte : **Espace**, **E**, **S** ou le bouton du bas : se retourner. Le bouton compte les assaillants dans ton dos et clignote en rouge quand ça presse (pillard à bord, barricade toute proche, dynamite en l'air).
+- Bandit à pied +100 · cavalier +150 · gros bras +250 (3 balles) · dynamiteur +150 à +200 · pillard +200 · tireur embusqué +250 · embuscade +200 · bandido +200 · éclaireur +200 · barricade +200 · abordage +250 (2 balles) · Black Bart +1000
+- **En pleine tête** : la balle compte double (de quoi abattre un pillard à bord d'un coup) et le coup fatal rapporte x1,5.
+- Les bâtons de dynamite s'abattent en plein vol : +50. Une mule abattue saute avec tous les bandits autour d'elle.
+- L'embusqué et le tireur ne sont touchables que debout : un reflet sur le canon annonce leur coup de feu. La barricade doit sauter avant que la roulotte n'y arrive (-5 PV), la mule avant d'atteindre le convoi (-4 PV).
+- **Bandits dorés** : abattus, ils lâchent un bonus qui flotte quelques secondes ; le premier qui tire dessus le ramasse. Barillet d'or (9 s de balles à volonté), escopette (9 s de tir groupé), prime double (9 s de points x2), planches (+8 PV pour la roulotte), caisse de TNT (tous les assaillants de l'étape sautent, Black Bart encaisse).
+- **Série** : toutes les 5 balles au but d'affilée, les points montent d'un cran (x1,5, x2… jusqu'à x3). Une balle perdue remet la série à zéro.
+- Les viseurs des autres défenseurs restent discrets (leur nom n'apparaît que quand ils tirent), et on ne voit que ceux qui regardent du même côté que soi.
+- Un bandit qui atteint le convoi le pille jusqu'à ce qu'on l'abatte. La roulotte a 50 PV ; la bande grossit avec le nombre de défenseurs.
 - Si la roulotte arrive à Red Rock : +300 pour chaque défenseur. Si elle tombe en chemin, la partie s'arrête aussitôt.
 
 ### La pinte (chacun son tour, 3 à 5 manches)
@@ -251,43 +261,72 @@ Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour
 
 La glissade est simulée pas à pas, de la même façon dans chaque navigateur (`public/js/pintegame.js`) : seuls la direction et la puissance passent par l'hôte.
 
-### La mine (course en wagonnet, environ 1 min)
+### La mine (course en wagonnet, environ 1 min 40)
 
-Une course en wagonnet, du puits jusqu'à la sortie de la mine. Trois voies sont reliées par des **embranchements** : on prépare l'aiguillage, et le wagonnet change de voie au prochain embranchement. Après chaque embranchement, une des deux voies est bouchée : à toi de prendre la bonne, où l'or t'attend. Chaque wagonnet roule à sa propre vitesse, qui augmente au fil de la descente.
+Une course en wagonnet, du puits jusqu'à la sortie de la mine. Trois voies sont reliées par des **embranchements** : on prépare l'aiguillage, et le wagonnet change de voie au prochain embranchement. Après chaque embranchement, une des voies est bouchée : à toi de prendre la bonne, où l'or t'attend. Chaque wagonnet roule à sa propre vitesse, qui augmente au fil de la descente.
 
-La course passe par **4 étapes**, chacune filmée autrement. Un bandeau annonce chaque nouvelle étape :
+Cinq sortes d'embranchements :
+
+- **Simple** : deux rails en X entre deux voies voisines.
+- **Carrefour** : les trois voies se croisent ; de la voie du milieu, on peut partir en haut ou en bas. Ensuite, deux voies sur trois sont bouchées.
+- **Long** : deux rails en X entre la voie du haut et celle du bas, qui traversent la voie du milieu. **Bas** (ou droite) depuis la voie du haut, **haut** (ou gauche) depuis celle du bas.
+- **Sens unique** : un seul rail, signalé par un panneau fléché ; on ne peut aller que dans un sens (parfois de la voie du haut à celle du bas, en traversant le milieu). Ensuite, la voie de départ est bouchée.
+- **Déviation** : l'aiguillage est bloqué (levier cadenassé, qui clignote si tu es sur la voie). Tout wagonnet qui arrive sur la voie barrée passe de force sur l'autre, même s'il est sonné, et l'aiguillage préparé reste en place.
+
+La course passe par **8 étapes**, chacune filmée autrement. Un bandeau annonce chaque nouvelle étape :
 
 | Étape | Caméra | Particularités |
 |---|---|---|
 | 1. Les galeries | De côté | Éboulements qui tombent du plafond au dernier moment, nuées de chauves-souris |
 | 2. La descente | De derrière le wagonnet, en fausse 3D | Ça va plus vite (pente), accélérateurs fréquents |
-| 3. Le gouffre | De côté, en plan large | Ponts de bois sur tréteaux au-dessus d'une rivière souterraine, rails cassés, tremplins |
-| 4. La sortie | De derrière, vers la lumière au bout du tunnel | Ligne droite couverte d'or |
+| 3. La caverne de cristal | De côté | Roche violette, éclairée par des grappes de cristaux bleus et violets. Cristaux géants sur les rails, beaucoup de diamants |
+| 4. La galerie inondée | De derrière | Eau sur les rails qui freine le wagonnet (vitesse ×0,88), gouttes, gerbes d'eau sous les roues. Cascades qui tombent de la voûte |
+| 5. Le gouffre | De côté, en plan large | Ponts de bois sur tréteaux au-dessus d'une rivière souterraine, rails cassés, tremplins |
+| 6. Le filon d'or | De derrière | Ça redescend (pente). Parois pailletées d'or qui scintillent, de l'or dans chaque ligne droite et plus de grosses pépites, mais des tas de minerai et plus de TNT |
+| 7. La galerie en feu | De derrière | Étais qui brûlent, lueur qui vacille, braises. Jets de grisou et plus de TNT |
+| 8. La sortie | De derrière, vers la lumière au bout du tunnel | Ligne droite couverte d'or |
 
-À la sortie, on passe dehors, au soleil (selon l'ambiance de la partie). Les wagonnets se rangent par ordre d'arrivée, avec le classement et les temps. La partie s'arrête quand tout le monde est sorti, ou au bout de 95 s.
+De derrière, le tunnel est une voûte irrégulière creusée dans la roche, avec des bosses et des renfoncements qui changent le long de la galerie. La roche est faite de blocs fendus éclairés de biais, le sol de gravier, ou d'eau qui coule dans la galerie inondée. Un cadre de boisage tous les quelques mètres (brûlé dans la galerie en feu, moussu dans la galerie inondée), avec une lanterne qui pend sous un cadre sur deux. Des éboulis au pied des parois (cristaux, minerai ou braises selon l'étape). On voit de loin le décor de l'étape suivante arriver au fond du tunnel. Les textures sont calculées une fois pendant le compte à rebours ; le tunnel se dessine pixel par pixel à chaque image (un pixel sur quatre sur téléphone).
 
-- Flèches (**Z Q S D**) ou clic : préparer l'aiguillage. De côté, **haut** ou un clic au-dessus du wagonnet vise la voie du dessus ; de derrière, **gauche** ou un clic à gauche vise la voie de gauche (haut et gauche marchent dans les deux vues). Une flèche jaune clignote près du wagonnet, et le levier de l'embranchement s'allume. **Espace** ou clic droit : aiguillage au neutre.
+À la sortie, on passe dehors, au soleil (selon l'ambiance de la partie). Les wagonnets se rangent par ordre d'arrivée, avec le classement et les temps. La partie s'arrête quand tout le monde est sorti, ou au bout de 2 min 15.
+
+- Flèches (**Z Q S D**) ou clic : préparer l'aiguillage. De côté, **haut** ou un clic au-dessus du wagonnet vise la voie du dessus ; de derrière, **gauche** ou un clic à gauche vise la voie de gauche (haut et gauche marchent dans les deux vues). Une flèche jaune clignote près du wagonnet, et le levier de l'embranchement s'allume. **Espace** ou clic droit : aiguillage au neutre. Viser vers le bord, là où il n'y a pas de voie, remet aussi l'aiguillage au neutre.
+- **Wagonnet fou** : un wagonnet de minerai attend sur ta voie libre. Quand tu approches, il se met à dévaler, prend l'embranchement et se renverse sur l'autre voie. Il faut réviser son aiguillage au dernier moment.
 - Sur les rails :
   - **Accélérateur** (chevrons dorés) : turbo, vitesse ×1,6 pendant 2,6 s.
   - **Flaque de boue** : vitesse ×0,55 pendant 2 s.
   - **Tremplin** : le wagonnet saute et passe par-dessus tout ce qui suit sur 140 px (obstacle, rail cassé, or compris).
 - Pépite +10 · grosse pépite +25 · diamant +50.
-- Éboulis, éboulement, poutre tombée, tonneau, wagonnet renversé −20 · rail cassé −30 · caisse de TNT −40 (le score ne descend pas sous 0). Après un choc, le wagonnet tangue et freine pendant 0,9 s, et l'aiguillage ne répond plus.
+- Éboulis, éboulement, poutre tombée, tonneau, wagonnet renversé, cristal géant, cascade, tas de minerai −20 · rail cassé, jet de grisou, wagonnet fou, voie barrée −30 · caisse de TNT −40 (le score ne descend pas sous 0). Après un choc, le wagonnet tangue et freine pendant 0,9 s, et l'aiguillage ne répond plus.
 - Bonus d'arrivée : 1er +150, 2e +100, 3e +60, 4e +30. Le classement final se fait aux points (or, chocs et bonus d'arrivée).
-- Le parcours est tiré de la graine (`public/js/minegame.js`) : chaque navigateur simule son wagonnet et envoie sa position. Les autres joueurs apparaissent en fantômes, et chacun ramasse son or. L'hôte vérifie que les positions annoncées sont possibles. Rien n'est posé près des changements d'étape, et le parcours a toujours une issue : un pilote parfait ne touche rien.
+- Le parcours est tiré de la graine (`public/js/minegame.js`) : chaque navigateur simule son wagonnet et envoie sa position. Les autres joueurs apparaissent en fantômes, et chacun ramasse son or. L'hôte vérifie que les positions annoncées sont possibles. Rien n'est posé près des changements d'étape, et le parcours a toujours une issue : un pilote parfait ne touche rien. Le générateur suit les voies où un pilote parfait peut se trouver. Une voie n'est bouchée que si l'on peut la quitter à cet embranchement, ou si personne ne peut y être sans avoir rien touché.
 
 ### La course de chevaux (environ 45 s)
+
+Une partie sur deux (tirée de la graine, la même pour toute la table), la course se joue sur le **champ de courses** ; l'autre fois, c'est la **chevauchée sauvage** à travers la prairie (voir plus bas). Le titre et la cinématique d'ouverture annoncent laquelle.
 
 Sur le champ de courses de Dusty Gulch, chaque cavalier a son couloir, du départ jusqu'au poteau d'arrivée (2 100 m). Vue de côté, les autres chevaux galopent dans les couloirs voisins ; ceux qui sont hors de l'écran sont signalés au bord, avec leur avance ou leur retard en mètres.
 
 - **Espace**, **↑** ou **Z** (ou clic) : sauter. Au téléphone : bouton **Sauter**, ou toucher l'image.
 - **X**, **→** ou **D** (ou clic droit) : coup de **cravache**. Au téléphone : bouton **Cravache**. Une touche maintenue ne compte qu'une fois.
 - **Obstacles** en travers du couloir : haies, barrières, tonneaux, bottes de foin, fossés pleins d'eau. Les percuter fait trébucher le cheval (vitesse × 0,35 pendant 0,9 s) et casse son élan. La **boue** ne fait pas tomber, mais freine (× 0,6 pendant 1,2 s). On saute par-dessus tout.
+- **Saut parfait !** : si le sommet du saut passe pile au-dessus du milieu de l'obstacle, le cheval gagne de l'élan sans coup de cravache (comme un coup gratuit, sans rien coûter à la résilience).
 - **Cravache** : chaque coup ajoute de l'élan (jusqu'à × 1,8), qui retombe en 2,5 s environ si on ne recommence pas.
 - **Résilience** (barre en haut à gauche, un cran par coup de cravache) : chaque coup coûte 12. Elle remonte toute seule (+9 par seconde) et avec les **carottes** (+25). Certaines carottes sont en l'air, au-dessus d'un obstacle : il faut sauter pile au bon moment pour les attraper.
 - **Épuisé !** : si un coup de cravache vide la barre, le cheval perd son élan et n'avance plus qu'à × 0,45 pendant 2,8 s ; la cravache ne répond plus. Cravacher sans arrêt fait donc perdre du temps : il faut doser.
 - Arrivée : 1er +100, 2e +60, 3e +30, 4e +10. Le classement suit l'ordre d'arrivée, puis la distance parcourue. La course s'arrête quand tout le monde est arrivé, ou au bout de 90 s.
 - La piste est tirée de la graine (`public/js/coursegame.js`) : chaque navigateur simule son cheval et envoie sa position ; l'hôte vérifie que les positions annoncées sont possibles. Les obstacles se rapprochent au fil de la course, mais laissent toujours le temps de retomber avant le suivant. En solo, les 3 bots visent le milieu des obstacles (et en ratent parfois) et cravachent tant que leur barre reste au-dessus de leur seuil de prudence.
+
+**La chevauchée sauvage** (1 960 m, du départ jusqu'au ranch) : pas de couloirs ni de tribunes, on traverse la prairie et on dirige son cheval librement. Les chevaux partagent tout le terrain et passent les uns devant les autres selon leur profondeur. La cravache, la résilience, les carottes, l'épuisement, le saut parfait et les points d'arrivée sont les mêmes que sur le champ de courses.
+
+- **↑ / ↓** (ou **Z / S**, **W / S**) : diriger le cheval vers le fond ou vers le bord proche. En l'air, il garde presque sa trajectoire, et il se dirige mal quand il trébuche.
+- **←** (ou **Q / A**) : retenir le cheval (vitesse × 0,6), pour se placer avant un passage étroit. Au galop, ton cheval prend de l'avance à l'écran ; retenu, il recule.
+- **Espace** (ou clic) : sauter. **X**, **→** ou **D** (ou clic droit) : cravache. Au téléphone, un **stick** apparaît pour diriger (à gauche : retenir), avec les boutons **Sauter** et **Cravache**.
+- **Rochers** et **cactus** sont trop hauts pour être sautés : il faut les contourner. Ils laissent toujours un passage d'au moins 26 px, parfois avec une carotte au milieu pour qui s'y faufile.
+- **Buissons**, **troncs couchés** (plus ou moins longs), **terriers** de chiens de prairie et **virevoltants** (qui roulent d'un bord à l'autre) se sautent, ou s'évitent.
+- **Ruisseaux** : ils barrent toute la prairie. On les saute, ou on passe au **gué** (balisé par deux piquets), où l'eau ne freine pas ; ailleurs, le cheval est ralenti comme dans la boue.
+- **Carottes** au sol, souvent en file : il faut passer dessus, à la bonne profondeur. Certaines flottent au-dessus d'un tronc.
+- Le parcours est tiré de la graine (`public/js/coursegame.js`, décor et obstacles dans `public/js/coursewild.js`) : des motifs de plus en plus serrés (rocher, cactus, passage entre deux grands obstacles, champ de cactus en quinconce, tronc, buissons, terriers, virevoltants, ruisseau, file de carottes). Les bots regardent devant eux, contournent les grands obstacles par le passage libre le plus proche, prennent souvent le gué et vont chercher les carottes quand la voie est libre. De temps en temps, ils ne voient pas un rocher venir.
 
 ### Conquête de l'Ouest (mini-RTS, 7 min, chacun pour soi)
 
