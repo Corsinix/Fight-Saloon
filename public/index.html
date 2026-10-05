@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#120c08">
+  <!-- ajouté à l'écran d'accueil : s'ouvre en plein écran, sans barre du navigateur -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Saloon">
+  <title>Buckshot Saloon</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=VT323&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app" class="frame">
+    <header class="titlebar">
+      <span class="tb-icon" data-icon="hat"></span>
+      <b>Buckshot Saloon</b><span class="tb-sub"> · Roulette et mini-jeux du Far West</span>
+      <span class="spacer"></span>
+      <span id="tb-info" class="tb-info"></span>
+      <span id="tb-track" class="tb-track"></span>
+      <button id="btn-next" class="tb-btn" title="Morceau suivant" data-icon="next"></button>
+      <button id="btn-mute" class="tb-btn" title="Son"></button>
+      <input id="vol-music" class="tb-vol" type="range" min="0" max="1" step="0.05" title="Volume musique">
+      <button id="btn-full" class="tb-btn hidden" title="Plein écran" data-icon="full"></button>
+      <button id="btn-exit" class="tb-btn" title="Quitter" data-icon="close"></button>
+    </header>
+
+    <div id="hud" class="hud hidden"></div>
+    <div class="progress"><div id="progress-fill"></div></div>
+
+    <main id="stage">
+      <canvas id="bg" width="384" height="216"></canvas>
+
+      <!-- Titre -->
+      <section id="scr-title" class="screen">
+        <div class="logo">
+          <div class="logo-top">BUCKSHOT</div>
+          <div class="logo-bot">SALOON</div>
+          <div class="logo-sub">Un fusil. Des cartouches rouges et blanches. Deux cowboys.</div>
+        </div>
+        <form id="login-form" class="panel login">
+          <label for="username">Ton nom de cowboy</label>
+          <input id="username" maxlength="16" autocomplete="off" placeholder="ex : Django" required>
+          <button class="btn big" type="submit">Entrer dans le saloon</button>
+          <small>Ton pseudo sert de compte : personnage et stats sont sauvegardés dessus.</small>
+        </form>
+      </section>
+
+      <!-- Menu -->
+      <section id="scr-menu" class="screen hidden">
+        <div class="menu-grid">
+          <div class="poster" id="menu-poster"></div>
+          <div class="panel menu-actions">
+            <h2 id="menu-hello">Salut, étranger.</h2>
+            <h3 class="menu-sec">À plusieurs</h3>
+            <div class="multi-row">
+              <button class="btn big" id="btn-create">Créer une table</button>
+              <div class="join-row">
+                <input id="join-code" maxlength="5" placeholder="CODE" autocomplete="off" aria-label="Code de la table">
+                <button class="btn" id="btn-join">Rejoindre</button>
+              </div>
+            </div>
+            <h3 class="menu-sec">En solo, contre l'ordinateur</h3>
+            <div class="solo-pager">
+              <button class="solo-arrow prev" id="solo-prev" aria-label="Jeux précédents"></button>
+              <div class="solo-grid" id="solo-grid"></div>
+              <button class="solo-arrow next" id="solo-next" aria-label="Jeux suivants"></button>
+            </div>
+            <div class="solo-dots" id="solo-dots"></div>
+            <div class="menu-foot">
+              <button class="btn alt" id="btn-edit">Éditer mon cowboy</button>
+              <button class="btn alt" id="btn-logout">Changer de pseudo</button>
+            </div>
+          </div>
+          <div class="panel board">
+            <h3>Les plus redoutés <small>roulette</small></h3>
+            <ol id="leaderboard" class="lb"></ol>
+            <h3>Ton palmarès</h3>
+            <div class="stats" id="menu-stats"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Éditeur -->
+      <section id="scr-editor" class="screen hidden">
+        <div class="editor">
+          <div class="poster big-poster">
+            <div class="poster-head">WANTED</div>
+            <canvas id="ed-preview" width="56" height="60"></canvas>
+            <div class="poster-name" id="ed-name"></div>
+            <div class="poster-sub">Mort ou vif</div>
+          </div>
+          <div class="panel ed-controls">
+            <h2>Chez le tailleur</h2>
+            <h3>Allure</h3>
+            <div id="ed-parts" class="ed-grid"></div>
+            <h3>Couleurs</h3>
+            <div id="ed-colors" class="ed-grid"></div>
+            <div class="ed-buttons">
+              <button class="btn alt" id="ed-random" data-icon="dice"> Au hasard</button>
+              <button class="btn alt" id="ed-back">Annuler</button>
+              <button class="btn" id="ed-save">Sauvegarder</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Lobby -->
+      <section id="scr-lobby" class="screen hidden">
+        <div class="lobby">
+          <div class="panel lobby-info">
+            <h2>Table n° <span id="lobby-code" class="code"></span></h2>
+            <label>1. Invite tes adversaires (jusqu'à 4 joueurs) :</label>
+            <div class="link-row">
+              <input id="lobby-link" readonly>
+              <button class="btn" id="btn-copy">Copier</button>
+              <button class="btn hidden" id="btn-share">Partager</button>
+            </div>
+            <div class="seats many" id="seats"></div>
+            <label>2. Choisis le jeu :</label>
+            <div class="modes" id="modes"></div>
+            <div class="lobby-buttons">
+              <button class="btn alt" id="btn-leave">Quitter la table</button>
+              <button class="btn big" id="btn-start">Lancer la partie</button>
+            </div>
+            <p id="lobby-hint" class="hint"></p>
+          </div>
+          <div class="panel chat">
+            <h3>Comptoir</h3>
+            <div id="chat-log" class="chat-log"></div>
+            <form id="chat-form"><input id="chat-input" maxlength="120" placeholder="Dire quelque chose…" autocomplete="off"></form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Partie -->
+      <section id="scr-game" class="screen hidden">
+        <canvas id="game" width="384" height="216"></canvas>
+        <div id="toasts" class="toasts"></div>
+        <!-- téléphone : stick et boutons des mini-jeux (touch.js), chat, conseil de tourner l'écran -->
+        <div id="touchpad" class="touchpad hidden"></div>
+        <button id="btn-chat" class="tp-chat" type="button" aria-label="Écrire un message">Chat</button>
+        <div id="rotate-hint" class="rotate-hint" role="note"><span class="rot-ico"></span>Tourne ton téléphone pour jouer en grand</div>
+        <form id="game-chat" class="game-chat hidden"><input maxlength="120" placeholder="Message (Entrée)" autocomplete="off"></form>
+        <div id="gameover" class="gameover hidden">
+          <div class="panel">
+            <h1 id="go-title"></h1>
+            <p id="go-sub"></p>
+            <div class="lobby-buttons">
+              <button class="btn alt" id="btn-go-menu">Retour à la table</button>
+              <button class="btn big" id="btn-rematch">Revanche</button>
+            </div>
+            <p id="go-rematch" class="hint"></p>
+          </div>
+        </div>
+      </section>
+
+      <div id="tooltip" class="tooltip hidden"></div>
+    </main>
+
+    <footer id="bottombar" class="bottombar hidden">
+      <div id="dealer" class="dealer"></div>
+      <div id="turn-chip" class="turn-chip"></div>
+      <div class="bet-box" title="Parie sur la cartouche dans la chambre (une fois par chargement) : gagné +1 PV, perdu -1 PV.">
+        <span class="bet-lbl">Parier</span>
+        <button class="btn bet live" id="btn-bet-live">Rouge</button>
+        <button class="btn bet blank" id="btn-bet-blank">Blanche</button>
+      </div>
+      <button class="btn shoot" id="btn-shoot-opp">Tirer sur l'adversaire</button>
+      <button class="btn shoot self" id="btn-shoot-self">Tirer sur moi</button>
+    </footer>
+  </div>
+
+  <!-- Fenêtre de confirmation au style du jeu (remplace les confirm() du navigateur) -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-text">
+    <div class="modal-box">
+      <span class="modal-nail tl"></span><span class="modal-nail tr"></span><span class="modal-nail bl"></span><span class="modal-nail br"></span>
+      <div class="modal-icon" id="modal-icon"></div>
+      <h2 id="modal-title" class="modal-title"></h2>
+      <p id="modal-text" class="modal-text"></p>
+      <div class="modal-buttons">
+        <button class="btn alt" id="modal-no" type="button"></button>
+        <button class="btn" id="modal-yes" type="button"></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="global-toasts" class="global-toasts"></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

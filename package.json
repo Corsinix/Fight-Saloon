@@ -1,0 +1,10 @@
+{
+  "name": "buckshot-saloon",
+  "version": "1.0.0",
+  "description": "Clone multijoueur de Buckshot Roulette, pixel art 16 bits, ambiance western",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "deploy": "surge public saloon-roulette.surge.sh"
+  }
+}
