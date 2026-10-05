@@ -347,7 +347,8 @@ label, small { color: var(--sand); }
 .ed-controls { display: flex; flex-direction: column; gap: 4px; max-height: 100%; overflow-y: auto; }
 .ed-controls h2 { margin-bottom: 2px; }
 .ed-controls h3 { margin: 8px 0 2px; padding-bottom: 4px; border-bottom: 2px dashed rgba(184, 154, 120, 0.35); }
-.ed-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; }
+/* dense : quand la galerie d'une partie s'ouvre sur toute la largeur, sa voisine reste sur la même ligne */
+.ed-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row dense; gap: 6px 18px; }
 .ed-row, .ed-colors-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ed-row .lbl, .ed-colors-row .lbl { color: var(--sand); font-size: 18px; line-height: 1; }
 .ed-pick { display: grid; grid-template-columns: 30px 1fr 30px; align-items: stretch; }
@@ -359,6 +360,21 @@ label, small { color: var(--sand); }
 }
 .ed-pick .val span { overflow: hidden; text-overflow: ellipsis; }
 .ed-pick .val small { color: var(--muted); font-size: 16px; }
+.ed-pick button.val { font-family: inherit; border-left: 0; border-right: 0; cursor: pointer; text-align: left; }
+.ed-pick button.val:hover, .ed-pick button.val.open { background: rgba(0, 0, 0, 0.55); }
+.ed-pick button.val.open small { color: var(--yellow); }
+.ed-gallery {
+  grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px;
+  padding: 6px; background: rgba(0, 0, 0, 0.3); border: 2px solid var(--ink);
+}
+.ed-thumb {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; padding: 3px; cursor: pointer;
+  background: rgba(0, 0, 0, 0.25); border: 2px solid var(--ink); color: var(--cream); font-family: inherit; font-size: 15px; line-height: 1;
+}
+.ed-thumb canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; border: 1px solid var(--ink); }
+.ed-thumb span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-thumb:hover { transform: translateY(-2px); }
+.ed-thumb.on { outline: 2px solid var(--yellow); outline-offset: 1px; color: var(--yellow); }
 .swatches { display: flex; gap: 6px; flex-wrap: wrap; padding: 3px 2px; }
 .swatch { width: 24px; height: 24px; border: 2px solid var(--ink); box-shadow: inset 2px 2px 0 rgba(255, 255, 255, 0.25), inset -2px -2px 0 rgba(0, 0, 0, 0.25); cursor: pointer; padding: 0; }
 .swatch:hover { transform: translateY(-2px); }

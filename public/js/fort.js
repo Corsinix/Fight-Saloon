@@ -5,7 +5,7 @@
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
-import { SKIN, HAIR_COLORS, CLOTH_COLORS } from './data.js';
+import { SKIN, HAIR_COLORS, CLOTH_COLORS, hatColorOf, beardHasMustache } from './data.js';
 import { MiniScene, ring, pixelSprite } from './miniscene.js';
 import { skyDeco } from './env.js';
 import { W, H, rng } from './worlds.js';
@@ -100,9 +100,9 @@ function gunman(r, back, pose, f = 0) {
     } else {
       R(-3, -25 + s, 6, 6, skin); R(-3, -25 + s, 6, 1, hair); R(-3, -24 + s, 1, 2, hair); R(2, -24 + s, 1, 2, hair);
       R(-2, -23 + s, 1, 1, OUT); R(1, -23 + s, 1, 1, OUT);
-      if (['mustache', 'handlebar', 'horseshoe'].includes(beard)) R(-2, -21 + s, 4, 1, hair);
-      if (['full', 'chops'].includes(beard)) R(-3, -21 + s, 6, 2, hair);
-      if (beard === 'goatee') R(-1, -20 + s, 2, 1, hair);
+      if (beardHasMustache(beard)) R(-2, -21 + s, 4, 1, hair);
+      if (['full', 'chops', 'chinstrap', 'prospector'].includes(beard)) R(-3, -21 + s, 6, 2, hair);
+      if (beard === 'goatee' || beard === 'imperial') R(-1, -20 + s, 2, 1, hair);
       R(-3, -19 + s, 6, 2, color);
     }
     hatOn(R, r, s, back);
@@ -486,7 +486,7 @@ export class FortScene extends MiniScene {
       return {
         key: `${i}:${JSON.stringify(c)}`,
         skin: SKIN[c.skin] || SKIN[1], hair: HAIR_COLORS[c.hairColor] || HAIR_COLORS[1],
-        cloth: CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2], hatC: CLOTH_COLORS[c.hatColor] || CLOTH_COLORS[1],
+        cloth: CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2], hatC: hatColorOf(c),
         hat: c.hat || 'cowboy', beard: c.beard, color: this.color(i),
       };
     });

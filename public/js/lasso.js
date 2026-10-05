@@ -3,7 +3,7 @@
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
-import { SKIN, HAIR_COLORS, CLOTH_COLORS } from './data.js';
+import { SKIN, HAIR_COLORS, CLOTH_COLORS, hatColorOf, beardHasMustache, beardHasChin } from './data.js';
 import { MiniScene, ring, pixelSprite as sprite } from './miniscene.js';
 import { skyDeco } from './env.js';
 import {
@@ -63,7 +63,7 @@ export function riderLook(c = {}, color, key) {
   return {
     key,
     skin: SKIN[c.skin] || SKIN[1], hair: HAIR_COLORS[c.hairColor] || HAIR_COLORS[1],
-    cloth: CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2], hatC: CLOTH_COLORS[c.hatColor] || CLOTH_COLORS[1],
+    cloth: CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2], hatC: hatColorOf(c),
     hat: c.hat || 'cowboy', beard: c.beard, outfit: c.outfit, color,
   };
 }
@@ -79,8 +79,12 @@ export function drawHat(R, r, b = 0) {
     case 'gambler': R(-9, -41 + b, 12, 1, hatC); R(-6, -43 + b, 6, 2, hatC); break;
     case 'bandana': R(-6, -42 + b, 6, 2, hatC); R(-8, -41 + b, 2, 1, hatC); R(-9, -40 + b, 1, 2, hatC); break;
     case 'coonskin': R(-6, -43 + b, 6, 3, '#8a6a48'); R(-9, -42 + b, 3, 1, '#8a6a48'); R(-10, -41 + b, 2, 6, '#8a6a48'); R(-10, -38 + b, 2, 1, '#4a3420'); break;
+    case 'kepi': R(-6, -44 + b, 6, 3, hatC); R(-6, -42 + b, 6, 1, '#e0b040'); R(0, -41 + b, 3, 1, '#2a2226'); break;
     case 'none': R(-6, -41 + b, 6, 2, hair); break;
-    default: R(-9, -41 + b, 12, 1, hatC); R(-6, -44 + b, 6, 3, hatC); R(-6, -42 + b, 6, 1, band); R(-6, -45 + b, 2, 1, hatC); R(-2, -45 + b, 2, 1, hatC);
+    default:
+      R(-9, -41 + b, 12, 1, hatC); R(-6, -44 + b, 6, 3, hatC); R(-6, -45 + b, 2, 1, hatC); R(-2, -45 + b, 2, 1, hatC);
+      R(-6, -42 + b, 6, 1, hat === 'straw' ? '#a8302a' : hat === 'cavalry' ? '#e0b040' : band);
+      if (hat === 'feather') { R(-1, -47 + b, 1, 4, '#ece4d0'); R(0, -48 + b, 1, 2, '#ece4d0'); }
   }
 }
 
@@ -96,8 +100,8 @@ function drawRider(R, r, frame, b) {
   R(1, -36 + b, 2, 5, cloth); R(2, -38 + b, 2, 2, skin); // bras levé
   R(-6, -40 + b, 6, 7, skin); R(0, -37 + b, 1, 1, skin);
   R(-6, -39 + b, 1, 5, hair); R(-2, -38 + b, 1, 1, '#1a0f0a');
-  if (['mustache', 'handlebar', 'horseshoe'].includes(beard)) R(-2, -35 + b, 3, 1, hair);
-  if (['full', 'goatee', 'chops'].includes(beard)) R(-4, -34 + b, 4, 1, hair);
+  if (beardHasMustache(beard)) R(-2, -35 + b, 3, 1, hair);
+  if (beardHasChin(beard)) R(-4, -34 + b, 4, 1, hair);
   R(-6, -33 + b, 6, 1, color); R(-9, -33 + b + (frame % 2), 3, 1, color); // foulard qui flotte
   drawHat(R, r, b);
 }

@@ -865,10 +865,11 @@ export class Scene {
       const oy = OPP_Y + bob + sway + Math.round(this.oppFx.knock) + (this.oppFx.dead ? 22 : 0);
       this.drawChair(ctx, sway);
       ctx.drawImage(spr, OPP_X, oy, S.CHAR_W * 2, S.CHAR_H * 2);
-      // fumée du cigare
-      if (O.character?.mouth === 'cigar' && !this.oppFx.dead && t - (this.lastPuff || 0) > 380) {
+      // fumée du cigare ou de la pipe
+      const smoker = { cigar: [70, 60], pipe: [62, 52] }[O.character?.mouth];
+      if (smoker && !this.oppFx.dead && t - (this.lastPuff || 0) > 380) {
         this.lastPuff = t;
-        this.parts.push({ type: 'smoke', x: OPP_X + 70 + Math.random() * 2, y: oy + 60, vx: (Math.random() - 0.3) * 0.006, vy: -0.012, r: 1, t: 0, max: 1600, thin: true });
+        this.parts.push({ type: 'smoke', x: OPP_X + smoker[0] + Math.random() * 2, y: oy + smoker[1], vx: (Math.random() - 0.3) * 0.006, vy: -0.012, r: 1, t: 0, max: 1600, thin: true });
       }
 
       ctx.drawImage(this.table, 0, 0);

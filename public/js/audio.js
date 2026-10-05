@@ -56,7 +56,10 @@ export function initAudio() {
     if (ac.state === 'suspended') ac.resume();
     return;
   }
-  ac = new (window.AudioContext || window.webkitAudioContext)();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  // 'playback' : tampon de 20 ms au lieu de 10 (Chrome sous Windows) ; la musique ne crépite plus au moindre pic de calcul,
+  // et 10 ms de plus sur les bruitages ne s'entendent pas
+  try { ac = new AC({ latencyHint: 'playback' }); } catch { ac = new AC(); }
   master = ac.createGain();
   master.connect(ac.destination);
   musicBus = ac.createGain();
@@ -181,6 +184,32 @@ function tone(t, f, dur, { type = 'sine', gain = 0.2, f2 = null, dest = sfxBus, 
   o.connect(g).connect(dest);
   o.start(t);
   o.stop(t + dur + 0.02);
+}
+
+// Corde pincée économique, pour les accords (une note par corde, plusieurs fois par mesure) :
+// un corps en triangle et une attaque brillante qui ne vit que 0,12 s, sans filtre ni vibrato.
+// Chaque filtre balayé ou vibrato coûte cher au thread audio ; multipliés par les cordes d'un accord,
+// ils le saturaient (crépitements). bright : forme d'onde de l'attaque, snap : sa part dans le son.
+function pluck(f, t, len, peak, { bright = 'p25', snap = 0.5, atkLen = 0.12, dest = musicBus, echo = true } = {}) {
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(peak, t + 0.004);
+  g.gain.exponentialRampToValueAtTime(peak * 0.3, t + Math.min(len, 0.2));
+  g.gain.exponentialRampToValueAtTime(0.001, t + len);
+  const body = osc('triangle', f, t);
+  body.connect(g);
+  body.start(t);
+  body.stop(t + len + 0.02);
+  const atk = Math.min(len, atkLen);
+  const o = osc(bright, f, t);
+  const og = ac.createGain();
+  og.gain.setValueAtTime(snap, t);
+  og.gain.exponentialRampToValueAtTime(0.01, t + atk);
+  o.connect(og).connect(g);
+  o.start(t);
+  o.stop(t + atk + 0.02);
+  g.connect(dest);
+  if (echo) g.connect(echoIn);
 }
 
 // note "8 bits" : enveloppe en paliers comme les registres de volume du NES
@@ -308,7 +337,8 @@ const INST = {
     g.connect(musicBus);
     g.connect(echoIn);
   },
-  comp16(notes, t, d, v = 1) { for (const n of notes) INST.piano(n, t, Math.min(d, 0.3), 0.45 * v); },
+  // accords de piano : cordes pincées économiques (voir pluck)
+  comp16(notes, t, d, v = 1) { for (const n of notes) pluck(mtof(n), t, Math.min(1, d + 0.3), 0.045 * v, { snap: 0.35 }); },
   harp(m, t, d, v = 1) {
     const f = mtof(m);
     const g = ac.createGain();
@@ -345,26 +375,7 @@ const INST = {
     g.connect(echoIn);
   },
   bass16(m, t, d, v = 1) {
-    const f = mtof(m);
-    const len = Math.max(0.12, d * 0.9);
-    const flt = ac.createBiquadFilter();
-    flt.type = 'lowpass';
-    flt.frequency.setValueAtTime(1400, t);
-    flt.frequency.exponentialRampToValueAtTime(260, t + 0.2);
-    const g = ac.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.3 * v, t + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.08 * v, t + len * 0.7);
-    g.gain.linearRampToValueAtTime(0.0001, t + len);
-    for (const [w, lvl] of [['triangle', 1], ['p50', 0.22]]) {
-      const o = osc(w, f, t);
-      const og = ac.createGain();
-      og.gain.value = lvl;
-      o.connect(og).connect(flt);
-      o.start(t);
-      o.stop(t + len + 0.03);
-    }
-    flt.connect(g).connect(musicBus);
+    pluck(mtof(m), t, Math.max(0.12, d * 0.9), 0.3 * v, { bright: 'p50', snap: 0.25, atkLen: 0.08, echo: false });
   },
   K16(t) { tone(t, 130, 0.18, { f2: 42, gain: 0.42, dest: musicBus }); },
   S16(t) {
@@ -634,7 +645,7 @@ const INST = {
   },
   // accord gratté (cordes nylon) : les cordes partent l'une après l'autre
   strum(notes, t, d, v = 1) {
-    [notes[0] - 12, ...notes].forEach((n, i) => INST.nylon(n, t + i * 0.016, Math.min(d, 0.5), 0.23 * v));
+    [notes[0] - 12, ...notes].forEach((n, i) => pluck(mtof(n), t + i * 0.016, Math.min(0.85, d + 0.3), 0.045 * v, { bright: 'p50', snap: 0.3 }));
   },
   // cri « aah-ii-ah » d'un coyote (chœur d'hommes qui monte à la quinte puis retombe), sur la note du morceau
   Yh8(m, t) { howl(t, 'p25', 0.045, false, mtof(m)); },
@@ -651,37 +662,12 @@ const INST = {
   // ---- instruments de la prairie : banjo, violon (fiddle), accordéon, sifflet de locomotive
   // banjo : corde métallique pincée sur une peau tendue, très brillante, s'éteint vite
   banjo(m, t, d, v = 1) {
-    const f = mtof(m);
-    const len = Math.min(0.7, d + 0.25);
-    const flt = ac.createBiquadFilter();
-    flt.type = 'lowpass';
-    flt.frequency.setValueAtTime(Math.min(9000, f * 10), t);
-    flt.frequency.exponentialRampToValueAtTime(Math.max(500, f * 2), t + len);
-    const hp = ac.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 220;
-    const g = ac.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.12 * v, t + 0.002);
-    g.gain.exponentialRampToValueAtTime(0.025 * v, t + 0.09);
-    g.gain.exponentialRampToValueAtTime(0.001, t + len);
-    for (const [w, det, lvl] of [['p25', 0, 1], ['sawtooth', 6, 0.4]]) {
-      const o = osc(w, f, t);
-      o.detune.value = det;
-      const og = ac.createGain();
-      og.gain.value = lvl;
-      o.connect(og).connect(flt);
-      o.start(t);
-      o.stop(t + len + 0.03);
-    }
-    flt.connect(hp).connect(g);
-    g.connect(musicBus);
-    g.connect(echoIn);
+    pluck(mtof(m), t, Math.min(0.55, d + 0.2), 0.1 * v, { snap: 0.9, atkLen: 0.09 });
     noise(t, 0.012, { type: 'highpass', f: 3500, gain: 0.04 * v, dest: musicBus });
   },
   // roulement de banjo : l'accord égrené en doubles croches (pouce, index, majeur, aigu)
   roll(notes, t, d, v = 1) {
-    [notes[0], notes[1], notes[2], notes[0] + 12].forEach((n, i) => INST.banjo(n, t + (i * d) / 4, d / 4, 0.45 * v));
+    [notes[0], notes[1], notes[2], notes[0] + 12].forEach((n, i) => pluck(mtof(n), t + (i * d) / 4, Math.min(0.45, d / 4 + 0.2), 0.05 * v, { snap: 0.8 }));
   },
   // violon de bal : deux dents de scie qui glissent sur la note, vibrato, bruit d'archet
   fiddle(m, t, d, v = 1) {
@@ -694,8 +680,9 @@ const INST = {
     hp.type = 'highpass';
     hp.frequency.value = 250;
     const g = ac.createGain();
-    env(g, t, Math.min(0.06, d / 4), 0.06 * v, 0.06, end);
-    for (const det of [-6, 6]) {
+    const fast = d < 0.25;
+    env(g, t, Math.min(0.06, d / 4), (fast ? 0.085 : 0.06) * v, 0.06, end);
+    for (const det of fast ? [0] : [-6, 6]) {
       const o = osc('sawtooth', f * 0.98, t);
       o.frequency.exponentialRampToValueAtTime(f, t + 0.05);
       o.detune.value = det;
@@ -707,7 +694,7 @@ const INST = {
     flt.connect(hp).connect(g);
     g.connect(musicBus);
     g.connect(echoIn);
-    noise(t, Math.min(d, 0.25), { type: 'bandpass', f: Math.min(8000, f * 4), q: 2, gain: 0.012 * v, dest: musicBus });
+    if (!fast) noise(t, Math.min(d, 0.25), { type: 'bandpass', f: Math.min(8000, f * 4), q: 2, gain: 0.012 * v, dest: musicBus });
   },
   // accordéon de cantina : deux anches désaccordées (le « musette » qui ondule) et une anche grave
   accordion(m, t, d, v = 1) {
@@ -1363,6 +1350,7 @@ const PLAYLISTS = {
   'mini-wagon': ['roulotte', 'diligence', 'nocturne'],
   'mini-pinte': ['tournee', 'piano', 'cantina'],
   'mini-mine': ['filon', 'train', 'vautour'],
+  'mini-course': ['rodeo', 'diligence', 'train'],
   'mini-rts': ['ruee', 'collines', 'cri', 'vautour', 'glas', 'plomb'],
 };
 const compiled = {};

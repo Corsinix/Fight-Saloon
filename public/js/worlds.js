@@ -25,6 +25,8 @@ export const MODES = {
   // règles, parcours et arbitre dans minegame.js
   // course de 4 étapes ; s'arrête quand tout le monde est sorti, ou au bout de 95 s
   mine: { name: 'La mine', sub: 'Course en wagonnet : accélère, aiguille, sors le premier', min: 2, max: 4, duration: 95000 },
+  // règles, piste et arbitre dans coursegame.js ; s'arrête quand tout le monde est arrivé, ou au bout de 90 s
+  course: { name: 'La course de chevaux', sub: 'Saute les obstacles, cravache… sans épuiser ton cheval', min: 2, max: 4, duration: 90000 },
   // mini-RTS : carte, règles, arbitre et bots dans rtsgame.js
   rts: { name: 'Conquête de l’Ouest', sub: 'Bâtis ton fort, exploite les filons, recrute et attaque', min: 2, max: 4, duration: 420000 },
 };

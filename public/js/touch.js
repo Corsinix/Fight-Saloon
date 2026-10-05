@@ -10,6 +10,7 @@ const PADS = {
   fort: { stick: true, buttons: [{ label: 'Dynamite', arm: true, cls: 'red', on: (s) => s.altArmed }, { label: 'Recharger', key: 'r' }] },
   lasso: { stick: true, buttons: [{ label: 'Lasso doré', key: 'e', cls: 'gold', on: (s) => s.my?.bet }] },
   mine: { buttons: [{ label: '▲', key: 'arrowup', cls: 'icon', title: 'Aiguillage en haut' }, { label: '●', key: ' ', cls: 'icon', title: 'Aiguillage au neutre' }, { label: '▼', key: 'arrowdown', cls: 'icon', title: 'Aiguillage en bas' }] },
+  course: { buttons: [{ label: 'Cravache', key: 'x', cls: 'red' }, { label: 'Sauter', key: ' ' }] },
 };
 const DIRS = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
 

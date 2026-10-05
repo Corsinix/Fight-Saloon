@@ -53,7 +53,7 @@ Le fusil change aussi d'une partie à l'autre (même modèle pour les deux joueu
 
 En partie, appuie sur **Entrée** pour envoyer un message dans le chat.
 
-**Cinématiques** : chaque partie (roulette et mini-jeux) s'ouvre sur une courte cinématique de 5 s, jouée en local (`public/js/cutscene.js`). On voit d'abord un plan d'ensemble propre au jeu, avec l'ambiance de la partie : le train qui entre en gare, le troupeau, la grand-rue à l'heure du duel, l'avis de recherche de Charlie, le fort, la roulotte, la chope qui glisse sur le comptoir, le wagonnet qui entre dans la mine, ou la table de roulette. Suivent les gros plans des joueurs, puis le titre tamponné sur une affiche. Un clic (ou une touche) la passe. Dans les mini-jeux, elle occupe le début du compte à rebours, qui passe de 3,5 s à 8,5 s.
+**Cinématiques** : chaque partie (roulette et mini-jeux) s'ouvre sur une courte cinématique de 5 s, jouée en local (`public/js/cutscene.js`). On voit d'abord un plan d'ensemble propre au jeu, avec l'ambiance de la partie : le train qui entre en gare, le troupeau, la grand-rue à l'heure du duel, l'avis de recherche de Charlie, le fort, la roulotte, la chope qui glisse sur le comptoir, le wagonnet qui entre dans la mine, les stalles de départ du champ de courses, ou la table de roulette. Suivent les gros plans des joueurs, puis le titre tamponné sur une affiche. Un clic (ou une touche) la passe. Dans les mini-jeux, elle occupe le début du compte à rebours, qui passe de 3,5 s à 8,5 s.
 
 **Décors** : chaque partie se joue dans un lieu tiré au hasard, sous une ambiance tirée elle aussi au hasard (les mêmes pour les deux joueurs, annoncés en début de manche ; `public/js/room.js`) :
 
@@ -77,7 +77,7 @@ Par les fenêtres, on voit l'heure et la météo de l'ambiance : soleil, aube, c
 
 Une table accueille jusqu'à 4 joueurs. Dans le lobby, l'hôte choisit le jeu : la **Roulette** ou le **Duel** (à deux exactement), ou un mini-jeu à plusieurs. En solo, les mini-jeux opposent le joueur à 3 bots (un seul pour le duel).
 
-**Ambiances** : la Fusillade, le Lasso, le Duel, « Où est Charlie ? », l'Assaut du fort, la Roulotte et la Conquête de l'Ouest se jouent chaque fois sous une ambiance tirée au hasard, annoncée pendant le compte à rebours et la même pour toute la table (`public/js/env.js`) :
+**Ambiances** : la Fusillade, le Lasso, le Duel, « Où est Charlie ? », l'Assaut du fort, la Roulotte, la Course de chevaux et la Conquête de l'Ouest se jouent chaque fois sous une ambiance tirée au hasard, annoncée pendant le compte à rebours et la même pour toute la table (`public/js/env.js`) :
 
 | Ambiance | Ce qui change |
 |---|---|
@@ -275,6 +275,19 @@ La course passe par **4 étapes**, chacune filmée autrement. Un bandeau annonce
 - Bonus d'arrivée : 1er +150, 2e +100, 3e +60, 4e +30. Le classement final se fait aux points (or, chocs et bonus d'arrivée).
 - Le parcours est tiré de la graine (`public/js/minegame.js`) : chaque navigateur simule son wagonnet et envoie sa position. Les autres joueurs apparaissent en fantômes, et chacun ramasse son or. L'hôte vérifie que les positions annoncées sont possibles. Rien n'est posé près des changements d'étape, et le parcours a toujours une issue : un pilote parfait ne touche rien.
 
+### La course de chevaux (environ 45 s)
+
+Sur le champ de courses de Dusty Gulch, chaque cavalier a son couloir, du départ jusqu'au poteau d'arrivée (2 100 m). Vue de côté, les autres chevaux galopent dans les couloirs voisins ; ceux qui sont hors de l'écran sont signalés au bord, avec leur avance ou leur retard en mètres.
+
+- **Espace**, **↑** ou **Z** (ou clic) : sauter. Au téléphone : bouton **Sauter**, ou toucher l'image.
+- **X**, **→** ou **D** (ou clic droit) : coup de **cravache**. Au téléphone : bouton **Cravache**. Une touche maintenue ne compte qu'une fois.
+- **Obstacles** en travers du couloir : haies, barrières, tonneaux, bottes de foin, fossés pleins d'eau. Les percuter fait trébucher le cheval (vitesse × 0,35 pendant 0,9 s) et casse son élan. La **boue** ne fait pas tomber, mais freine (× 0,6 pendant 1,2 s). On saute par-dessus tout.
+- **Cravache** : chaque coup ajoute de l'élan (jusqu'à × 1,8), qui retombe en 2,5 s environ si on ne recommence pas.
+- **Résilience** (barre en haut à gauche, un cran par coup de cravache) : chaque coup coûte 12. Elle remonte toute seule (+9 par seconde) et avec les **carottes** (+25). Certaines carottes sont en l'air, au-dessus d'un obstacle : il faut sauter pile au bon moment pour les attraper.
+- **Épuisé !** : si un coup de cravache vide la barre, le cheval perd son élan et n'avance plus qu'à × 0,45 pendant 2,8 s ; la cravache ne répond plus. Cravacher sans arrêt fait donc perdre du temps : il faut doser.
+- Arrivée : 1er +100, 2e +60, 3e +30, 4e +10. Le classement suit l'ordre d'arrivée, puis la distance parcourue. La course s'arrête quand tout le monde est arrivé, ou au bout de 90 s.
+- La piste est tirée de la graine (`public/js/coursegame.js`) : chaque navigateur simule son cheval et envoie sa position ; l'hôte vérifie que les positions annoncées sont possibles. Les obstacles se rapprochent au fil de la course, mais laissent toujours le temps de retomber avant le suivant. En solo, les 3 bots visent le milieu des obstacles (et en ratent parfois) et cravachent tant que leur barre reste au-dessus de leur seuil de prudence.
+
 ### Conquête de l'Ouest (mini-RTS, 7 min, chacun pour soi)
 
 Chaque joueur tient un **fort** sur une grande carte (768 × 432 px, l'écran en montre une partie). Le **décor** est tiré au hasard à chaque partie, ainsi que la place des forts (face à face ou en diagonale à deux joueurs) ; l'ambiance (heure, météo) est choisie pour aller avec le décor :
@@ -377,6 +390,7 @@ La musique est composée pour le jeu, façon western spaghetti, et synthétisée
 | Défends la roulotte | La Roulotte (8 bits, galop) | La Diligence, Chevauchée Nocturne |
 | La pinte | Tournée Générale (piano bastringue endiablé) | Le Piano du Saloon, La Cantina de Rosita |
 | La mine | Le Filon (guitare, guimbarde, coups de pioche) | Le Train de Minuit, Le Vautour |
+| La course de chevaux | Rodéo au Ranch (emprunté au lasso, en attendant son propre thème) | La Diligence, Le Train de Minuit |
 | Conquête de l'Ouest | La Ruée vers l'Or (trompette, chœur, chant d'hommes) | L'Or des Collines, Le Cri du Coyote, Le Vautour, Le Glas de Boot Hill, Sous le Soleil de Plomb |
 
 **Musique dynamique** : la musique suit ce qui se passe (`setMood` et `musicCue` dans `public/js/audio.js`).

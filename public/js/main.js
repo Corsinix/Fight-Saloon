@@ -13,6 +13,7 @@ import { FortScene } from './fort.js';
 import { WagonScene } from './wagon.js';
 import { PinteScene } from './pinte.js';
 import { MineScene } from './mine.js';
+import { CourseScene } from './course.js';
 import { RtsScene } from './rts.js';
 import { TEAM_NAMES } from './fortgame.js';
 import { MODES, PLAYER_COLORS } from './worlds.js';
@@ -27,7 +28,7 @@ let user = null;
 let lobby = null;
 let scene = null; // roulette
 let mini = null; // mini-jeu en cours (fusillade, lasso, duel, Charlie)
-const MINI_SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, rts: RtsScene };
+const MINI_SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene };
 let screen = 'title';
 const pad = new TouchPad(document.getElementById('touchpad')); // commandes tactiles des mini-jeux
 let pending = false;
@@ -62,6 +63,46 @@ function toast(html, where = 'global-toasts') {
   $(where).appendChild(d);
   setTimeout(() => d.remove(), 6000);
 }
+
+// ------------------------------------------------------------ diagnostic (surtout pour les téléphones)
+// 1) Une erreur JavaScript s'affiche à l'écran (une fois par message) : on peut la photographier pour la signaler.
+const seenErrors = new Set();
+function reportError(msg, where) {
+  msg = String(msg || 'erreur inconnue');
+  if (msg === 'Script error.' || msg.includes('ResizeObserver')) return; // bruit sans intérêt (autres sites, extensions)
+  const key = `${msg}|${where}`;
+  if (seenErrors.has(key) || seenErrors.size >= 5) return;
+  seenErrors.add(key);
+  toast(`<b>Erreur :</b> ${esc(msg)}${where ? ` <small>(${esc(where)})</small>` : ''}`);
+}
+addEventListener('error', (e) => reportError(e.message, e.filename ? `${e.filename.split('/').pop()}:${e.lineno}` : ''));
+addEventListener('unhandledrejection', (e) => reportError(e.reason?.message || e.reason, ''));
+// 2) Partie en cours notée dans sessionStorage, effacée en quittant normalement. Si le navigateur tue la page
+//    (mémoire du téléphone), elle se recharge avec la note encore là : on le dit, avec le jeu et la durée.
+const LIVE_KEY = 'bs-live';
+let liveTimer = 0;
+function liveMark(kind) {
+  clearInterval(liveTimer);
+  const t0 = Date.now();
+  const save = () => { if (document.hidden) return; try { sessionStorage.setItem(LIVE_KEY, JSON.stringify({ kind, s: Math.round((Date.now() - t0) / 1000) })); } catch {} };
+  save();
+  liveTimer = setInterval(save, 2000);
+}
+function liveClear() {
+  clearInterval(liveTimer);
+  try { sessionStorage.removeItem(LIVE_KEY); } catch {}
+}
+addEventListener('pagehide', liveClear);
+// en arrière-plan, le téléphone peut fermer l'onglet pour faire de la place : ce n'est pas un plantage du jeu
+document.addEventListener('visibilitychange', () => { if (document.hidden) try { sessionStorage.removeItem(LIVE_KEY); } catch {} });
+try {
+  const crashed = JSON.parse(sessionStorage.getItem(LIVE_KEY) || 'null');
+  sessionStorage.removeItem(LIVE_KEY);
+  if (crashed) {
+    const name = crashed.kind === 'roulette' ? 'la roulette' : `« ${MODES[crashed.kind]?.name || crashed.kind} »`;
+    setTimeout(() => toast(`<b>Le jeu s’est fermé tout seul</b> pendant ${esc(name)}, après ${crashed.s} s de partie. Le téléphone a sans doute manqué de mémoire.`), 800);
+  }
+} catch {}
 
 // Fenêtre de confirmation au style du jeu (remplace confirm()) : renvoie une promesse (true = confirmé).
 // Échap ou un clic à côté = annuler. Pour une action risquée (danger), le focus est sur « annuler ».
@@ -319,7 +360,7 @@ function renderLeaderboard(lb) {
 const SOLO = {
   roulette: ['Roulette', '1 bot'], shooter: ['Fusillade', '3 bots'], lasso: ['Lasso', '3 bots'], duel: ['Duel', '1 bot'],
   charlie: ['Charlie', '3 bots'], fort: ['Fort', 'toi + 1 bot'], wagon: ['Roulotte', '3 bots'], pinte: ['Pinte', '3 bots'], mine: ['Mine', '3 bots'],
-  rts: ['Conquête', '3 bots'],
+  course: ['Course', '3 bots'], rts: ['Conquête', '3 bots'],
 };
 // Pages de 2 × 3 jeux, parcourues avec les flèches ; les cases vides annoncent les prochains jeux.
 const SOLO_PAGE = 6;
@@ -400,6 +441,7 @@ net.on('lobby', ({ lobby: l }) => {
 });
 
 function closeScenes() {
+  liveClear();
   pad.detach();
   if (scene) { scene.destroy(); scene = null; }
   if (mini) { mini.destroy(); mini = null; }
@@ -617,6 +659,7 @@ function enterRoulette() {
   $('gameover').classList.add('hidden');
   $('toasts').innerHTML = '';
   closeScenes();
+  liveMark('roulette');
   pending = false;
   matchStart = Date.now();
   say('Bienvenue au Buckshot Saloon. Asseyez-vous, messieurs-dames…');
@@ -671,6 +714,7 @@ function enterMini(kind) {
   $('gameover').classList.add('hidden');
   $('toasts').innerHTML = '';
   closeScenes();
+  liveMark(kind);
   const MiniCls = MINI_SCENES[kind] || ShooterScene;
   mini = new MiniCls($('game'), {
     send: (action) => net.send({ t: 'action', action }),

@@ -6,6 +6,7 @@ import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
 import { MiniScene, pixelSprite } from './miniscene.js';
 import { riderLook, drawHat } from './lasso.js';
+import { beardHasMustache } from './data.js';
 import { drawStreet, streetLights } from './shooter.js';
 import { W, H, DUEL, streetLayout } from './worlds.js';
 
@@ -40,10 +41,11 @@ function duelist(r, pose) {
     R(-1, -30, 3, 2, skin);
     R(-3, -36, 7, 7, skin); R(4, -33, 1, 2, S.shade(skin, -0.15)); R(2, -34, 1, 1, '#1a0f0a');
     R(-3, -36, 2, 5, hair);
-    if (['mustache', 'handlebar', 'horseshoe'].includes(beard)) R(1, -31, 4, 1, hair);
+    if (beardHasMustache(beard)) R(1, -31, 4, 1, hair);
     if (beard === 'handlebar') R(4, -32, 1, 1, hair);
-    if (['full', 'chops'].includes(beard)) R(-1, -31, 5, 2, hair);
-    if (beard === 'goatee') R(2, -30, 2, 1, hair);
+    if (['full', 'chops', 'chinstrap', 'prospector'].includes(beard)) R(-1, -31, 5, 2, hair);
+    if (beard === 'prospector') R(0, -29, 4, 2, hair);
+    if (beard === 'goatee' || beard === 'imperial') R(2, -30, 2, 1, hair);
     drawHat((dx, dy, w, h, col) => R(dx + 3, dy + 4, w, h, col), r);
     R(-7, -26, 2, 9, clothD); R(-7, -17, 2, 2, skin); // bras arrière
     if (pose === 'draw') {

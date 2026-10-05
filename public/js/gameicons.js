@@ -117,6 +117,21 @@ const GRIDS = {
     '...k.....k...',
     'kkkkkkkkkkkkk',
   ],
+  // tête de cheval de course, bride rouge (La course de chevaux)
+  course: [
+    '......k.k...',
+    '.....kbkbk..',
+    '....kbBBBnk.',
+    '...kbBkBBnnk',
+    '..kbBBBBBnnk',
+    '.kbBrrrrrrnk',
+    'kbBBBBBBrBnk',
+    'kbbBkkkBBBnk',
+    '.kkk...kBBnk',
+    '.......kBBnk',
+    '.......kBBnk',
+    '.......kkkkk',
+  ],
   // fort en rondins et son drapeau (Conquête de l'Ouest)
   rts: [
     '......nkkk...',

@@ -1,17 +1,8 @@
 // IA du mode solo. Elle ne triche pas : elle ne connaît que ce qu'un joueur verrait
 // (chargement annoncé, cartouches éjectées) plus ses propres infos secrètes (longue-vue, télégramme).
+import { randomCharacter } from './data.js';
 
 const NAMES = ['Le Croque-mort', 'El Tuerto', 'Calamity Rose', 'Vieux Jeb', 'Hank la Gâchette', 'Señor Mezcal', 'Doc Vautour', 'Miss Dynamite'];
-const PARTS = {
-  hat: ['none', 'cowboy', 'sombrero', 'bowler', 'tophat', 'gambler', 'bandana', 'coonskin'],
-  hair: ['bald', 'short', 'long', 'ponytail', 'curly', 'messy', 'mullet'],
-  eyes: ['normal', 'squint', 'wide', 'angry', 'tired', 'patch'],
-  nose: ['small', 'big', 'hooked', 'round', 'red', 'broken'],
-  mouth: ['neutral', 'smile', 'frown', 'grin', 'cigar', 'toothpick'],
-  beard: ['none', 'stubble', 'mustache', 'handlebar', 'horseshoe', 'goatee', 'full', 'chops'],
-  outfit: ['shirt', 'vest', 'poncho', 'duster', 'sheriff'],
-};
-const COLORS = { skin: 6, hairColor: 8, hatColor: 8, outfitColor: 8 };
 
 const LINES = {
   hitOpp: ['Rien de personnel, l’ami.', 'Un de moins.', 'Ça pique, hein ?', 'Le fusil m’aime bien ce soir.'],
@@ -26,9 +17,7 @@ const rnd = (n) => Math.floor(Math.random() * n);
 const pick = (arr) => arr[rnd(arr.length)];
 
 function botPlayer(code) {
-  const character = {};
-  for (const [k, opts] of Object.entries(PARTS)) character[k] = pick(opts);
-  for (const [k, n] of Object.entries(COLORS)) character[k] = rnd(n);
+  const character = randomCharacter();
   return { key: `bot:${code}`, name: pick(NAMES), character, bot: true };
 }
 

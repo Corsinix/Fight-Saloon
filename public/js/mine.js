@@ -9,6 +9,7 @@ import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
 import { MiniScene, pixelSprite } from './miniscene.js';
 import { riderLook, drawHat } from './lasso.js';
+import { beardHasMustache, beardHasChin } from './data.js';
 import { W, H } from './worlds.js';
 import { desertOpts } from './env.js';
 import { MINE, STAGES, stageAt, GOLD, OBSTACLES, baseSpeed, cartSpeed, mineWorld, newCart, cartLane, airH, stepCart } from './minegame.js';
@@ -117,8 +118,8 @@ function cartSprite(r, f) {
     R(-7, -23, 8, 8, r.cloth); R(-7, -23, 8, 1, S.shade(r.cloth, 0.2));
     R(-6, -40 + b, 6, 7, r.skin); R(0, -37 + b, 1, 1, r.skin);
     R(-6, -39 + b, 1, 5, r.hair); R(-2, -38 + b, 1, 1, '#1a0f0a');
-    if (['mustache', 'handlebar', 'horseshoe'].includes(r.beard)) R(-2, -35 + b, 3, 1, r.hair);
-    if (['full', 'goatee', 'chops'].includes(r.beard)) R(-4, -34 + b, 4, 1, r.hair);
+    if (beardHasMustache(r.beard)) R(-2, -35 + b, 3, 1, r.hair);
+    if (beardHasChin(r.beard)) R(-4, -34 + b, 4, 1, r.hair);
     R(-6, -22, 6, 1, r.color); R(-9, -22 + (f % 2), 3, 1, r.color); // foulard au vent
     drawHat(R, r, b);
     R(2, -21, 2, 5, r.cloth); R(3, -17, 2, 2, r.skin); // main sur le rebord
@@ -142,7 +143,7 @@ function cartSprite(r, f) {
 // le même, vu de derrière (dos du passager, chapeau, arrière de la caisse)
 function cartBackSprite(r, f) {
   return cached(`b${r.key}|${f}`, () => pixelSprite(36, 40, 18, 38, (R) => {
-    const brim = { sombrero: 22, tophat: 12, bowler: 10, gambler: 14, bandana: 0, coonskin: 0, none: 0 }[r.hat] ?? 16;
+    const brim = { sombrero: 22, tophat: 12, bowler: 10, gambler: 14, kepi: 10, bandana: 0, coonskin: 0, none: 0 }[r.hat] ?? 16;
     // buste et tête de dos
     R(-7, -26, 14, 10, r.cloth); R(-7, -26, 14, 1, S.shade(r.cloth, 0.2));
     R(-6, -22, 12, 1, r.color); R(5 + (f % 2), -21, 3, 1, r.color); // foulard au vent

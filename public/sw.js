@@ -2,16 +2,19 @@
 // Code, styles, polices, images : le réseau d'abord (toujours la dernière version, pour que l'hôte et les
 // joueurs d'une table aient le même code), le cache seulement hors ligne ou si le réseau traîne.
 // Jamais de cache pour public/music (morceaux sous droits, absents du site) ni pour Supabase (comptes, tables).
-const CACHE = 'saloon-v1';
+const CACHE = 'saloon-v2';
 const SLOW_MS = 4000; // au-delà, on sert la copie en cache et la mise à jour continue en arrière-plan
 
+// Le cache n'est qu'un bonus : si le stockage refuse (plein, navigation privée…), l'app marche quand même en ligne.
+const match = (req, opts) => caches.match(req, opts).catch(() => undefined);
+
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', 'index.html', 'manifest.webmanifest'])).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', 'index.html', 'manifest.webmanifest'])).catch(() => {}).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+    try { for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k); } catch {}
     await self.clients.claim();
   })());
 });
@@ -35,14 +38,14 @@ self.addEventListener('fetch', (e) => {
 });
 
 async function networkFirst(req, fresh, opts) {
-  const slow = new Promise((ok) => setTimeout(ok, SLOW_MS)).then(() => caches.match(req, opts));
+  const slow = new Promise((ok) => setTimeout(ok, SLOW_MS)).then(() => match(req, opts));
   try {
     const res = await Promise.race([fresh, slow.then((hit) => hit || fresh)]);
     if (res) return res;
   } catch {}
-  return (await caches.match(req, opts)) || fresh; // hors ligne et jamais vu : l'erreur réseau d'origine
+  return (await match(req, opts)) || fresh; // hors ligne et jamais vu : l'erreur réseau d'origine
 }
 
 async function cacheFirst(req, fresh) {
-  return (await caches.match(req)) || fresh;
+  return (await match(req)) || fresh;
 }

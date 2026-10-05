@@ -393,6 +393,52 @@ const SHOTS = {
     },
   },
 
+  // Le champ de courses : la tribune est pleine, les stalles s'ouvrent, les chevaux s'élancent
+  course: {
+    caption: 'LE GRAND PRIX DE DUSTY GULCH',
+    cues: [[200, 'neigh'], [700, 'gunshot'], [800, 'whip'], [1300, 'neigh']],
+    draw(ctx, el, players) {
+      // tribune et sa foule
+      R(ctx, 150, 62, 222, 6, S.OUT);
+      for (let x = 0; x < 220; x += 11) R(ctx, 151 + x, 63, 11, 4, (x / 11) % 2 ? CREAM : '#c0392b');
+      R(ctx, 151, 68, 220, 46, '#7a4a28');
+      for (let row = 0; row < 3; row++) {
+        for (let k = 0; k < 26; k++) {
+          const id = row * 29 + k;
+          const jump = el > 700 && Math.floor(el / 150 + hash(id) * 4) % 2 ? -2 : 0;
+          const px = 155 + k * 8 + (row % 2) * 4, py = 74 + row * 13 + jump;
+          R(ctx, px, py + 3, 5, 5, ['#c0392b', '#3a6ec0', '#e0b040', '#4a7a3a', CREAM][Math.floor(hash(id) * 5)]);
+          R(ctx, px + 1, py, 3, 3, ['#f0c8a0', '#c89060', '#8a5a3a'][Math.floor(hash(id + 1) * 3)]);
+        }
+      }
+      // lisse blanche et piste
+      R(ctx, 0, 126, W, 90, '#c08050');
+      for (let i = 0; i < 40; i++) R(ctx, hash(i) * W, 130 + hash(i + 9) * 80, 2, 1, '#a87040');
+      for (let x = 4; x < W; x += 30) R(ctx, x, 114, 2, 14, '#e8e4d8');
+      R(ctx, 0, 115, W, 2, '#f4f0e4');
+      // stalles de départ : les portes s'ouvrent au coup de pistolet
+      const open = el > 700;
+      for (let i = 0; i < 4; i++) {
+        const y = 140 + i * 15;
+        R(ctx, 34, y - 26, 36, 3, '#7a8a9a');
+        if (!open) R(ctx, 68, y - 24, 2, 22, '#c9ced6');
+        else R(ctx, 68, y - 24, 8, 2, '#c9ced6');
+      }
+      // les chevaux (ceux des joueurs, puis des chevaux de course)
+      for (let i = 0; i < 4; i++) {
+        const y = 140 + i * 15;
+        const run = Math.max(0, el - 720 - i * 40);
+        const x = 54 + run * (0.15 + hash(i + 3) * 0.04) + (run * run) * 0.00003;
+        if (run > 0) puffs(ctx, 3, 110, 330, (el % 330) + 330, () => ({ x: x - 12, y: y - 2 }), { vx: -0.03, vy: -0.01, r0: 2, col: '214,170,120', a0: 0.5 });
+        horse(ctx, x, y, ['#8a4a24', '#3a2c26', '#e8dcc8', '#d8a850'][i], run > 0 ? el + i * 37 : 0, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 11));
+      }
+      // le starter et son pistolet, de la fumée au coup de feu
+      person(ctx, 96, 128, { coat: '#3a2a22', hat: '#1a0f0a', skin: SKIN[1] });
+      R(ctx, 99, 103, 1, 3, '#3a2a22');
+      if (el > 700) puffs(ctx, 1, 0, 600, el - 700, () => ({ x: 100, y: 101 }), { vx: 0.005, vy: -0.02, r0: 2, a0: 0.8 });
+    },
+  },
+
   // Plan par défaut (jeu sans plan à lui) : les cavaliers des joueurs traversent le désert
   default: {
     caption: 'QUELQUE PART DANS L\'OUEST',
