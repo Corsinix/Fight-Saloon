@@ -1,4 +1,5 @@
-// Mini-jeu « Fusillade » : rail shooter dans la grand-rue de Dusty Gulch, puis à l'intérieur du saloon.
+// Mini-jeu « Fusillade » : rail shooter de la gare de Dusty Gulch au saloon, en passant par les abords de la ville
+// (cimetière, ranch ou mine, tiré au sort, voir shooteredge.js) et la grand-rue.
 // La caméra avance toute seule ; les bandits surgissent des fenêtres, des portes, des toits et des abris.
 // La rue (succession de façades, abris) et l'ambiance (heure, météo) changent à chaque partie.
 import * as S from './sprites.js';
@@ -8,18 +9,25 @@ import { SKIN, CLOTH_COLORS } from './data.js';
 import { MiniScene, ring } from './miniscene.js';
 import { desertOpts } from './env.js';
 import { Deco } from './shooterdeco.js';
+import { renderEdge, edgeSigns, edgeLights } from './shooteredge.js';
+import { horseSprite, riderLook } from './lasso.js';
 import {
-  W, H, GROUND, STREET_W, SALOON_W, STREET_END, SALOON_START, facade, belfry, PROP_DIM, PROP_BASE,
+  W, H, GROUND, STREET_W, SALOON_W, SALOON_START, facade, belfry, PROP_DIM, PROP_BASE,
   SAL, camAt, shooterWorld, BONUSES, BONUS_MS, SAND_MS, crateAt, targetSec, bossX, BOSS_T0, SHOOTER_PTS,
-  WAGER, shooterEventAt, STATION_START, STATION_END, STREET_START, STATION_W, STA, STA_COVER, wagonOpenings, locoCab,
+  WAGER, shooterEventAt, STATION_START, STREET_START, STATION_W, STA, STA_COVER, wagonOpenings, locoCab,
+  stationTrain, EDGE_START, FADES, rideX,
 } from './worlds.js';
 
 const AMMO = 6, RELOAD = 850;
 // rattrapage : le dernier (300 pts de retard ou plus) a un barillet de 8 balles qui se recharge plus vite
 const AMMO_BACK = 8, RELOAD_BACK = 550, BEHIND = 300;
+const BANNER_MS = 1800; // durée des annonces (embuscade, bonus…)
 const EVENT_TXT = {
   ambush: ['EMBUSCADE !', '#f0705a'],
   train: ['ATTAQUE DU TRAIN !', '#f0705a'],
+  graves: ['EMBUSCADE AU CIMETIÈRE !', '#f0705a'],
+  riders: ['CAVALIERS EN VUE !', '#f0a070'],
+  tnt: ['DYNAMITE ! ABATS-LA EN VOL', '#f0705a'],
   bounty: ['PRIME DOUBLÉE : 8 S !', '#f8d070'],
   blackout: ['PANNE DE LUMIÈRE !', '#c8b8e8'],
   wager: [`PARI SUR EL DIABLO : TOUCHE B`, '#f8d070'],
@@ -54,6 +62,23 @@ const SUPPLIER = { skin: 1, hat: 'cowboy', hatColor: 5, hair: 'messy', hairColor
 const BOSS = { skin: 3, hat: 'sombrero', hatColor: 7, hair: 'long', hairColor: 0, eyes: 'patch', nose: 'hooked', mouth: 'cigar', beard: 'handlebar', outfit: 'poncho', outfitColor: 0 };
 const BOSS_SCALE = 1.5;
 const BOTTLES = ['#4a7a3a', '#8a4a1a', '#9ab8c8', '#6a2a2a'];
+const HORSE_COATS = [['#8a5a34', '#3a2214'], ['#2a2220', '#1a1210'], ['#e8dcc8', '#8a7a68'], ['#a8683a', '#f4ecd8'], ['#5a4a40', '#2a2220']];
+const RIDE_SCALE = 1.5; // cheval et cavalier agrandis, à l'échelle des bandits
+const EVENT_SFX = { ambush: 'hurt', train: 'hurt', graves: 'hurt', tnt: 'hurt', riders: 'neigh', blackout: 'thud' };
+
+// sprite retourné (les chevaux galopent vers la droite)
+function flipped(spr) {
+  if (!spr.flip) {
+    const c = S.makeCanvas(spr.width, spr.height);
+    const x = c.getContext('2d');
+    x.scale(-1, 1);
+    x.drawImage(spr, -spr.width, 0);
+    c.ox = spr.width - spr.ox;
+    c.oy = spr.oy;
+    spr.flip = c;
+  }
+  return spr.flip;
+}
 
 const clamp01 = (k) => (k < 0 ? 0 : k > 1 ? 1 : k);
 const hash = (n) => {
@@ -63,13 +88,13 @@ const hash = (n) => {
 };
 
 // ------------------------------------------------------------ décors (dessinés une fois par rue)
-function paint(ctx) {
+export function paint(ctx) {
   const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); };
   const box = (x, y, w, h, col) => { R(x - 1, y - 1, w + 2, h + 2, OUT); R(x, y, w, h, col); };
   return { R, box };
 }
 
-function seeded(s) { return () => ((s = (s * 9301 + 49297) % 233280) / 233280); }
+export function seeded(s) { return () => ((s = (s * 9301 + 49297) % 233280) / 233280); }
 
 function signRect(b, f) {
   const w = Math.min(b.w - 16, b.sign.length * 7 + 12);
@@ -77,7 +102,7 @@ function signRect(b, f) {
   return { x: Math.round(b.x + b.w / 2 - w / 2), y, w, h: 11 };
 }
 
-function drawWindow(ctx, r, trim, rnd, glass = false) {
+export function drawWindow(ctx, r, trim, rnd, glass = false) {
   const { R } = paint(ctx);
   R(r.x - 3, r.y - 3, r.w + 6, r.h + 6, OUT);
   R(r.x - 2, r.y - 2, r.w + 4, r.h + 4, trim);
@@ -98,7 +123,7 @@ function drawWindow(ctx, r, trim, rnd, glass = false) {
   R(r.x - 4, r.y + r.h + 2, r.w + 8, 2, S.shade(trim, -0.2));
 }
 
-function drawDoor(ctx, d, trim, col, arched = false) {
+export function drawDoor(ctx, d, trim, col, arched = false) {
   const { R } = paint(ctx);
   if (arched) for (let k = 0; k < 6; k++) { R(d.x - 3 + k, d.y - 9 + k, d.w + 6 - 2 * k, 1, OUT); R(d.x - 2 + k, d.y - 8 + k, d.w + 4 - 2 * k, 1, k < 2 ? trim : '#1e1008'); }
   R(d.x - 3, d.y - 3, d.w + 6, d.h + 3, OUT);
@@ -109,7 +134,7 @@ function drawDoor(ctx, d, trim, col, arched = false) {
 }
 
 // toit à pignon (écurie, forge, église)
-function gable(R, b, f, col) {
+export function gable(R, b, f, col) {
   const { x, w, top } = f;
   for (let dy = 0; dy <= 22; dy++) {
     const hw = (w / 2 + 4) * (1 - dy / 24);
@@ -236,7 +261,7 @@ function drawBuilding(ctx, b, rnd) {
   if (f.balcony) for (const px of [x + 1, x + w - 5]) box(px, 109, 4, GROUND - 109, dk);
 }
 
-function drawProp(ctx, p) {
+export function drawProp(ctx, p) {
   const { R, box } = paint(ctx);
   const [w, h] = PROP_DIM[p.kind];
   const x = p.x, top = PROP_BASE - h;
@@ -446,18 +471,50 @@ function renderStation(seed) {
   for (let i = 0; i < 900; i++) R(rnd() * STATION_W, 146 + rnd() * (P - 146), 1, 1, rnd() < 0.5 ? '#a89888' : '#6a5a4c');
   for (let x = 0; x < STATION_W; x += 9) R(x, 160, 6, 4, '#5a3a22');
   R(0, 159, STATION_W, 1, '#c8ccd0'); R(0, 163, STATION_W, 1, '#c8ccd0'); R(0, 160, STATION_W, 1, '#6a6e74');
-  // voitures de voyageurs (couleur tirée de la graine)
+  // le train : voitures de voyageurs (couleur tirée de la graine), wagons de marchandises, wagons à bestiaux
   const livery = [['#7a2a22', '#e0b040'], ['#2f4a3a', '#d8c088'], ['#8a6a2a', '#4a2a1a']][Math.floor(rnd() * 3)];
-  for (const wg of STA.wagons) {
+  const top = STA.wagonTop, base = STA.wagonBase;
+  for (const wg of stationTrain(seed)) {
     const { x, w } = wg;
-    box(x, STA.wagonTop, w, STA.wagonBase - STA.wagonTop, livery[0]);
-    R(x, STA.wagonTop + 6, w, 2, livery[1]); R(x, STA.wagonBase - 10, w, 2, livery[1]);
-    for (let k = 0; k < w; k += 6) R(x + k, STA.wagonTop + 9, 1, STA.wagonBase - STA.wagonTop - 20, S.shade(livery[0], -0.12));
-    // toit bombé
-    box(x - 4, STA.wagonTop - 6, w + 8, 6, '#3a2a24'); R(x - 2, STA.wagonTop - 7, w + 4, 1, '#3a2a24'); R(x - 4, STA.wagonTop - 6, w + 8, 1, '#5a4a40');
     const o = wagonOpenings(wg);
-    for (const wn of o.wins) { box(wn.x - 1, wn.y - 1, wn.w + 2, wn.h + 2, livery[1]); R(wn.x, wn.y, wn.w, wn.h, '#1e1410'); R(wn.x, wn.y, wn.w, 3, '#140c08'); }
-    for (const d of o.doors) { box(d.x, d.y, d.w, d.h, S.shade(livery[0], -0.2)); R(d.x + 3, d.y + 4, d.w - 6, 14, '#1e1410'); R(d.x + d.w - 4, d.y + 30, 2, 3, '#e0b040'); }
+    if (wg.type === 'boxcar') {
+      const col = '#8a3a24', dk = S.shade(col, -0.25);
+      box(x, top, w, base - top, col);
+      for (let k = 3; k < w; k += 5) R(x + k, top + 1, 1, base - top - 2, dk);
+      // croisillons de renfort et nom de la compagnie
+      for (const px of [x + 4, x + w - 34]) { R(px, top + 4, 30, 1, dk); R(px, base - 6, 30, 1, dk); for (let k = 0; k < 30; k++) R(px + k, top + 4 + Math.round((k * (base - top - 10)) / 30), 1, 1, dk); }
+      R(x + 4, top + 2, w - 8, 1, S.shade(col, 0.15));
+      box(x - 3, top - 4, w + 6, 4, '#3a2a24');
+      for (const wn of o.wins) { box(wn.x - 1, wn.y - 1, wn.w + 2, wn.h + 2, dk); R(wn.x, wn.y, wn.w, wn.h, '#1e1410'); for (let k = 3; k < wn.w; k += 5) R(wn.x + k, wn.y, 1, wn.h, '#4a2a1a'); }
+      for (const d of o.doors) {
+        R(d.x - 2, d.y - 2, d.w + 4, d.h + 2, OUT); R(d.x, d.y, d.w, d.h, '#1e1410');
+        R(d.x + 4, d.y + d.h - 12, 14, 12, '#a8783c'); R(d.x + 20, d.y + d.h - 8, 10, 8, '#c8b890'); // caisses et sacs dans le wagon
+        box(d.x + d.w + 2, d.y - 2, 18, d.h + 2, col); for (let k = 3; k < 18; k += 5) R(d.x + d.w + 2 + k, d.y, 1, d.h - 2, dk); // porte coulissante tirée
+        R(d.x - 4, d.y - 4, d.w + 28, 2, '#3a3436'); // rail de la porte
+      }
+    } else if (wg.type === 'cattle') {
+      const col = '#a8783c', dk = '#5a3a20';
+      box(x, top, w, base - top, '#1e1410');
+      for (let y = top + 2; y < base - 2; y += 7) R(x, y, w, 4, col); // lattes à claire-voie
+      for (let k = 0; k < w; k += 22) R(x + k, top, 3, base - top, dk);
+      R(x, top, w, 2, dk); R(x, base - 3, w, 3, dk);
+      box(x - 3, top - 4, w + 6, 4, '#3a2a24');
+      for (const wn of o.wins) {
+        R(wn.x, wn.y, wn.w, wn.h, '#1e1410');
+        // un bœuf derrière les lattes
+        R(wn.x + 6, wn.y + 6, 22, 12, '#8a5a34'); R(wn.x + 26, wn.y + 4, 9, 8, '#8a5a34'); R(wn.x + 32, wn.y + 6, 2, 2, OUT);
+        R(wn.x + 27, wn.y + 2, 2, 2, '#f4ecd8'); R(wn.x + 33, wn.y + 2, 2, 2, '#f4ecd8');
+      }
+      for (const d of o.doors) { R(d.x - 2, d.y - 2, d.w + 4, d.h + 2, OUT); R(d.x, d.y, d.w, d.h, '#1e1410'); for (let y = d.y + 10; y < d.y + d.h; y += 12) R(d.x, y, d.w, 2, '#3a2a1a'); R(d.x + 6, d.y + d.h - 10, 24, 10, '#c8a040'); }
+    } else {
+      box(x, top, w, base - top, livery[0]);
+      R(x, top + 6, w, 2, livery[1]); R(x, base - 10, w, 2, livery[1]);
+      for (let k = 0; k < w; k += 6) R(x + k, top + 9, 1, base - top - 20, S.shade(livery[0], -0.12));
+      // toit bombé
+      box(x - 4, top - 6, w + 8, 6, '#3a2a24'); R(x - 2, top - 7, w + 4, 1, '#3a2a24'); R(x - 4, top - 6, w + 8, 1, '#5a4a40');
+      for (const wn of o.wins) { box(wn.x - 1, wn.y - 1, wn.w + 2, wn.h + 2, livery[1]); R(wn.x, wn.y, wn.w, wn.h, '#1e1410'); R(wn.x, wn.y, wn.w, 3, '#140c08'); }
+      for (const d of o.doors) { box(d.x, d.y, d.w, d.h, S.shade(livery[0], -0.2)); R(d.x + 3, d.y + 4, d.w - 6, 14, '#1e1410'); R(d.x + d.w - 4, d.y + 30, 2, 3, '#e0b040'); }
+    }
     // châssis, roues, attelage
     R(x + 4, STA.wagonBase, w - 8, 6, '#1e1c1a');
     for (const wx of [x + 22, x + 40, x + w - 40, x + w - 22]) { S.disc(ctx, wx, 158, 6, OUT); S.disc(ctx, wx, 158, 5, '#3a3436'); S.disc(ctx, wx, 158, 2, '#8a8478'); }
@@ -520,10 +577,14 @@ function renderStation(seed) {
 }
 
 // Panoramas : le ciel dépend de l'ambiance, la rue de la graine. On garde le dernier de chaque.
-const CACHE = { sky: null, skyKey: null, street: null, streetKey: null, saloon: null, station: null, stationKey: null };
+const CACHE = { sky: null, skyKey: null, street: null, streetKey: null, saloon: null, station: null, stationKey: null, edge: null, edgeKey: null };
 function stationPano(seed) {
   if (CACHE.stationKey !== seed) { CACHE.station = renderStation(seed); CACHE.stationKey = seed; }
   return CACHE.station;
+}
+function edgePano(E) {
+  if (CACHE.edgeKey !== E) { CACHE.edge = renderEdge(E); CACHE.edgeKey = E; }
+  return CACHE.edge;
 }
 function backdrop(env) {
   if (CACHE.skyKey !== env.id) {
@@ -697,9 +758,10 @@ export class ShooterScene extends MiniScene {
     return [
       this.touch ? 'TOUCHE L\'ÉCRAN : TIRER À CET ENDROIT' : 'SOURIS : VISER - CLIC : TIRER',
       this.touch ? 'BOUTON RECHARGER' : 'CLIC DROIT, R OU ESPACE : RECHARGER',
-      'BANDIT +100 - SUR UN TOIT +150 - BOUTEILLE +50',
+      'BANDIT +100 - TOIT OU CAVALIER +150 - BOUTEILLE +50',
       'MAINS EN L\'AIR = CIVIL : -100 - TOUCHÉ : -50',
       'BONUS : CAISSES DU PROSPECTEUR, SACS DES BANDITS',
+      'DYNAMITE EN VOL : ABATS-LA +75, SINON TOUS -75',
       this.touch ? 'GARE AUX EMBUSCADES - BOUTON PARIER : EL DIABLO' : 'GARE AUX EMBUSCADES - TOUCHE B : PARI SUR EL DIABLO',
     ];
   }
@@ -774,6 +836,10 @@ export class ShooterScene extends MiniScene {
       const p = crateAt(tg, this.t);
       return { x: p.x - 9, y: p.y - 8, w: 18, h: 16 };
     }
+    if (tg.ride) {
+      const x = rideX(tg, this.t) - cx;
+      return { x: x - 30, y: tg.ride.y - 70, w: 62, h: 56 };
+    }
     const s = this.spots[tg.spot];
     const sx = s.cx - cx;
     if (tg.kind === 'boss') {
@@ -793,10 +859,19 @@ export class ShooterScene extends MiniScene {
   visible(t, cam) {
     return this.world.targets.filter((tg) => {
       if (targetSec(tg) !== cam.sec || t < tg.t0) return false;
+      if (this.defused(tg)) return false;
       const d = this.dead.get(tg.id);
+      if (d && tg.ride) return t <= tg.t1 + 200; // le cheval s'enfuit sans son cavalier
       if (d) return t - d.at < (tg.kind === 'boss' ? 1600 : 600);
       return t <= tg.t1 + 200;
     });
+  }
+
+  // bâton de dynamite jamais lancé : son lanceur a été abattu avant
+  defused(tg) {
+    if (tg.kind !== 'tnt' || tg.from == null) return false;
+    const d = this.dead.get(tg.from);
+    return !!d && d.at < tg.t0;
   }
 
   // ---------------------------------------------------------- entrées
@@ -886,6 +961,7 @@ export class ShooterScene extends MiniScene {
       else this.dead.set(hit.id, { by: this.me, at: t, local: true });
       if (hit.kind === 'bottle') { sfx('glass'); this.shards(m.x, m.y, BOTTLES[hit.look % BOTTLES.length]); }
       else if (hit.kind === 'crate') { sfx('crate'); this.shards(m.x, m.y, hit.bonus === 'sand' ? '#d8c088' : '#a8783c'); }
+      else if (hit.kind === 'tnt') { sfx('boom'); this.explode(m.x, m.y); }
       else this.puff(m.x, m.y, '#c0392b', 5);
       this.hooks.send({ kind: 'hit', id: hit.id });
       this.deco.scare(cam.sec, m.x + cam.x, m.y);
@@ -914,8 +990,9 @@ export class ShooterScene extends MiniScene {
   // ---------------------------------------------------------- événements de l'hôte
   targetScreen(tg, t) {
     if (tg.arc) return crateAt(tg, t);
-    const s = this.spots[tg.spot];
     const cam = camAt(t);
+    if (tg.ride) return { x: rideX(tg, t) - cam.x, y: tg.ride.y - 68 };
+    const s = this.spots[tg.spot];
     if (tg.kind === 'boss') return { x: bossX(t) - cam.x, y: this.bossTop(t) + 10 };
     return { x: s.cx - cam.x, y: s.kind === 'bottle' ? s.base - 22 : Math.max(s.y + 4, s.base - 50) };
   }
@@ -941,6 +1018,9 @@ export class ShooterScene extends MiniScene {
       if (tg.kind === 'civil' && ev.by === this.me) this.popup(p.x, p.y - 12, 'UN CIVIL !', '#f0705a');
       if (tg.kind === 'supply' && ev.by === this.me) this.popup(p.x, p.y - 12, 'LE PROSPECTEUR !', '#f0705a');
       if (ev.boom) this.explode(p.x, p.y + 20);
+      if (tg.kind === 'tnt' && ev.by !== this.me) { sfx('boom'); this.explode(p.x, p.y); }
+      // lanceur abattu à temps : sa dynamite ne part pas
+      if (ev.defused) for (const d of this.world.targets) if (d.kind === 'tnt' && d.from === ev.id) this.dead.set(d.id, { by: -1, at: -1e9 });
       if (ev.bonus) {
         if (tg.loot && !ev.boom) { this.shards(p.x, p.y, '#e0b040'); sfx('crate'); }
         this.gotBonus(ev.bonus, ev.by, p);
@@ -954,6 +1034,24 @@ export class ShooterScene extends MiniScene {
       } else {
         const p = this.targetScreen(tg, t);
         this.popup(p.x, p.y, 'BLOQUÉ', this.color(ev.victim));
+      }
+    } else if (ev.type === 'tntBoom') {
+      // la dynamite a touché le sol : tout le monde encaisse (sauf les protégés)
+      const tg = this.world.targets[ev.id];
+      this.dead.set(ev.id, { by: -1, at: t });
+      const p = crateAt(tg, tg.t1);
+      this.explode(p.x, Math.min(p.y, H - 12));
+      sfx('boom');
+      this.shake = 9;
+      this.whiteUntil = this.now + 80;
+      for (const [j, pts] of ev.hurt) {
+        if (j === this.me) {
+          if (pts < 0) { this.red = 0.75; sfx('hurt'); }
+          this.popup(W / 2, 150, pts < 0 ? `${pts}` : 'PROTÉGÉ !', pts < 0 ? '#f0705a' : '#f8d070', true);
+        } else if (pts) {
+          const r = this.remote[j];
+          if (r) this.popup(r.x, r.y - 10, `${pts}`, this.color(j));
+        }
       }
     } else if (ev.type === 'aim') {
       this.aims.set(`${ev.id}:${ev.k}`, ev.victim);
@@ -1060,7 +1158,7 @@ export class ShooterScene extends MiniScene {
         this.seenEvents.add(e.id);
         if (t < at + 1500) {
           this.banner = { text: EVENT_TXT[e.id][0], col: EVENT_TXT[e.id][1], at: t };
-          sfx(e.id === 'ambush' || e.id === 'train' ? 'hurt' : e.id === 'blackout' ? 'thud' : 'power');
+          sfx(EVENT_SFX[e.id] || 'power');
           if (e.id === 'wager') this.popup(W / 2, 112, `MISE ${WAGER.stake} $ - CELUI QUI L'ABAT : ${WAGER.prize} $`, '#fdf6e0');
         }
       }
@@ -1083,6 +1181,9 @@ export class ShooterScene extends MiniScene {
         sfx('whip');
       });
     }
+    for (const tg of this.world.targets) {
+      if (tg.throwAt && tg.kind === 'bandit' && !this.dead.has(tg.id)) this.cue(`tnt${tg.id}`, tg.throwAt, () => sfx('whip'));
+    }
     this.booms = this.booms.filter((b) => t - b.at < 500);
     for (const r of Object.values(this.remote)) {
       const k = Math.min(1, dt * 0.015);
@@ -1103,7 +1204,8 @@ export class ShooterScene extends MiniScene {
     const cx = Math.round(cam.x);
     const amb = this.amb, now = this.now;
     const outdoor = cam.sec !== 'saloon';
-    const pano = cam.sec === 'street' ? streetPano(this.world.layout) : cam.sec === 'station' ? stationPano(this.world.layout.seed) : saloonPano();
+    const L = this.world.layout;
+    const pano = cam.sec === 'street' ? streetPano(L) : cam.sec === 'station' ? stationPano(L.seed) : cam.sec === 'edge' ? edgePano(L.edge) : saloonPano();
     // décor teinté par l'ambiance : façades, silhouettes, abris, bouteilles
     let w;
     if (cam.sec === 'street') w = drawStreet(ctx, cam.x, this.world.layout, amb, now);
@@ -1113,6 +1215,12 @@ export class ShooterScene extends MiniScene {
       w = amb.begin(ctx);
       w.drawImage(pano.bg, -cx, 0);
       canvasText(w, 'GARE DE DUSTY GULCH', STA.building.x + 150 - cx, STA.building.top + 33, { size: 8, color: '#3a2214', shadow: '#c8b07c' });
+    } else if (cam.sec === 'edge') {
+      ctx.drawImage(backdrop(amb.env), -Math.round(cam.x * 0.12) - 40, 0);
+      amb.sky(ctx, now);
+      w = amb.begin(ctx);
+      w.drawImage(pano.bg, -cx, 0);
+      edgeSigns(w, cx, L.edge);
     } else {
       w = amb.begin(ctx, amb.env.inside);
       w.drawImage(pano.bg, -cx, 0);
@@ -1122,11 +1230,12 @@ export class ShooterScene extends MiniScene {
       w.fillStyle = OUT; w.fillRect(Math.round(h.wx - cx) - 1, Math.round(h.y) - 1, 2, 2);
     }
     this.deco.drawBack(w, cam.sec, cx, t, now);
-    const depth = (tg) => (tg.arc ? 999 : this.spots[tg.spot].base);
+    const depth = (tg) => (tg.arc ? 999 : tg.ride ? tg.ride.y : this.spots[tg.spot].base);
     const vis = this.visible(t, cam).sort((a, b) => depth(a) - depth(b));
     for (const tg of vis) {
       if (tg.kind === 'boss') this.drawBoss(w, tg, cx, t);
-      else if (tg.kind !== 'bottle' && tg.kind !== 'crate') this.drawFigure(w, tg, cx, t);
+      else if (tg.kind === 'rider') this.drawRider(w, tg, cx, t);
+      else if (tg.kind !== 'bottle' && tg.kind !== 'crate' && tg.kind !== 'tnt') this.drawFigure(w, tg, cx, t);
     }
     w.drawImage(pano.front, -cx, 0);
     for (const tg of vis) {
@@ -1136,12 +1245,13 @@ export class ShooterScene extends MiniScene {
     }
     this.deco.drawFront(w, cam.sec, cx, t, now);
     amb.end(ctx, now);
-    if (cam.sec === 'street') streetLights(ctx, cam.x, this.world.layout, amb);
+    if (cam.sec === 'street') streetLights(ctx, cam.x, L, amb);
+    else if (cam.sec === 'edge') edgeLights(ctx, cx, L.edge, amb);
     else if (cam.sec === 'station') {
-      // la nuit : fenêtres de la gare et des wagons éclairées, lampes du quai
+      // la nuit : fenêtres de la gare et des voitures de voyageurs éclairées, lampes du quai
       if (amb.env.lights) {
         for (const wn of STA.building.windows) amb.window(ctx, wn.x - cx, wn.y, wn.w, wn.h);
-        for (const wg of STA.wagons) for (const wn of wagonOpenings(wg).wins) amb.window(ctx, wn.x - cx, wn.y, wn.w, wn.h);
+        for (const wg of L.train) if (wg.type === 'passenger') for (const wn of wagonOpenings(wg).wins) amb.window(ctx, wn.x - cx, wn.y, wn.w, wn.h);
         for (const lx of [364, 564, 764, 1000]) amb.glow(ctx, lx - cx, 101, 22);
         amb.glow(ctx, STA.loco.x + STA.loco.w - 7 - cx, 97, 30, '255,230,150');
       }
@@ -1158,7 +1268,9 @@ export class ShooterScene extends MiniScene {
     // bonus et repères par-dessus l'ambiance, pour rester bien visibles
     for (const tg of vis) {
       if (this.dead.has(tg.id) && tg.kind !== 'supply') continue;
-      if (tg.kind === 'crate') {
+      if (tg.kind === 'tnt') {
+        if (t >= tg.t0) this.drawTnt(ctx, tg, t, now);
+      } else if (tg.kind === 'crate') {
         if (tg.arc) {
           const p = crateAt(tg, t);
           if (t >= tg.t0) drawCrate(ctx, Math.round(p.x), Math.round(p.y + 7), tg.bonus, 1, now);
@@ -1187,18 +1299,20 @@ export class ShooterScene extends MiniScene {
     if (dark && cam.sec === 'saloon') this.drawBlackout(ctx, t, dark);
     if (t < this.sandUntil) this.drawSand(ctx, t);
 
-    // fondus entre la rue, la gare et le saloon
-    for (const [a, b] of [[STATION_END, STREET_START], [STREET_END, SALOON_START]]) {
+    // fondus entre la gare, les abords, la rue et le saloon
+    for (const [a, b] of FADES) {
       if (t > a && t < b) {
         ctx.fillStyle = `rgba(10,5,3,${1 - Math.abs(t - (a + b) / 2) / ((b - a) / 2)})`;
         ctx.fillRect(0, 0, W, H);
       }
     }
-    if (t >= STATION_START + 1000 && t < STATION_START + 3500) this.drawBanner(ctx, 'LA GARE', '#f8d070', t - STATION_START - 1000);
-    if (t >= STREET_START && t < STREET_START + 2500) this.drawBanner(ctx, 'LA GRAND-RUE', '#f8d070', t - STREET_START);
-    if (t >= SALOON_START && t < SALOON_START + 2500) this.drawBanner(ctx, 'LE SALOON', '#f8d070', t - SALOON_START);
+    // noms des lieux (en plus grand) puis annonces : courtes, en haut de l'écran
+    if (t >= STATION_START + 1000 && t < STATION_START + 1000 + BANNER_MS) this.drawBanner(ctx, 'LA GARE', '#f8d070', t - STATION_START - 1000, true);
+    if (t >= EDGE_START && t < EDGE_START + BANNER_MS) this.drawBanner(ctx, L.edge.name, '#f8d070', t - EDGE_START, true);
+    if (t >= STREET_START && t < STREET_START + BANNER_MS) this.drawBanner(ctx, 'LA GRAND-RUE', '#f8d070', t - STREET_START, true);
+    if (t >= SALOON_START && t < SALOON_START + BANNER_MS) this.drawBanner(ctx, 'LE SALOON', '#f8d070', t - SALOON_START, true);
     this.drawBossHud(ctx, t);
-    if (this.banner && t - this.banner.at < 2500) this.drawBanner(ctx, this.banner.text, this.banner.col, t - this.banner.at);
+    if (this.banner && t - this.banner.at < BANNER_MS) this.drawBanner(ctx, this.banner.text, this.banner.col, t - this.banner.at);
 
     if (this.red > 0) { ctx.fillStyle = `rgba(190,30,20,${this.red * 0.5})`; ctx.fillRect(0, 0, W, H); }
     if (this.now < (this.whiteUntil || 0)) { ctx.fillStyle = 'rgba(255,251,232,0.85)'; ctx.fillRect(0, 0, W, H); }
@@ -1254,6 +1368,11 @@ export class ShooterScene extends MiniScene {
         R(ax, y + 22, 6, 20, OUT); R(ax + 1, y + 23, 4, 18, sleeve);
         R(ax, y + 15, 6, 8, OUT); R(ax + 1, y + 16, 4, 6, skin);
       }
+    } else if (!d && tg.throwAt && t < tg.throwAt) {
+      R(x + 33, y + 10, 6, 26, OUT); R(x + 34, y + 11, 4, 24, sleeve); R(x + 33, y + 6, 6, 6, OUT); R(x + 34, y + 7, 4, 4, skin);
+      R(x + 34, y - 5, 5, 12, OUT); R(x + 35, y - 4, 3, 10, '#c0392b'); R(x + 35, y - 1, 3, 2, '#f4ecd8');
+      const sp = Math.floor(t / 60) % 2;
+      R(x + 36 + sp, y - 8, 2, 2, sp ? '#fff070' : '#f87818');
     } else if (!d) {
       R(x + 28, y + 40, 8, 7, OUT); R(x + 29, y + 41, 6, 5, skin);
       R(x + 29, y + 34, 9, 9, OUT); R(x + 30, y + 35, 7, 7, '#4a4f58'); R(x + 31, y + 36, 5, 5, '#8a8f98'); R(x + 32, y + 37, 3, 3, OUT);
@@ -1261,6 +1380,64 @@ export class ShooterScene extends MiniScene {
     }
     ctx.restore();
     for (const f of this.fireFx) if (f.id === tg.id) S.drawFlash(ctx, x + 33, y + 38, 14, t / 30);
+  }
+
+  // Cavalier au galop ; abattu, il vide les étriers et son cheval s'enfuit.
+  drawRider(ctx, tg, cx, t) {
+    const d = this.dead.get(tg.id);
+    const dir = tg.ride.vx > 0 ? 1 : -1;
+    const x = Math.round(rideX(tg, t) - cx), y = tg.ride.y;
+    if (x < -60 || x > W + 60) return;
+    const [coat, mane] = HORSE_COATS[tg.look % HORSE_COATS.length];
+    const char = BANDITS[tg.look % BANDITS.length];
+    const frame = Math.floor((t + tg.id * 97) / 90) % 4;
+    let spr = horseSprite(coat, mane, frame, d ? null : riderLook(char, '#7a2a1e', `bandit${tg.look}`));
+    if (dir < 0) spr = flipped(spr);
+    ctx.fillStyle = 'rgba(40,24,10,0.3)';
+    ctx.fillRect(x - 24, y - 1, 50, 3);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.translate(x, y);
+    ctx.scale(RIDE_SCALE, RIDE_SCALE);
+    ctx.drawImage(spr, -spr.ox, -spr.oy);
+    if (!d) {
+      // revolver pointé vers les joueurs
+      const gx = dir > 0 ? 2 : -8;
+      ctx.fillStyle = OUT; ctx.fillRect(gx - 1, -42, 8, 4);
+      ctx.fillStyle = '#8a8f98'; ctx.fillRect(gx, -41, 6, 2);
+    } else {
+      const k = clamp01((t - d.at) / 600);
+      if (k < 1) {
+        // il vide les étriers et bascule en arrière
+        const body = S.characterSprite(char, { hurt: true, t });
+        ctx.globalAlpha = 1 - k * 0.5;
+        ctx.translate(-dir * (4 + 26 * k), -34 + 30 * k * k);
+        ctx.rotate(-dir * k * 1.8);
+        ctx.drawImage(body, -12, -14, 24, 28);
+      }
+    }
+    ctx.restore();
+    for (const f of this.fireFx) if (f.id === tg.id) S.drawFlash(ctx, x + dir * 15, y - 60, 14, t / 30);
+  }
+
+  // Bâton de dynamite qui tournoie, mèche qui crépite ; le cercle clignote de plus en plus vite avant l'impact.
+  drawTnt(ctx, tg, t, now) {
+    if (t > tg.t1 || this.defused(tg)) return;
+    const p = crateAt(tg, t);
+    const x = Math.round(p.x), y = Math.round(p.y);
+    const fast = tg.t1 - t < 600 ? 60 : 140;
+    ring(ctx, x, y, 11, 11, Math.floor(now / fast) % 2 ? '#f0705a' : '#f8d070', 2, now / 50);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate((t - tg.t0) / 110);
+    ctx.fillStyle = OUT; ctx.fillRect(-3, -7, 6, 14);
+    ctx.fillStyle = '#c0392b'; ctx.fillRect(-2, -6, 4, 12);
+    ctx.fillStyle = '#e8604c'; ctx.fillRect(-2, -6, 1, 12);
+    ctx.fillStyle = '#f4ecd8'; ctx.fillRect(-2, -1, 4, 2);
+    ctx.fillStyle = '#5a3a20'; ctx.fillRect(0, -10, 1, 4); // mèche
+    const sp = Math.floor(now / 50) % 2;
+    ctx.fillStyle = sp ? '#fff070' : '#f87818'; ctx.fillRect(-1 + sp, -12, 2, 2);
+    ctx.restore();
   }
 
   // El Diablo, une fois et demie plus grand, entouré d'une aura rouge, arpente le balcon.
@@ -1297,6 +1474,18 @@ export class ShooterScene extends MiniScene {
   drawLockOn(ctx, tg, cx, t) {
     if (!tg.fire.length || this.dead.has(tg.id)) return;
     const boss = tg.kind === 'boss';
+    if (tg.ride) {
+      for (let i = 0; i < tg.fire.length; i++) {
+        const f = tg.fire[i];
+        if (t < f - 700 || t > f) continue;
+        const u = (f - t) / 700;
+        const col = this.color(this.aims.get(`${tg.id}:${i}`) ?? tg.victims[i] % this.n);
+        const x = Math.round(rideX(tg, t) - cx), y = tg.ride.y - 46;
+        ring(ctx, x, y, 8 + u * 12, 8 + u * 12, col, 3, t / 80);
+        if (u < 0.35) canvasText(ctx, '!', x, y - 28, { size: 8, color: col });
+      }
+      return;
+    }
     const s = this.spots[tg.spot];
     const k = this.rise(tg, t);
     for (let i = 0; i < tg.fire.length; i++) {
@@ -1378,12 +1567,18 @@ export class ShooterScene extends MiniScene {
     return p;
   }
 
-  drawBanner(ctx, text, col, el) {
-    const a = el < 300 ? el / 300 : el > 2100 ? (2500 - el) / 400 : 1;
+  // Annonce en haut de l'écran, sur une petite étiquette à la taille du texte : le jeu reste visible.
+  // Pendant le combat contre El Diablo, elle passe sous sa jauge de vie.
+  drawBanner(ctx, text, col, el, big = false) {
+    const a = el < 150 ? el / 150 : el > BANNER_MS - 300 ? (BANNER_MS - el) / 300 : 1;
+    const size = big ? 16 : 8;
+    ctx.font = `${size}px Silkscreen, monospace`;
+    const w = Math.ceil(ctx.measureText(text).width);
+    const y = (this.t >= BOSS_T0 ? 24 : 4) - (el < 150 ? Math.round((1 - el / 150) * 6) : 0);
     ctx.globalAlpha = Math.max(0, a);
-    ctx.fillStyle = 'rgba(26,15,10,0.7)';
-    ctx.fillRect(0, 74, W, 28);
-    canvasText(ctx, text, W / 2, 80, { size: 16, color: col });
+    ctx.fillStyle = 'rgba(26,15,10,0.6)';
+    ctx.fillRect(Math.round(W / 2 - w / 2 - 5), y - 2, w + 10, size + 6);
+    canvasText(ctx, text, W / 2, y, { size, color: col });
     ctx.globalAlpha = 1;
   }
 

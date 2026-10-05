@@ -2,7 +2,7 @@
 // Le monde vient d'une graine ; l'hôte valide les coups (premier arrivé, premier servi),
 // déclenche les tirs des bandits et fait jouer les bots du mode solo.
 import {
-  MODES, COUNTDOWN, W, H, SHOOTER_PTS, bossX, BONUSES, BONUS_MS, SAND_MS, DYNAMITE_BOSS, camAt, shooterWorld, targetSec, targetAim,
+  MODES, COUNTDOWN, W, H, SHOOTER_PTS, BONUSES, BONUS_MS, SAND_MS, DYNAMITE_BOSS, camAt, shooterWorld, targetSec, targetAim, targetX,
   WAGER, shooterEventAt,
   LASSO, lassoWorld, animalPos, lassoHand, lassoStart, lassoRush, lassoTrailing, LASSO_BET, LASSO_CATCHUP, OUTLAW, DUEL, CHARLIE, charlieWorld, npcPos,
 } from './worlds.js';
@@ -28,6 +28,9 @@ export class MiniGame {
       ? this.world.targets.flatMap((tg) => tg.fire.map((at, k) => ({ at, id: tg.id, k }))).sort((a, b) => a.at - b.at)
       : [];
     this.nextFire = 0;
+    // fusillade : bâtons de dynamite, dans l'ordre où ils touchent le sol
+    this.tnts = kind === 'shooter' ? this.world.targets.filter((tg) => tg.kind === 'tnt').sort((a, b) => a.t1 - b.t1) : [];
+    this.nextTnt = 0;
     this.nextAim = 0; // fusillade : désignation de la cible ~0,7 s avant chaque tir
     this.aims = new Map(); // `${id}:${k}` -> joueur visé
     this.wagerDone = false;
@@ -97,25 +100,30 @@ export class MiniGame {
   hit(i, id, t) {
     const tg = this.world.targets[id];
     if (!tg || this.claimed.has(id)) return;
-    if (t < tg.t0 - 300 || t > tg.t1 + 600) return;
+    if (t < tg.t0 - 300 || t > tg.t1 + (tg.kind === 'tnt' ? 100 : 600)) return;
     const hp = (this.hp.get(id) ?? tg.hp) - 1;
     this.hp.set(id, hp);
     let pts = tg.pts;
     const kill = hp <= 0;
     if (kill) this.claimed.set(id, i);
+    if (kill && this.defused(tg, t)) this.defuse(tg);
     if (kill && tg.kind === 'boss') pts += SHOOTER_PTS.bossKill;
     pts *= this.bountyX(tg, t);
     const p = this.p[i];
     p.score += pts;
     if (tg.kind !== 'civil' && tg.kind !== 'supply') p.stats.hits++;
-    this.push({ type: 'hit', id, by: i, pts, hp, kill, bonus: kill ? tg.bonus : undefined });
+    this.push({ type: 'hit', id, by: i, pts, hp, kill, bonus: kill ? tg.bonus : undefined, defused: kill && this.defused(tg, t) });
     if (kill && tg.bonus) this.giveBonus(i, tg.bonus, t);
     if (kill && tg.kind === 'boss') this.settleWager(i);
   }
 
+  // lanceur abattu avant d'avoir lancé : son bâton de dynamite ne part jamais
+  defused(tg, t) { return !!tg.throwAt && t < tg.throwAt; }
+  defuse(tg) { for (const d of this.tnts) if (d.from === tg.id) this.claimed.set(d.id, -1); }
+
   // « Prime doublée » : les bandits (et El Diablo) rapportent deux fois plus pendant l'événement.
   bountyX(tg, t) {
-    return (tg.kind === 'bandit' || tg.kind === 'boss') && shooterEventAt(this.world.events || [], 'bounty', t) ? 2 : 1;
+    return (tg.kind === 'bandit' || tg.kind === 'rider' || tg.kind === 'boss') && shooterEventAt(this.world.events || [], 'bounty', t) ? 2 : 1;
   }
 
   // Pari sur El Diablo : on mise à son arrivée ; celui qui l'abat empoche le gros lot, les autres parieurs perdent leur mise.
@@ -166,15 +174,16 @@ export class MiniGame {
       // tous les bandits à l'écran sautent ; El Diablo encaisse quelques dégâts
       const cam = camAt(t);
       for (const tg of this.world.targets) {
-        if (tg.kind !== 'bandit' && tg.kind !== 'boss') continue;
+        if (tg.kind !== 'bandit' && tg.kind !== 'rider' && tg.kind !== 'boss') continue;
         if (this.claimed.has(tg.id) || tg.sec !== cam.sec || t < tg.t0 || t > tg.t1) continue;
-        const x = (tg.kind === 'boss' ? bossX(t) : this.world.spots[tg.spot].cx) - cam.x;
+        const x = targetX(tg, t, this.world.spots) - cam.x;
         if (x < -10 || x > W + 10) continue;
-        if (tg.kind === 'bandit') {
+        if (tg.kind !== 'boss') {
           this.claimed.set(tg.id, i);
+          if (this.defused(tg, t)) this.defuse(tg);
           const pts = tg.pts * this.bountyX(tg, t);
           p.score += pts;
-          this.push({ type: 'hit', id: tg.id, by: i, pts, hp: 0, kill: true, boom: true });
+          this.push({ type: 'hit', id: tg.id, by: i, pts, hp: 0, kill: true, boom: true, defused: this.defused(tg, t) });
         } else if (tg.kind === 'boss') {
           const hp = Math.max(0, (this.hp.get(tg.id) ?? tg.hp) - DYNAMITE_BOSS);
           this.hp.set(tg.id, hp);
@@ -212,6 +221,21 @@ export class MiniGame {
       p.score += SHOOTER_PTS.shot;
       p.stats.hurt++;
       this.push({ type: 'fire', id: f.id, k: f.k, victim: v, pts: SHOOTER_PTS.shot });
+    }
+    // bâton de dynamite qui touche le sol sans avoir été abattu : tout le monde encaisse l'explosion
+    while (this.nextTnt < this.tnts.length && this.tnts[this.nextTnt].t1 <= t) {
+      const tg = this.tnts[this.nextTnt++];
+      if (this.claimed.has(tg.id)) continue;
+      this.claimed.set(tg.id, -1);
+      const hurt = [];
+      this.p.forEach((p, j) => {
+        if (p.left) return;
+        if (p.power === 'shield' && tg.t1 < p.powerUntil) { hurt.push([j, 0]); return; }
+        p.score += SHOOTER_PTS.tntBoom;
+        p.stats.hurt++;
+        hurt.push([j, SHOOTER_PTS.tntBoom]);
+      });
+      this.push({ type: 'tntBoom', id: tg.id, hurt });
     }
   }
 

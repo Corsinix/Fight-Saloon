@@ -628,7 +628,7 @@ function outsideArt(key, w, env, train) {
   const opts = desertOpts(env, { sunX: 0.7, sunY: 0.3 });
   if (train) { opts.skyDeco = () => {}; opts.cacti = false; }
   S.drawDesert(c.getContext('2d'), 0, 0, c.width, w.h, opts);
-  if (OUTSIDE.size > 24) OUTSIDE.clear();
+  if (OUTSIDE.size > 24) { for (const old of OUTSIDE.values()) S.freeCanvas(old); OUTSIDE.clear(); }
   OUTSIDE.set(key, c);
   return c;
 }

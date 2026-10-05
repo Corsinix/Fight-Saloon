@@ -12,7 +12,7 @@ export const MAX_PLAYERS = 4;
 
 export const MODES = {
   roulette: { name: 'Roulette', sub: 'Le duel au fusil à pompe', min: 2, max: 2 },
-  shooter: { name: 'Fusillade', sub: 'Rail shooter : la gare, la ville puis le saloon', min: 2, max: 4, duration: 99000 },
+  shooter: { name: 'Fusillade', sub: 'Rail shooter : la gare, les abords, la ville puis le saloon', min: 2, max: 4, duration: 150000 },
   lasso: { name: 'Rodéo au lasso', sub: 'Au galop, attrape le plus de bêtes', min: 2, max: 4, duration: 60000 },
   duel: { name: 'Duel', sub: 'Le plus rapide à dégainer gagne', min: 2, max: 2, duration: 180000, unit: 'manches' },
   charlie: { name: 'Où est Charlie ?', sub: 'Repère-le dans la foule de la ville', min: 2, max: 4, duration: 260000 },
@@ -24,7 +24,7 @@ export const MODES = {
   pinte: { name: 'La pinte', sub: 'Fais glisser ta chope au ras du bout du comptoir', min: 2, max: 4, duration: 900000 },
   // règles, parcours et arbitre dans minegame.js
   // course de 4 étapes ; s'arrête quand tout le monde est sorti, ou au bout de 95 s
-  mine: { name: 'La mine', sub: 'Course en wagonnet jusqu’à la sortie : aiguille, accélère, ramasse l’or', min: 2, max: 4, duration: 95000 },
+  mine: { name: 'La mine', sub: 'Course en wagonnet : accélère, aiguille, sors le premier', min: 2, max: 4, duration: 95000 },
   // mini-RTS : carte, règles, arbitre et bots dans rtsgame.js
   rts: { name: 'Conquête de l’Ouest', sub: 'Bâtis ton fort, exploite les filons, recrute et attaque', min: 2, max: 4, duration: 420000 },
 };
@@ -45,20 +45,26 @@ const smooth = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k));
 // ================================================================ fusillade
 
 export const GROUND = 166; // haut du trottoir en planches
-export const STREET_W = 2208, SALOON_W = 768, STATION_W = 1152;
-// on arrive en train à la gare, on traverse la grand-rue, puis on entre dans le saloon (qui ferme la rue) où attend El Diablo
-export const STATION_START = 0, STATION_END = 23000, STREET_START = 24000, STREET_END = 70000, SALOON_START = 71000;
-export const BOSS_T0 = 85500;
+export const STREET_W = 2592, SALOON_W = 768, STATION_W = 1152, EDGE_W = 1536;
+// on arrive en train à la gare, on traverse les abords de la ville (cimetière, ranch ou mine, tiré au sort),
+// puis la grand-rue, et on entre dans le saloon (qui ferme la rue) où attend El Diablo
+export const STATION_START = 0, STATION_END = 23000, EDGE_START = 24000, EDGE_END = 56000;
+export const STREET_START = 57000, STREET_END = 108000, SALOON_START = 109000;
+export const BOSS_T0 = 130000;
+// fondus au noir entre deux sections
+export const FADES = [[STATION_END, EDGE_START], [EDGE_END, STREET_START], [STREET_END, SALOON_START]];
 
 // Le "rail" : position de la caméra dans le temps, avec des arrêts pendant les vagues.
+const shift = (start, keys) => keys.map(([t, x]) => [t + start, x]);
 const CAM = {
   station: [[STATION_START, 0], [5000, 0], [8500, 384], [14500, 384], [18000, 768], [STATION_END, 768]],
-  street: [[0, 0], [3000, 0], [6500, 250], [13000, 250], [16500, 630], [24000, 630], [27500, 1030], [34500, 1030], [38000, 1440], [41500, 1824], [STREET_END - STREET_START, 1824]].map(([t, x]) => [t + STREET_START, x]),
-  saloon: [[SALOON_START, 0], [79500, 0], [83500, 384], [999999, 384]],
+  edge: shift(EDGE_START, [[0, 0], [4500, 0], [8000, 384], [14000, 384], [17500, 768], [23500, 768], [27000, 1152], [EDGE_END - EDGE_START, 1152]]),
+  street: shift(STREET_START, [[0, 0], [3000, 0], [6500, 250], [12500, 250], [16000, 630], [22500, 630], [26000, 1030], [32000, 1030], [35500, 1440], [41500, 1440], [45000, 1824], [48500, 2208], [STREET_END - STREET_START, 2208]]),
+  saloon: shift(SALOON_START, [[0, 0], [11000, 0], [15000, 384], [999999, 384]]),
 };
 
 export function camAt(t) {
-  const sec = t < (STATION_END + STREET_START) / 2 ? 'station' : t < (STREET_END + SALOON_START) / 2 ? 'street' : 'saloon';
+  const sec = t < (STATION_END + EDGE_START) / 2 ? 'station' : t < (EDGE_END + STREET_START) / 2 ? 'edge' : t < (STREET_END + SALOON_START) / 2 ? 'street' : 'saloon';
   const keys = CAM[sec];
   if (t <= keys[0][0]) return { sec, x: keys[0][1] };
   for (let i = 1; i < keys.length; i++) {
@@ -92,7 +98,7 @@ export const KINDS = {
   laundry: { sign: 'LAVERIE', w: [130, 150], top: [50, 56], up: [2, 2], door: 34, low: 1, awning: 1, roof: ['flat'], cols: ['#a8b8b8', '#b8c0c8'] },
 };
 // Le saloon ferme toujours la rue : c'est là qu'on entre pour affronter El Diablo.
-const SALOON_B = { x: 1880, w: 264, kind: 'saloon', sign: 'SALOON', col: '#9a4a2a', top: 22, up: 3, door: 42, low: 2, balcony: true, roof: 'flat' };
+const SALOON_B = { x: 2264, w: 264, kind: 'saloon', sign: 'SALOON', col: '#9a4a2a', top: 22, up: 3, door: 42, low: 2, balcony: true, roof: 'flat' };
 const TOWN_START = 300, TOWN_END = SALOON_B.x - 14;
 
 export const PROP_DIM = { wagon: [86, 40], fence: [90, 20], rock: [44, 26], hay: [40, 24], barrels: [34, 28], crates: [32, 32], trough: [46, 18] };
@@ -133,7 +139,7 @@ export function streetLayout(seed) {
     const mid = Math.round((a + b) / 2);
     if (b - a >= 12 && (tower == null || Math.abs(mid - tower) > 40) && R() < 0.7) poles.push(mid - 1);
   }
-  poles.push(2190);
+  poles.push(STREET_W - 18);
   // abris le long de la rue (chariots, tonneaux, caisses…) : hors de la ville, plutôt des rochers et des clôtures
   const props = [];
   let px = ri(14, 40);
@@ -191,13 +197,83 @@ export const STA = {
   covers: [{ x: 120, kind: 'crates' }, { x: 420, kind: 'cart' }, { x: 650, kind: 'bags' }, { x: 868, kind: 'barrels' }, { x: 1066, kind: 'crates' }],
 };
 export const STA_COVER = { crates: [32, 32], cart: [52, 24], bags: [40, 18], barrels: [34, 28] };
+// Composition du train, tirée de la graine : voitures de voyageurs, wagons de marchandises, wagons à bestiaux
+// (au moins une voiture de voyageurs).
+const WAGON_TYPES = ['passenger', 'boxcar', 'cattle'];
+export function stationTrain(seed) {
+  const R = rng((seed ^ 0x1b873593) >>> 0);
+  const types = STA.wagons.map(() => WAGON_TYPES[Math.floor(R() * WAGON_TYPES.length)]);
+  if (!types.includes('passenger')) types[Math.floor(R() * types.length)] = 'passenger';
+  return STA.wagons.map((wg, k) => ({ ...wg, type: types[k] }));
+}
 // fenêtres et portes des wagons, fenêtre de la cabine
 export function wagonOpenings(wg) {
+  const mid = wg.x + wg.w / 2;
+  // marchandises : grande porte coulissante ouverte au milieu, deux lucarnes d'aération
+  if (wg.type === 'boxcar') return { wins: [{ x: wg.x + 24, y: 86, w: 22, h: 20 }, { x: wg.x + wg.w - 46, y: 86, w: 22, h: 20 }], doors: [{ x: mid - 22, y: 86, w: 44, h: 56 }] };
+  // bestiaux : claire-voie (deux jours entre les lattes), porte au milieu
+  if (wg.type === 'cattle') return { wins: [{ x: wg.x + 18, y: 90, w: 44, h: 18 }, { x: wg.x + wg.w - 62, y: 90, w: 44, h: 18 }], doors: [{ x: mid - 18, y: 84, w: 36, h: 58 }] };
   const wins = [];
   for (let k = 0; k < 4; k++) wins.push({ x: wg.x + 30 + k * 32, y: 88, w: 20, h: 22 });
   return { wins, doors: [{ x: wg.x + 6, y: 84, w: 16, h: 56 }, { x: wg.x + wg.w - 22, y: 84, w: 16, h: 56 }] };
 }
 export const locoCab = (L) => ({ x: L.x + 18, y: 70, w: 26, h: 26 });
+
+// Les abords de Dusty Gulch, entre la gare et la grand-rue : une variante tirée au sort à chaque partie.
+// houses : bâtiments (wins/door : bandits aux fenêtres et aux portes ; roof : bandit sur le toit, au-dessus de roof ;
+// belfry : clocher ; sign : enseigne). slots : abris au premier plan, [x, sortes possibles].
+// Les caméras s'arrêtent en x = 0, 384, 768 et 1152 : chaque écran a ses fenêtres, ses portes et ses abris.
+export const EDGE_COVER = { ...PROP_DIM, stone: [24, 30], cross: [20, 36], tomb: [40, 22], hearse: [86, 40], ore: [40, 26], tnt: [32, 32] };
+export const EDGES = {
+  boothill: {
+    name: 'BOOT HILL',
+    houses: [
+      { kind: 'gate', x: 18, w: 100, sign: { t: 'BOOT HILL', y: 80 } },
+      { kind: 'chapel', x: 196, w: 150, top: 78, wins: [{ x: 212, y: 104, w: 18, h: 30 }, { x: 312, y: 104, w: 18, h: 30 }], door: { x: 256, y: 120, w: 30, h: 46 }, belfry: { x: 262, y: 36, w: 18, h: 20 } },
+      { kind: 'tomb', x: 520, w: 110, top: 96, door: { x: 560, y: 122, w: 30, h: 44 }, roof: 80 },
+      { kind: 'tree', x: 760 },
+      { kind: 'grave', x: 950 },
+      { kind: 'crypt', x: 1010, w: 90, top: 104, door: { x: 1041, y: 126, w: 28, h: 40 }, roof: 90 },
+      { kind: 'lodge', x: 1190, w: 170, top: 52, sign: { t: 'FOSSOYEUR', y: 98 }, wins: [{ x: 1210, y: 64, w: 22, h: 28 }, { x: 1318, y: 64, w: 22, h: 28 }, { x: 1210, y: 116, w: 22, h: 30 }], door: { x: 1300, y: 116, w: 32, h: 50 }, roof: 52 },
+    ],
+    slots: [[136, ['stone', 'cross', 'tomb']], [410, ['stone', 'cross']], [660, ['tomb', 'stone']], [790, ['stone', 'cross']], [850, ['hearse']], [1110, ['cross', 'stone']], [1390, ['tomb', 'stone']], [1470, ['stone', 'cross']]],
+  },
+  ranch: {
+    name: 'LE RANCH',
+    houses: [
+      { kind: 'gate', x: 18, w: 100, sign: { t: 'RANCH', y: 80 } },
+      { kind: 'farm', x: 140, w: 210, top: 60, wins: [{ x: 160, y: 70, w: 22, h: 26 }, { x: 308, y: 70, w: 22, h: 26 }, { x: 160, y: 120, w: 24, h: 30 }, { x: 306, y: 120, w: 24, h: 30 }], door: { x: 230, y: 116, w: 30, h: 50 }, roof: 60 },
+      { kind: 'windmill', x: 400, w: 44, top: 62, roof: 62 },
+      { kind: 'barn', x: 800, w: 230, top: 78, wins: [{ x: 900, y: 48, w: 30, h: 24 }, { x: 820, y: 112, w: 20, h: 22 }, { x: 990, y: 112, w: 20, h: 22 }], door: { x: 885, y: 108, w: 60, h: 58 }, roof: 30 },
+      { kind: 'silo', x: 1150, w: 40, top: 46 },
+      { kind: 'shed', x: 1240, w: 150, top: 86, wins: [{ x: 1262, y: 104, w: 22, h: 26 }], door: { x: 1330, y: 112, w: 28, h: 54 }, roof: 86 },
+    ],
+    slots: [[60, ['hay', 'barrels', 'crates']], [470, ['fence']], [640, ['hay']], [700, ['trough']], [1046, ['hay', 'crates']], [1100, ['barrels']], [1176, ['barrels', 'crates']], [1410, ['wagon']]],
+  },
+  mine: {
+    name: 'LA MINE D\'OR',
+    houses: [
+      { kind: 'office', x: 40, w: 170, top: 70, sign: { t: 'ESSAIS', y: 76 }, wins: [{ x: 58, y: 112, w: 22, h: 28 }, { x: 170, y: 112, w: 22, h: 28 }], door: { x: 110, y: 114, w: 30, h: 52 }, roof: 70 },
+      { kind: 'tunnel', x: 466, w: 64, sign: { t: 'MINE', y: 80 }, door: { x: 476, y: 106, w: 44, h: 60 } },
+      { kind: 'headframe', x: 580, w: 60, top: 56, roof: 56 },
+      { kind: 'mill', x: 800, w: 180, top: 70, wins: [{ x: 820, y: 96, w: 20, h: 24 }, { x: 940, y: 96, w: 20, h: 24 }], door: { x: 872, y: 112, w: 34, h: 54 }, roof: 70, roofX: 845 },
+      { kind: 'tunnel', x: 1170, w: 64, door: { x: 1180, y: 106, w: 44, h: 60 } },
+      { kind: 'bunk', x: 1290, w: 160, top: 80, wins: [{ x: 1306, y: 102, w: 20, h: 24 }, { x: 1412, y: 102, w: 20, h: 24 }], door: { x: 1356, y: 112, w: 30, h: 54 }, roof: 80 },
+    ],
+    slots: [[250, ['ore']], [320, ['crates', 'tnt']], [404, ['rock']], [680, ['ore']], [1010, ['tnt', 'crates']], [1080, ['barrels']], [1250, ['crates', 'rock']], [1460, ['ore']]],
+  },
+};
+export function edgeLayout(seed) {
+  const R = rng((seed ^ 0x3c6ef372) >>> 0);
+  const pick = (arr) => arr[Math.floor(R() * arr.length)];
+  const kind = pick(Object.keys(EDGES));
+  const E = EDGES[kind];
+  return {
+    kind, name: E.name, houses: E.houses, seed,
+    covers: E.slots.map(([x, kinds]) => ({ x, kind: pick(kinds) })),
+    col: pick({ boothill: ['#7a6a5a', '#6a6460'], ranch: ['#9a3a2a', '#8a4a2a', '#a8582a'], mine: ['#8a6a48', '#7a5a3a'] }[kind]),
+  };
+}
 
 function buildSpots(L) {
   const spots = [];
@@ -233,7 +309,7 @@ function buildSpots(L) {
   for (const w of B.windows) frame('station', 'window', w, w.y + w.h + 16);
   frame('station', 'door', B.door, B.door.y + B.door.h + 6);
   add({ sec: 'station', kind: 'roof', x: B.x + B.w * 0.75 - 26, y: B.top - 46, w: 52, h: 46, cx: B.x + B.w * 0.75, base: B.top + 16 });
-  for (const wg of STA.wagons) {
+  for (const wg of L.train) {
     const o = wagonOpenings(wg);
     for (const w of o.wins) frame('station', 'window', w, w.y + w.h + 14);
     for (const d of o.doors) frame('station', 'door', d, d.y + d.h + 4);
@@ -244,6 +320,27 @@ function buildSpots(L) {
     const [w, h] = STA_COVER[c.kind];
     cover('station', c.x, w, PROP_BASE - h, h);
     if (c.kind === 'crates' || c.kind === 'barrels') bottle('station', c.x + w / 2, PROP_BASE - h);
+  }
+
+  // les abords de la ville
+  for (const h of L.edge.houses) {
+    for (const w of h.wins || []) frame('edge', 'window', w, w.y + w.h + 16);
+    if (h.door) frame('edge', 'door', h.door, h.door.y + h.door.h + 6);
+    if (h.belfry) frame('edge', 'roof', h.belfry, h.belfry.y + 50);
+    if (h.roof != null) {
+      const cx = h.roofX ?? h.x + h.w / 2;
+      add({ sec: 'edge', kind: 'roof', x: cx - 26, y: h.roof - 46, w: 52, h: 46, cx, base: h.roof + 16 });
+    }
+  }
+  for (const c of L.edge.covers) {
+    const [w, h] = EDGE_COVER[c.kind];
+    const top = PROP_BASE - h;
+    if (c.kind === 'fence') {
+      for (let k = 0; k < 5; k++) bottle('edge', c.x + 10 + k * 18, top);
+      continue;
+    }
+    cover('edge', c.x, w, c.kind === 'wagon' || c.kind === 'hearse' ? top - 6 : top, h);
+    if (c.kind !== 'cross' && c.kind !== 'wagon' && c.kind !== 'hearse') bottle('edge', c.x + w / 2, top);
   }
 
   for (const x of SAL.upperDoors) frame('saloon', 'door', { x, y: SAL.balcony - 56, w: 34, h: 56 }, SAL.balcony + 6);
@@ -257,7 +354,9 @@ function buildSpots(L) {
   return spots;
 }
 
-export const SHOOTER_PTS = { bandit: 100, roof: 150, civil: -100, supply: -100, bottle: 50, crate: 25, bossHit: 50, bossKill: 500, shot: -50 };
+// rider : bandit à cheval · tnt : bâton de dynamite abattu en vol · tntBoom : chacun, quand il explose au sol
+export const SHOOTER_PTS = { bandit: 100, roof: 150, rider: 150, tnt: 75, tntBoom: -75, civil: -100, supply: -100, bottle: 50, crate: 25, bossHit: 50, bossKill: 500, shot: -50 };
+export const RIDE_V = 0.13; // vitesse des cavaliers (px/ms)
 
 // Bonus : le symbole sur la caisse (ou au-dessus du porteur) montre le contenu ; le premier qui l'abat le gagne.
 // Le sac de sable, lui, brouille l'écran de tous les autres joueurs.
@@ -276,7 +375,7 @@ export const BONUSES = {
 };
 export const DYNAMITE_BOSS = 5; // dégâts de la dynamite sur El Diablo
 // Le ravitailleur (un vieux prospecteur, à ne pas abattre) surgit et lance une caisse à ces instants.
-const SUPPLY_TIMES = [7000, 15000, 22500, 30500, 38500, 50500, 57500, 64500, 75000, 81000, 89000, 95000];
+const SUPPLY_TIMES = [7000, 15000, 30000, 38500, 47000, 64000, 72000, 80000, 89000, 97000, 114000, 121000, 134000, 140000, 145500];
 export const SUPPLY_LEAD = 900; // il apparaît, puis lance la caisse
 export const BANDIT_LOOKS = 8, CIVIL_LOOKS = 5;
 
@@ -291,6 +390,8 @@ export function bossX(t) {
 
 export function shooterWorld(seed, n) {
   const layout = streetLayout(seed);
+  layout.train = stationTrain(seed);
+  layout.edge = edgeLayout(seed);
   const spots = buildSpots(layout);
   const R = rng(seed);
   const ri = (a, b) => a + Math.floor(R() * (b - a + 1));
@@ -361,6 +462,7 @@ export function shooterWorld(seed, n) {
     }
   };
   wave(STATION_START + 1500, STATION_END - 2000, [420, 740], [650, 1000]);
+  wave(EDGE_START + 900, EDGE_END - 2000, [420, 740], [650, 1000]);
   wave(STREET_START + 900, STREET_END - 2500, [420, 760], [650, 1000]);
   wave(SALOON_START + 900, BOSS_T0 - 500, [400, 700], [650, 1000]);
 
@@ -403,25 +505,36 @@ export function shooterWorld(seed, n) {
     targets.push(tg);
   }
 
-  // Retournements : embuscade pendant un arrêt dans la rue, prime doublée, panne de lumière au saloon,
+  // Retournements : embuscades, cavaliers, dynamite, prime doublée, panne de lumière au saloon,
   // et paris sur El Diablo à son arrivée. Tirés de la graine : toute la table vit les mêmes.
   const events = [];
-  // Salve de bandits pendant un arrêt de la caméra. roofs : combien d'entre eux sur les toits (attaque du train).
-  const ambush = (id, sec, from, to, roofs = 0) => {
+  const free = (a, b) => !events.some((e) => a < e.t1 + 1500 && b > e.t0 - 1500);
+  // instant tiré au hasard où la caméra reste immobile au moins `span` ms dans la section, loin des autres événements
+  const stopAt = (sec, from, to, span) => {
     const stops = [];
-    for (let t = from; t < to; t += 500) if (camAt(t).sec === sec && camAt(t + 4500).sec === sec && Math.abs(camAt(t + 4500).x - camAt(t).x) < 2) stops.push(t);
-    if (!stops.length) return null;
-    const tA = stops[Math.floor(R() * stops.length)] + 1200;
-    // on fait place nette : les cibles ordinaires prévues pendant l'embuscade sont retirées
+    for (let t = from; t < to; t += 500) {
+      if (camAt(t).sec === sec && camAt(t + span).sec === sec && Math.abs(camAt(t + span).x - camAt(t).x) < 2 && free(t, t + span)) stops.push(t);
+    }
+    return stops.length ? stops[Math.floor(R() * stops.length)] : null;
+  };
+  // on fait place nette : les cibles ordinaires prévues pendant l'événement sont retirées
+  const clear = (sec, a, b) => {
     for (const tg of targets) {
-      if (tg.arc || tg.kind === 'boss' || tg.kind === 'supply' || tg.sec !== sec) continue;
-      if (tg.t1 < tA - 400 || tg.t0 > tA + 2800) continue;
-      busy[tg.spot] = (busy[tg.spot] || []).filter(([a, b]) => !(a === tg.t0 && b === tg.t1));
+      if (tg.arc || tg.ride || tg.kind === 'boss' || tg.kind === 'supply' || tg.sec !== sec) continue;
+      if (tg.t1 < a || tg.t0 > b) continue;
+      busy[tg.spot] = (busy[tg.spot] || []).filter(([x, y]) => !(x === tg.t0 && y === tg.t1));
       tg.t1 = tg.t0 - 1000; // jamais visible
       tg.fire = [];
       tg.victims = [];
       tg.bonus = undefined;
     }
+  };
+  // Salve de bandits pendant un arrêt de la caméra. roofs : combien d'entre eux sur les toits (attaque du train).
+  const ambush = (id, sec, from, to, roofs = 0) => {
+    const t = stopAt(sec, from, to, 4500);
+    if (t == null) return null;
+    const tA = t + 1200;
+    clear(sec, tA - 400, tA + 2800);
     let made = 0;
     for (let k = 0; k < 12 && made < 5; k++) {
       const onRoof = made < roofs ? (s) => s.kind === 'roof' : null;
@@ -437,11 +550,79 @@ export function shooterWorld(seed, n) {
     if (ev) events.push(ev);
     return ev;
   };
-  const amb = ambush('ambush', 'street', STREET_START + 9000, STREET_END - 6000);
+  // Cavaliers : des bandits à cheval traversent l'écran au galop, dans un sens puis dans l'autre, et tirent en passant.
+  const riders = (sec, from, to, count) => {
+    const t = stopAt(sec, from, to, 4500);
+    if (t == null) return null;
+    const tR = t + 900, cam = camAt(tR).x;
+    let dir = R() < 0.5 ? 1 : -1, end = tR;
+    for (let k = 0; k < count; k++, dir = -dir) {
+      const t0 = tR + k * ri(800, 1000);
+      const t1 = t0 + Math.round((W + 80) / RIDE_V);
+      const fire = [t0 + Math.round((W / 2 + 40 + ri(-50, 50)) / RIDE_V)]; // vers le milieu de l'écran
+      targets.push({
+        id: targets.length, spot: -1, sec, kind: 'rider', t0, t1, fire, victims: [Math.floor(R() * n)], hp: 1, pts: SHOOTER_PTS.rider,
+        look: Math.floor(R() * BANDIT_LOOKS), ride: { x0: dir > 0 ? cam - 40 : cam + W + 40, vx: dir * RIDE_V, y: ri(186, 194) },
+      });
+      end = t1;
+    }
+    const ev = { id: 'riders', t0: tR - 1300, t1: end };
+    events.push(ev);
+    return ev;
+  };
+  // Dynamite : des bandits surgissent et lancent un bâton allumé vers les joueurs. Abattu en vol, il rapporte ;
+  // s'il touche le sol, il explose et tout le monde encaisse.
+  const dynamite = (sec, from, to, count) => {
+    const t = stopAt(sec, from, to, 4500);
+    if (t == null) return null;
+    const tD = t + 1000, cam = camAt(tD).x;
+    clear(sec, tD - 1500, tD + count * 1300 + 2000);
+    let end = tD;
+    for (let k = 0; k < count; k++) {
+      const tt = tD + k * ri(1100, 1300);
+      const thrower = tryAdd('bandit', tt - 900, tt / dur, true, (s) => s.kind !== 'bottle' && s.kind !== 'rail');
+      let x0, y0;
+      if (thrower) {
+        const s = spots[thrower.spot];
+        thrower.fire = [];
+        thrower.victims = [];
+        thrower.t1 = tt + 450;
+        thrower.throwAt = tt;
+        x0 = s.cx;
+        y0 = Math.max(s.y + 4, s.base - 50);
+      } else {
+        x0 = cam + (R() < 0.5 ? -10 : W + 10); // lancé depuis le bord de l'écran
+        y0 = 120 + ri(0, 30);
+      }
+      // il retombe au premier plan, sur les joueurs
+      const g = 0.00016, vy = 0.08 + R() * 0.04, land = 206;
+      const T = Math.round((vy + Math.sqrt(vy * vy + 2 * g * (land - y0))) / g);
+      const vx = (cam + 60 + ri(0, W - 120) - x0) / T;
+      targets.push({ id: targets.length, spot: -1, sec, kind: 'tnt', t0: tt, t1: tt + T, fire: [], victims: [], hp: 1, pts: SHOOTER_PTS.tnt, look: 0, arc: { x0, y0, vx, vy, g }, from: thrower?.id });
+      end = tt + T;
+    }
+    const ev = { id: 'tnt', t0: tD - 1600, t1: end + 400 };
+    events.push(ev);
+    return ev;
+  };
+
   ambush('train', 'station', STATION_START + 3000, STATION_END - 6000, 3);
-  let tb;
-  do tb = STREET_START + 12000 + ri(0, 26000); while (amb && tb < amb.t1 + 1000 && tb + 8000 > amb.t0 - 1000);
-  events.push({ id: 'bounty', t0: tb, t1: tb + 8000 });
+  // chaque variante des abords a son coup dur : embuscade au cimetière, cavaliers au ranch, dynamite à la mine
+  const ek = layout.edge.kind;
+  if (ek === 'boothill') ambush('graves', 'edge', EDGE_START + 3000, EDGE_END - 6000);
+  else if (ek === 'ranch') riders('edge', EDGE_START + 3000, EDGE_END - 8000, 3);
+  else dynamite('edge', EDGE_START + 3000, EDGE_END - 9000, 3);
+  ambush('ambush', 'street', STREET_START + 9000, STREET_END - 6000);
+  // et dans la grand-rue, l'autre (ou l'un des deux au cimetière)
+  if (ek === 'mine' || (ek === 'boothill' && R() < 0.5)) riders('street', STREET_START + 4000, STREET_END - 8000, 3 + (n > 2 ? 1 : 0));
+  else dynamite('street', STREET_START + 4000, STREET_END - 9000, 3);
+  // prime doublée : aux abords ou dans la rue
+  for (let k = 0; k < 40; k++) {
+    const tb = R() < 0.35 ? EDGE_START + 6000 + ri(0, 18000) : STREET_START + 6000 + ri(0, 34000);
+    if (!free(tb, tb + 8000) && k < 39) continue;
+    events.push({ id: 'bounty', t0: tb, t1: tb + 8000 });
+    break;
+  }
   const tl = SALOON_START + 3500 + ri(0, Math.max(0, BOSS_T0 - SALOON_START - 12000));
   events.push({ id: 'blackout', t0: tl, t1: tl + 6000 });
   events.push({ id: 'wager', t0: BOSS_T0, t1: BOSS_T0 + WAGER.window });
@@ -459,12 +640,22 @@ export function crateAt(tg, t) {
   return { x: c.x0 + c.vx * dt - camAt(t).x, y: c.y0 - c.vy * dt + 0.5 * c.g * dt * dt };
 }
 export const targetSec = (tg) => tg.sec;
+// position (x dans la section) d'un cavalier au galop
+export const rideX = (tg, t) => tg.ride.x0 + tg.ride.vx * (t - tg.t0);
+// position (x dans la section) de n'importe quelle cible
+export function targetX(tg, t, spots) {
+  if (tg.arc) return tg.arc.x0 + tg.arc.vx * (t - tg.t0);
+  if (tg.ride) return rideX(tg, t);
+  if (tg.kind === 'boss') return bossX(t);
+  return spots[tg.spot].cx;
+}
 
 // point à viser (coordonnées écran) sur une cible à l'instant t
 export function targetAim(tg, t, spots) {
   if (tg.arc) return crateAt(tg, t);
-  const s = spots[tg.spot];
   const cam = camAt(t);
+  if (tg.ride) return { x: rideX(tg, t) - cam.x, y: tg.ride.y - 48 };
+  const s = spots[tg.spot];
   if (tg.kind === 'boss') return { x: bossX(t) - cam.x, y: 50 };
   return { x: s.cx - cam.x, y: s.kind === 'bottle' ? s.base - 8 : Math.max(s.y + 6, s.base - 40) };
 }

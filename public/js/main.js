@@ -1,7 +1,7 @@
 // Point d'entrée : écrans, réseau, lobby, interface de jeu.
 import { Net, fetchLeaderboard } from './net.js';
-import { initAudio, playMusic, nextTrack, sfx, toggleMute, setVolume, audioSettings } from './audio.js';
-import { Scene } from './scene.js';
+import { initAudio, playMusic, nextTrack, sfx, toggleMute, setVolume, audioSettings, setMood } from './audio.js';
+import { Scene, due60 } from './scene.js';
 import { Editor, drawPortraitInto } from './editor.js';
 import * as S from './sprites.js';
 import { ITEMS } from './data.js';
@@ -142,6 +142,51 @@ if (document.fullscreenEnabled) {
 }
 document.addEventListener('click', (e) => { if (e.target.closest('.btn')) sfx('ui'); });
 
+// ------------------------------------------------------------ application installable
+// Service worker (sw.js) : démarrage rapide et écran d'accueil. Seulement en https (ou en local).
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+// Bouton « Installer l'app » du menu : la vraie fenêtre d'installation sur Android (Chrome, Edge, Samsung),
+// et la marche à suivre sur iPhone (Safari n'a pas de fenêtre d'installation) ou dans les autres navigateurs.
+const installed = () => matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || navigator.standalone === true;
+const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+// téléphone ou tablette : écran tactile comme pointeur principal (un PC tactile garde la souris en principal)
+const isMobile = isIos || /android/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches;
+let installPrompt = null;
+addEventListener('beforeinstallprompt', (e) => {
+  if (!isMobile) return; // sur PC, pas de bouton : le navigateur garde son icône d'installation dans la barre d'adresse
+  e.preventDefault();
+  installPrompt = e;
+  $('btn-install').classList.remove('hidden');
+});
+addEventListener('appinstalled', () => {
+  installPrompt = null;
+  $('btn-install').classList.add('hidden');
+  toast('Le saloon est installé : retrouve-le sur ton écran d’accueil.');
+});
+if (!installed() && isMobile) {
+  // sur iPhone tout de suite ; ailleurs, seulement si le navigateur ne propose pas sa propre fenêtre
+  setTimeout(() => { if (!installed()) $('btn-install').classList.remove('hidden'); }, isIos ? 0 : 3000);
+}
+$('btn-install').onclick = async () => {
+  if (installPrompt) {
+    const p = installPrompt;
+    installPrompt = null;
+    await p.prompt();
+    const { outcome } = await p.userChoice;
+    if (outcome === 'accepted') $('btn-install').classList.add('hidden');
+    return;
+  }
+  await askConfirm({
+    title: 'Installer le saloon',
+    text: isIos
+      ? 'Dans Safari, touche le bouton Partager (le carré avec une flèche vers le haut), puis « Sur l’écran d’accueil ». Le saloon s’ouvrira ensuite en plein écran, comme une app.'
+      : 'Ouvre le menu du navigateur (les trois points), puis « Installer l’application » ou « Ajouter à l’écran d’accueil ».',
+    yes: 'Compris', no: 'Fermer', icon: 'hat',
+  });
+};
+
 const muteIcon = (m) => pxIcon(m ? 'soundOff' : 'soundOn');
 $('btn-mute').onclick = () => { initAudio(); $('btn-mute').innerHTML = muteIcon(toggleMute()); };
 $('btn-mute').innerHTML = muteIcon(audioSettings.muted);
@@ -156,8 +201,10 @@ bgx.imageSmoothingEnabled = false;
 const desert = S.makeCanvas(384, 216);
 S.drawDesert(desert.getContext('2d'), 0, 0, 384, 216, { sunX: 0.76, sunY: 0.27 });
 const tw = { x: -30 };
+const bgGate = { next: 0 };
 (function bgLoop(t) {
-  if (screen !== 'game') {
+  requestAnimationFrame(bgLoop);
+  if (screen !== 'game' && due60(bgGate, t)) {
     bgx.drawImage(desert, 0, 0);
     for (let i = 0; i < 3; i++) {
       const a = t / 5000 + i * 2.1;
@@ -167,7 +214,6 @@ const tw = { x: -30 };
     if (tw.x > 410) tw.x = -40 - Math.random() * 400;
     S.tumbleweed(bgx, Math.round(tw.x), Math.round(178 - Math.abs(Math.sin(t / 170)) * 7), t);
   }
-  requestAnimationFrame(bgLoop);
 })(0);
 
 // ------------------------------------------------------------ connexion
@@ -512,6 +558,16 @@ function renderHud(st) {
   $('btn-shoot-opp').title = `Tirer sur ${op.name}`; // nom complet si le bouton le coupe
 }
 
+// Musique dynamique de la roulette : la manche décisive et les joueurs à 1 PV font monter la tension,
+// le cœur bat quand il ne te reste qu'un PV, l'horloge tourne sur la dernière cartouche.
+function rouletteMood(st) {
+  if (st.phase !== 'playing') return setMood();
+  const me = st.players[st.me], op = st.players[1 - st.me];
+  const decisive = me.wins > 0 && op.wins > 0;
+  const low = Math.min(me.hp, op.hp) <= 1;
+  setMood({ level: Math.min(1, 0.5 + (decisive ? 0.2 : 0) + (low ? 0.3 : 0)), heart: me.hp === 1, tick: st.shellsLeft === 1 });
+}
+
 function fmtTime() {
   const s = Math.floor((Date.now() - matchStart) / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -565,7 +621,7 @@ function enterRoulette() {
   matchStart = Date.now();
   say('Bienvenue au Buckshot Saloon. Asseyez-vous, messieurs-dames…');
   scene = new Scene($('game'), {
-    onState: (st) => { renderHud(st); updateControls(); },
+    onState: (st) => { renderHud(st); updateControls(); rouletteMood(st); },
     onSay: say,
     onIdle: () => { pending = false; updateControls(); },
     // tap : objet touché au doigt (le prochain toucher sur le même objet l'utilise)
@@ -610,7 +666,7 @@ function enterRoulette() {
 // ------------------------------------------------------------ mini-jeux
 function enterMini(kind) {
   show('game');
-  setMusic('game');
+  setMusic(`mini-${kind}`);
   $('bottombar').classList.add('hidden');
   $('gameover').classList.add('hidden');
   $('toasts').innerHTML = '';
@@ -629,6 +685,7 @@ function enterMini(kind) {
 function renderMiniHud() {
   const st = mini?.state;
   if (!st) return;
+  setMood(mini.mood());
   const stats = mini.hudStats().map(([k, v, cls]) => `<span class="${cls}">${k} ${v}</span>`).join('');
   const players = st.players.map((p, i) => `<span class="pl" style="color:${PLAYER_COLORS[i]}${p.left ? ';opacity:.5' : ''}" title="${esc(p.name)}">
     <span class="nm">${esc(i === st.me ? 'Toi' : p.name)}</span>${p.score}</span>`).join('');
@@ -667,7 +724,11 @@ net.on('live', ({ from, d }) => { if (mini && screen === 'game') mini.onLive(fro
 net.on('events', ({ events }) => {
   const kind = events[0]?.state?.kind;
   if (kind) {
-    if (!mini || screen !== 'game' || mini.kind !== kind) enterMini(kind);
+    if (!mini || screen !== 'game' || mini.kind !== kind) {
+      // un dernier tick d'une partie qu'on vient de quitter ne doit pas rouvrir l'écran de jeu
+      if (!events.some((ev) => ev.type === 'mgStart')) return;
+      enterMini(kind);
+    }
     for (const ev of events) mini.event(ev);
     return;
   }

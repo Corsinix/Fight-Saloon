@@ -1,6 +1,6 @@
 // Base commune des scènes de mini-jeux : horloge partagée, compte à rebours, entrées,
 // curseurs/positions des autres joueurs, petits textes de points.
-import { canvasText, canvasPos } from './scene.js';
+import { canvasText, canvasPos, due60 } from './scene.js';
 import { sfx } from './audio.js';
 import { W, H, PLAYER_COLORS, MODES, CUT_MS, HELP_MS } from './worlds.js';
 import { pickEnv, Ambience, ENVS } from './env.js';
@@ -32,7 +32,9 @@ export class MiniScene {
     this.now = performance.now();
     this.abort = new AbortController();
     this.bindInput();
-    const loop = (t) => { this.frame(t); this.raf = requestAnimationFrame(loop); };
+    // 60 images/s au plus ; l'image suivante est demandée d'abord, pour qu'une erreur ne fige pas le jeu
+    const gate = { next: 0 };
+    const loop = (t) => { this.raf = requestAnimationFrame(loop); if (due60(gate, t)) this.frame(t); };
     this.raf = requestAnimationFrame(loop);
   }
 
@@ -62,6 +64,7 @@ export class MiniScene {
 
   // ---------------------------------------------------------- événements de l'hôte
   event(ev) {
+    if (!this.state && ev.type !== 'mgStart') return; // rien avant le début de la partie
     if (ev.type === 'mgStart') {
       this.setState(ev.state);
       this.begin(ev.seed, ev.duration, ev.countdown);
@@ -267,6 +270,17 @@ export class MiniScene {
   clock() { return this.remaining(); }
   progress() { return this.remaining() / this.duration; }
 
+  // Musique dynamique (voir setMood dans audio.js) : calme pendant la cinématique et les règles,
+  // monte doucement au fil de la partie, puis tension et tic-tac sur les dernières secondes.
+  // Les jeux en manches (duel, Charlie, pinte) ont leur propre règle.
+  mood() {
+    const t = this.t;
+    if (this.over || t >= this.duration) return { level: 0.5 };
+    if (t < 0) return { level: 0.3 };
+    const rem = this.duration - t;
+    return { level: rem < 20000 ? 0.9 : 0.5 + 0.2 * (t / this.duration), tick: rem < 10000 };
+  }
+
   // à surcharger
   setup() {}
   applySync() {}
@@ -295,7 +309,8 @@ export function pixelSprite(w, h, ox, oy, draw) {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
-  const ctx = c.getContext('2d');
+  // relu pixel par pixel (contour, haut du sprite) : gardé en mémoire plutôt que sur la carte graphique
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   const R = (dx, dy, ww, hh, col) => { ctx.fillStyle = col; ctx.fillRect(ox + dx, oy + dy, ww, hh); };
   draw(R, ctx);
   outline(c);

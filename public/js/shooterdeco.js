@@ -1,10 +1,10 @@
 // Décor vivant de la fusillade : éléments destructibles (vitres, lanternes, enseignes, tonneaux, pots de fleurs,
 // horloge de la gare, lustres du saloon) et petits éléments animés (oiseaux, poules, chien, chat, fumées, linge,
-// girouettes, drapeaux, vapeur de la locomotive, pianola).
+// girouettes, drapeaux, vapeur de la locomotive, pianola ; aux abords : vaches, éolienne, molette du chevalement).
 // Purement visuel : chaque navigateur casse ce que lui et les autres touchent (les tirs des autres arrivent en direct).
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
-import { W, GROUND, PROP_BASE, PROP_DIM, facade, rng, STA, wagonOpenings, SAL } from './worlds.js';
+import { W, GROUND, PROP_BASE, PROP_DIM, facade, rng, STA, wagonOpenings, SAL, EDGE_COVER } from './worlds.js';
 
 const OUT = S.OUT;
 const rd = Math.round;
@@ -62,7 +62,7 @@ export class Deco {
       if (p.kind === 'trough') this.add({ sec: 'street', kind: 'leak', x: p.x, y: PROP_BASE - PROP_DIM.trough[1], w: PROP_DIM.trough[0], h: PROP_DIM.trough[1] - 4, holes: [] });
     }
     // poules, chien et virevoltants dans la rue
-    for (let k = 0; k < 5; k++) this.critters.push({ sec: 'street', kind: 'hen', x0: 120 + R() * 1900, y: 172 + R() * 24, ph: R() * 9, col: ['#f4ecd8', '#b0602a', '#3a3232'][Math.floor(R() * 3)] });
+    for (let k = 0; k < 5; k++) this.critters.push({ sec: 'street', kind: 'hen', x0: 120 + R() * 2300, y: 172 + R() * 24, ph: R() * 9, col: ['#f4ecd8', '#b0602a', '#3a3232'][Math.floor(R() * 3)] });
     this.critters.push({ sec: 'street', kind: 'dog', x: 400 + R() * 1300, y: 171, ph: R() * 9 });
     this.critters.push({ sec: 'street', kind: 'cat', x: 0, y: 0, perch: true, ...this.catPerch(L) });
 
@@ -70,17 +70,45 @@ export class Deco {
     const B = STA.building;
     for (const wn of B.windows) this.add({ sec: 'station', kind: 'glass', x: wn.x, y: wn.y, w: wn.w, h: wn.h, seed: R() });
     this.add({ sec: 'station', kind: 'clock', x: B.x + 140, y: B.top + 4, w: 20, h: 20 });
-    for (const wg of STA.wagons) for (const wn of wagonOpenings(wg).wins) this.add({ sec: 'station', kind: 'glass', x: wn.x, y: wn.y, w: wn.w, h: wn.h, seed: R() });
+    for (const wg of L.train) if (wg.type === 'passenger') for (const wn of wagonOpenings(wg).wins) this.add({ sec: 'station', kind: 'glass', x: wn.x, y: wn.y, w: wn.w, h: wn.h, seed: R() });
     this.add({ sec: 'station', kind: 'headlamp', x: STA.loco.x + STA.loco.w - 12, y: 92, w: 10, h: 10 });
     for (const lx of [364, 564, 764, 1000]) this.add({ sec: 'station', kind: 'lantern', x: lx - 3, y: 96, w: 7, h: 11, ground: STA.platform, post: true });
     for (const c of STA.covers) if (c.kind === 'barrels') this.add({ sec: 'station', kind: 'leak', x: c.x, y: PROP_BASE - 28, w: 34, h: 28, holes: [] });
     for (let k = 0; k < 7; k++) {
-      const wg = STA.wagons[k % 3];
-      this.critters.push({ sec: 'station', kind: 'bird', x: k < 2 ? B.x + 30 + R() * 240 : wg.x + 10 + R() * (wg.w - 20), y: k < 2 ? B.top - 9 : STA.wagonTop - 7, ph: R() * 9 });
+      const wg = L.train[k % 3];
+      this.critters.push({ sec: 'station', kind: 'bird', x: k < 2 ? B.x + 30 + R() * 240 : wg.x + 10 + R() * (wg.w - 20), y: k < 2 ? B.top - 9 : STA.wagonTop - (wg.type === 'passenger' ? 7 : 5), ph: R() * 9 });
     }
     this.fixtures.push({ sec: 'station', kind: 'steam', x: STA.loco.x + STA.loco.w - 38, y: 58 });
     this.fixtures.push({ sec: 'station', kind: 'flag', x: B.x + 20, y: B.top - 20, ph: 1 });
     this.critters.push({ sec: 'station', kind: 'dog', x: 560, y: 175, ph: 2 });
+
+    // ---- les abords de la ville (cimetière, ranch ou mine)
+    const E = L.edge;
+    for (const h of E.houses) {
+      for (const wn of h.wins || []) if (h.kind !== 'chapel') this.add({ sec: 'edge', kind: 'glass', x: wn.x, y: wn.y, w: wn.w, h: wn.h, seed: R() });
+      if (h.kind === 'tunnel') this.add({ sec: 'edge', kind: 'lantern', x: h.door.x - 17, y: h.door.y + 2, w: 7, h: 11, ground: GROUND });
+      if (h.kind === 'lodge' || h.kind === 'office' || h.kind === 'bunk' || h.kind === 'shed') this.add({ sec: 'edge', kind: 'lantern', x: h.door.x + h.door.w + 4, y: h.door.y - 6, w: 7, h: 11, ground: GROUND });
+      if (h.kind === 'farm' || h.kind === 'lodge') this.fixtures.push({ sec: 'edge', kind: 'smoke', x: h.kind === 'farm' ? h.x + 36 : h.x + h.w - 29, y: h.top - 18, ph: R() });
+      if (h.kind === 'bunk') this.fixtures.push({ sec: 'edge', kind: 'smoke', x: h.x + 26, y: h.top - 18, ph: R() });
+      if (h.kind === 'mill') this.fixtures.push({ sec: 'edge', kind: 'smoke', x: h.x + h.w - 18, y: 16, ph: R(), dark: true });
+      if (h.kind === 'windmill') this.fixtures.push({ sec: 'edge', kind: 'windmill', x: h.x + h.w / 2, y: h.top - 16 });
+      if (h.kind === 'headframe') this.fixtures.push({ sec: 'edge', kind: 'sheave', x: h.x + h.w / 2, y: h.top - 12 });
+      if (h.kind === 'barn') this.fixtures.push({ sec: 'edge', kind: 'vane', x: h.x + h.w / 2, y: h.roof - 14, ph: R() * 9 });
+      if (h.kind === 'chapel') this.fixtures.push({ sec: 'edge', kind: 'vane', x: h.x + 20, y: h.top - 12, ph: R() * 9 });
+      // corbeaux sur les toits, l'arbre mort, les croix
+      const perch = h.kind === 'tree' ? [[h.x + 30, 80], [h.x - 24, 76], [h.x + 6, 57]] : h.kind === 'gate' ? [[h.x + 30, h.sign.y - 3]] : h.top != null && R() < 0.6 ? [[h.x + 10 + R() * (h.w - 20), (h.roof ?? h.top) - 1]] : [];
+      for (const [x, y] of perch) this.critters.push({ sec: 'edge', kind: 'bird', x, y, ph: R() * 9 });
+    }
+    for (const c of E.covers) {
+      const [w, h] = EDGE_COVER[c.kind];
+      if (c.kind === 'barrels' || c.kind === 'trough') this.add({ sec: 'edge', kind: 'leak', x: c.x, y: PROP_BASE - h, w, h: c.kind === 'trough' ? h - 4 : h, holes: [] });
+      if (c.kind === 'cross' && R() < 0.5) this.critters.push({ sec: 'edge', kind: 'bird', x: c.x + 10, y: PROP_BASE - h - 1, ph: R() * 9 });
+    }
+    if (E.kind === 'ranch') {
+      for (let k = 0; k < 4; k++) this.critters.push({ sec: 'edge', kind: 'cow', x0: 490 + k * 70 + R() * 30, y: 158 + R() * 8, ph: R() * 9, spots: R() < 0.5 });
+      for (let k = 0; k < 4; k++) this.critters.push({ sec: 'edge', kind: 'hen', x0: 1180 + R() * 300, y: 172 + R() * 24, ph: R() * 9, col: ['#f4ecd8', '#b0602a', '#3a3232'][Math.floor(R() * 3)] });
+      this.critters.push({ sec: 'edge', kind: 'dog', x: 250 + R() * 60, y: 171, ph: R() * 9 });
+    }
 
     // ---- le saloon
     for (const cx of [200, 520]) this.add({ sec: 'saloon', kind: 'chandelier', x: cx - 15, y: 8, w: 30, h: 20, cx, floor: 194 });
@@ -144,13 +172,14 @@ export class Deco {
   scare(sec, wx, y) {
     for (const c of this.critters) {
       if (c.sec !== sec || c.gone || c.flee) continue;
-      const cx = c.kind === 'hen' ? c.x ?? c.x0 : c.x;
+      const cx = c.kind === 'hen' || c.kind === 'cow' ? c.x ?? c.x0 : c.x;
       if (Math.abs(cx - wx) > 80 || Math.abs(c.y - y) > 70) continue;
       c.flee = { t0: this.now || 0, dir: cx >= wx ? 1 : -1, x0: cx, y0: c.y };
       if (c.kind === 'bird') { sfx('rope', Math.random() * 0.05); for (let i = 0; i < 2; i++) this.fx.push({ sec, x: cx, y: c.y, vx: (Math.random() - 0.5) * 0.05, vy: -0.02, g: 0.00005, col: '#c8c0b8', life: 900, t: 0, ground: 999 }); }
       else if (c.kind === 'hen') sfx('cluck');
       else if (c.kind === 'dog') sfx('bark');
       else if (c.kind === 'cat') sfx('meow');
+      else if (c.kind === 'cow') sfx('moo');
     }
   }
 
@@ -222,6 +251,25 @@ export class Deco {
           });
           break;
         }
+        case 'windmill': {
+          // roue à pales qui tourne au vent, queue de direction
+          const a0 = now / 700 + (fxt.ph || 0);
+          R(x, y - 1, 22, 2, '#3a3436'); box(x + 16, y - 6, 8, 10, '#c8c0b0');
+          for (let k = 0; k < 12; k++) {
+            const a = a0 + (k * Math.PI) / 6;
+            for (let r = 3; r < 15; r++) R(x + Math.cos(a) * r, y + Math.sin(a) * r, 2, 2, r > 9 ? '#d8d0c0' : '#8a8478');
+          }
+          S.disc(ctx, x, y, 3, OUT); S.disc(ctx, x, y, 2, '#5a4a40');
+          break;
+        }
+        case 'sheave': {
+          // molette du chevalement de la mine
+          const a0 = now / 500;
+          S.disc(ctx, x, y, 10, OUT); S.disc(ctx, x, y, 9, '#4a4f58'); S.disc(ctx, x, y, 7, '#6a5a48');
+          for (let k = 0; k < 4; k++) { const a = a0 + (k * Math.PI) / 4; for (let r = -7; r <= 7; r++) R(x + Math.cos(a) * r, y + Math.sin(a) * r, 1, 1, '#3a3436'); }
+          S.disc(ctx, x, y, 2, '#c8a040');
+          break;
+        }
         case 'pianola': break;
         case 'cigar': break;
       }
@@ -231,7 +279,7 @@ export class Deco {
       if (it.kind === 'chandelier' || it.kind === 'leak') continue; // dessinés après (devant les bandits)
       this.drawItem(ctx, it, cx, t, now, R, box);
     }
-    for (const c of this.critters) if (c.sec === sec && (c.kind === 'bird' || (c.kind === 'cat' && c.perch))) this.drawCritter(ctx, c, cx, t, now, R);
+    for (const c of this.critters) if (c.sec === sec && (c.kind === 'bird' || c.kind === 'cow' || (c.kind === 'cat' && c.perch))) this.drawCritter(ctx, c, cx, t, now, R);
   }
 
   // Devant : tonneaux percés, lustres, poules, chien, chat, pianola, fumée de cigare, débris
@@ -241,7 +289,7 @@ export class Deco {
       if (it.sec !== sec || it.x - cx < -40 || it.x - cx > W + 40) continue;
       if (it.kind === 'chandelier' || it.kind === 'leak') this.drawItem(ctx, it, cx, t, now, R, box);
     }
-    for (const c of this.critters) if (c.sec === sec && c.kind !== 'bird' && !(c.kind === 'cat' && c.perch)) this.drawCritter(ctx, c, cx, t, now, R);
+    for (const c of this.critters) if (c.sec === sec && c.kind !== 'bird' && c.kind !== 'cow' && !(c.kind === 'cat' && c.perch)) this.drawCritter(ctx, c, cx, t, now, R);
     for (const fxt of this.fixtures) {
       if (fxt.sec !== sec) continue;
       const x = fxt.x - cx;
@@ -432,6 +480,26 @@ export class Deco {
         const st = Math.floor(now / (fl >= 0 ? 60 : 200)) % 2;
         R(x - 1 + st, y - 1, 1, 1, '#e0b040'); R(x + 1 - st, y - 1, 1, 1, '#e0b040');
         if (fl >= 0 && fl < 1400 && st) R(x - 2, y - 7, 4, 1, c.col);
+        break;
+      }
+      case 'cow': {
+        // broute en avançant à peine ; effrayée, elle trotte plus loin puis se calme
+        let x = c.x0 + Math.sin(now / 5000 + c.ph) * 10;
+        if (fl >= 0) x = c.flee.x0 + c.flee.dir * Math.min(fl, 1800) * 0.05;
+        if (fl > 7000) { c.x0 = x; c.flee = null; }
+        c.x = x;
+        x -= cx;
+        if (x < -20 || x > W + 20) return;
+        const y = c.y, dir = fl >= 0 && fl < 1800 ? c.flee.dir : Math.cos(now / 5000 + c.ph) > 0 ? 1 : -1;
+        const graze = fl < 0 && Math.sin(now / 1300 + c.ph * 2) > 0;
+        const st = fl >= 0 && fl < 1800 ? Math.floor(fl / 120) % 2 : 0;
+        R(x - 10, y - 12, 20, 8, OUT); R(x - 9, y - 11, 18, 6, '#f4ecd8');
+        if (c.spots) { R(x - 6, y - 11, 5, 4, '#3a3232'); R(x + 3, y - 9, 4, 3, '#3a3232'); } else R(x - 9, y - 11, 18, 6, '#a86a3a');
+        for (const lx of [-8, -4, 4, 7]) R(x + lx + (st && lx > 0 ? 1 : 0), y - 5, 2, 5, '#3a3232');
+        const hx = dir > 0 ? x + 9 : x - 15, hy = graze ? y - 6 : y - 14;
+        R(hx, hy, 6, 6, OUT); R(hx + 1, hy + 1, 4, 4, c.spots ? '#f4ecd8' : '#a86a3a'); R(dir > 0 ? hx + 4 : hx, hy + 4, 2, 2, '#e8a0a0');
+        R(hx + 1, hy - 1, 1, 1, '#f4ecd8'); R(hx + 4, hy - 1, 1, 1, '#f4ecd8');
+        R(dir > 0 ? x - 11 : x + 10, y - 11 + (Math.sin(now / 400 + c.ph) > 0 ? 1 : 0), 1, 6, '#3a3232'); // queue
         break;
       }
       case 'dog': {

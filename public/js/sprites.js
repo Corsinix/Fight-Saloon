@@ -3,11 +3,18 @@ import { SKIN, HAIR_COLORS, CLOTH_COLORS } from './data.js';
 
 export const OUT = '#1a0f0a';
 
-export function makeCanvas(w, h) {
+// Libère tout de suite la mémoire d'un canvas dont on n'a plus besoin. Safari (iPhone) la garde sinon
+// jusqu'au passage du ramasse-miettes, et le navigateur plante quand le total dépasse sa limite.
+export function freeCanvas(c) {
+  if (c) { c.width = 0; c.height = 0; }
+}
+
+// read : canvas relu pixel par pixel (getImageData), gardé en mémoire plutôt que sur la carte graphique
+export function makeCanvas(w, h, read = false) {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d', read ? { willReadFrequently: true } : undefined);
   ctx.imageSmoothingEnabled = false;
   return c;
 }
@@ -398,7 +405,7 @@ export function itemIconHD(id) {
   if (hdCache[id]) return hdCache[id];
   const draw = HD[id];
   if (!draw) return itemIcon(id);
-  const c = makeCanvas(32, 32);
+  const c = makeCanvas(32, 32, true);
   const ctx = c.getContext('2d');
   const R = (x, y, w, h, col) => {
     if (col === 'transparent') { ctx.clearRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); return; }

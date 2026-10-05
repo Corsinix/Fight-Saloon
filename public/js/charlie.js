@@ -21,6 +21,11 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // la foule d'une manche se prépare en quelques millisecondes, étalées sur l'annonce de la manche.
 const FW = 16, FH = 30, FOX = 8, FOY = 28, POSES = 5;
 let sheets = new Map();
+// on oublie la foule précédente : ses planches sont libérées tout de suite (2 canvas par passant)
+function freeSheets() {
+  for (const s of sheets.values()) { S.freeCanvas(s.right); S.freeCanvas(s.left); }
+  sheets = new Map();
+}
 
 // contour sombre d'un pixel : la silhouette en noir, décalée dans les 4 directions, sous le dessin
 function outlineFast(src) {
@@ -35,6 +40,7 @@ function outlineFast(src) {
   const o = out.getContext('2d');
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) o.drawImage(sil, dx, dy);
   o.drawImage(src, 0, 0);
+  S.freeCanvas(sil);
   return out;
 }
 
@@ -48,6 +54,7 @@ function npcSheet(look, key) {
     drawNpc(R, look, p - 1);
   }
   const right = outlineFast(raw);
+  S.freeCanvas(raw);
   const left = S.makeCanvas(right.width, FH);
   const lc = left.getContext('2d');
   lc.scale(-1, 1);
@@ -298,6 +305,11 @@ export class CharlieScene extends MiniScene {
     }, { passive: false, signal: this.abort.signal });
   }
 
+  destroy() {
+    super.destroy();
+    freeSheets();
+  }
+
   title() { return 'OÙ EST CHARLIE ?'; }
   help() {
     return [
@@ -337,7 +349,7 @@ export class CharlieScene extends MiniScene {
     this.world = charlieWorld(this.seed, r.n);
     for (const n of this.world.npcs) n.key = JSON.stringify(n.look);
     // nouvelle foule : on oublie les planches de la précédente et on prépare celles-ci (Charlie d'abord, pour l'affiche)
-    sheets = new Map();
+    freeSheets();
     this.warmQueue = this.world.npcs.filter((n) => !n.charlie);
     this.warmQueue.push(this.world.charlie);
     this.cam = (WW - W) / 2;
@@ -359,6 +371,12 @@ export class CharlieScene extends MiniScene {
   }
 
   clock() { return this.hunting ? this.cur.end - this.t : null; }
+  // la chasse s'emballe quand le temps de la manche file
+  mood() {
+    const ms = this.clock();
+    if (ms == null || this.over) return this.t < 0 ? { level: 0.3 } : { level: 0.45 };
+    return { level: ms < 10000 ? 0.85 : 0.55, tick: ms < 5000 };
+  }
   progress() { return this.hunting ? (this.cur.end - this.t) / CHARLIE.round : null; }
 
   // ---------------------------------------------------------- entrées

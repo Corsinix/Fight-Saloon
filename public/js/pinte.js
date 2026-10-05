@@ -255,6 +255,7 @@ export class PinteScene extends MiniScene {
     super(canvas, hooks);
     this.kind = 'pinte';
     this.cur = null;
+    this.falls = []; // la boucle d'animation tourne avant le début de la partie
   }
 
   title() { return 'LA PINTE'; }
@@ -274,6 +275,12 @@ export class PinteScene extends MiniScene {
     return c && c.phase === 'aim' && this.t >= c.turnAt ? Math.max(0, c.turnAt + P.AIM - this.t) : null;
   }
   progress() { const ms = this.clock(); return ms == null ? 0 : ms / P.AIM; }
+  // le tic-tac presse le joueur qui vise
+  mood() {
+    if (this.over || this.t < 0) return super.mood();
+    const ms = this.clock();
+    return { level: 0.5, tick: ms != null && ms < 4000 };
+  }
 
   setup(seed) {
     this.showEnv = true;

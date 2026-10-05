@@ -76,13 +76,13 @@ export function mineWorld(seed) {
   const junctions = [], obstacles = [], gold = [], pads = [], bats = [];
   const bounds = STAGES.slice(1).map((s) => s.from * L);
   const blocked = (a, b) => bounds.some((B) => b > B - 220 && a < B + 220);
-  const addGold = (x, lane, kind = 'gold') => gold.push({ id: gold.length, x: Math.round(x), lane, kind });
-  const addObs = (x, lane, kind) => obstacles.push({ id: obstacles.length, x: Math.round(x), lane, kind });
-  const addPad = (x, lane, kind) => pads.push({ id: pads.length, x: Math.round(x), lane, kind });
+  const addGold = (x, lane, kind = 'gold') => blocked(x, x) || gold.push({ id: gold.length, x: Math.round(x), lane, kind });
+  const addObs = (x, lane, kind) => blocked(x, x) || obstacles.push({ id: obstacles.length, x: Math.round(x), lane, kind });
+  const addPad = (x, lane, kind) => blocked(x, x) || pads.push({ id: pads.length, x: Math.round(x), lane, kind });
   const obsKind = (st, p) => {
     if (R() < 0.08 + 0.12 * p) return 'tnt';
     if (st === 'gouffre') return R() < 0.6 ? 'gap' : pick(['rock', 'barrel', 'cart']);
-    if (st === 'galeries' && R() < 0.3) return 'fall';
+    if (st === 'galeries' && R() < 0.4) return 'fall';
     return pick(['rock', 'beam', 'barrel', 'cart']);
   };
   const end = STAGES[3].from * L - 220; // la sortie est une ligne droite
@@ -90,8 +90,7 @@ export function mineWorld(seed) {
   while (x < end) {
     const p = x / L;
     const st = STAGES[stageAt(x)].id;
-    const span = 520 * (1 - 0.3 * p);
-    if (blocked(x, x + span)) { x += 40; continue; }
+    if (blocked(x - 40, x + MINE.jLen + 40)) { x += 30; continue; }
     const a = Math.floor(R() * 2); // embranchement entre la voie a et la voie a + 1
     const bad = a + (R() < 0.5 ? 0 : 1);
     const good = bad === a ? a + 1 : a;
@@ -109,14 +108,14 @@ export function mineWorld(seed) {
     const n = 3 + Math.floor(R() * 3);
     for (let k = 0; k < n; k++) addGold(after + 14 + k * 18, good, k === n - 1 && R() < 0.3 ? 'nugget' : 'gold');
     if (R() < 0.18) addGold(ox + between(-30, 30), other, 'gem');
-    const next = ox + between(170, 290) * (1 - 0.3 * p);
+    const next = ox + between(130, 240) * (1 - 0.3 * p);
     // ligne droite : or en vrac, accélérateur, boue
     const lanes = [0, 1, 2].sort(() => R() - 0.5);
-    if (next - ox > 150) {
+    if (next - ox > 110) {
       const gl = lanes[0];
       if (R() < 0.6) for (let gx = ox + 40; gx < next - 40; gx += 20) addGold(gx, gl);
-      if (R() < (st === 'descente' ? 0.6 : 0.42)) addPad(between(ox + 40, next - 60), lanes[1], 'boost');
-      if (R() < (st === 'descente' ? 0.25 : 0.35)) addPad(between(ox + 40, next - 60), lanes[2], 'mud');
+      if (R() < (st === 'descente' ? 0.6 : 0.42)) addPad(between(ox + 30, next - 40), lanes[1], 'boost');
+      if (R() < (st === 'descente' ? 0.25 : 0.35)) addPad(between(ox + 30, next - 40), lanes[2], 'mud');
       if (st !== 'gouffre' && R() < 0.12) bats.push(Math.round(ox + 40));
     }
     prev = { bad, a };

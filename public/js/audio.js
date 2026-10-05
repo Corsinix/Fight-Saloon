@@ -1,7 +1,9 @@
 // Musique chiptune 8/16 bits (compositions originales façon western spaghetti, sons NES / SNES) + bruitages, en WebAudio.
-// Si public/music contient les fichiers listés dans CUSTOM_TRACKS (ou menu.mp3 / game.mp3), ils remplacent la musique synthétisée.
+// Si public/music contient les fichiers listés dans CUSTOM_TRACKS (ou menu.mp3 / game.mp3), ils s'intercalent entre les morceaux synthétisés.
 
 let ac = null, master, musicBus, sfxBus, echoIn, noiseBuf, nesNoise;
+// musique dynamique : musicBus -> hushG (ambiance) -> duckG (effets ponctuels) -> moodLP -> master ; stingBus = effets hors atténuation
+let hushG, duckG, moodLP, stingBus;
 const WAVES = {};
 const settings = { music: 0.55, sfx: 0.8, muted: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('bs-audio') || '{}')); } catch {}
@@ -14,6 +16,7 @@ function applyVolumes() {
   if (!ac) return;
   master.gain.value = settings.muted ? 0 : 1;
   musicBus.gain.value = settings.music;
+  stingBus.gain.value = settings.music;
   sfxBus.gain.value = settings.sfx;
 }
 
@@ -58,7 +61,14 @@ export function initAudio() {
   master.connect(ac.destination);
   musicBus = ac.createGain();
   sfxBus = ac.createGain();
-  musicBus.connect(master);
+  hushG = ac.createGain();
+  duckG = ac.createGain();
+  moodLP = ac.createBiquadFilter();
+  moodLP.type = 'lowpass';
+  moodLP.frequency.value = 18000;
+  musicBus.connect(hushG).connect(duckG).connect(moodLP).connect(master);
+  stingBus = ac.createGain();
+  stingBus.connect(master);
   sfxBus.connect(master);
   // écho "canyon" (sert surtout au son 16 bits, façon DSP de la SNES)
   echoIn = ac.createGain();
@@ -96,6 +106,8 @@ export function initAudio() {
   applyVolumes();
   loadCrusher();
   loadCustomMusic();
+  setInterval(layers, 100);
+  applyMood();
 }
 
 export const audioSettings = settings;
@@ -635,6 +647,102 @@ const INST = {
     for (const [f, lvl, len] of [[1180, 1, 0.5], [1870, 0.6, 0.35], [3150, 0.35, 0.2]]) tone(t, f, len, { gain: 0.06 * lvl, dest: musicBus });
     noise(t, 0.02, { type: 'highpass', f: 4000, gain: 0.12, dest: musicBus });
   },
+
+  // ---- instruments de la prairie : banjo, violon (fiddle), accordéon, sifflet de locomotive
+  // banjo : corde métallique pincée sur une peau tendue, très brillante, s'éteint vite
+  banjo(m, t, d, v = 1) {
+    const f = mtof(m);
+    const len = Math.min(0.7, d + 0.25);
+    const flt = ac.createBiquadFilter();
+    flt.type = 'lowpass';
+    flt.frequency.setValueAtTime(Math.min(9000, f * 10), t);
+    flt.frequency.exponentialRampToValueAtTime(Math.max(500, f * 2), t + len);
+    const hp = ac.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 220;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.12 * v, t + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.025 * v, t + 0.09);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    for (const [w, det, lvl] of [['p25', 0, 1], ['sawtooth', 6, 0.4]]) {
+      const o = osc(w, f, t);
+      o.detune.value = det;
+      const og = ac.createGain();
+      og.gain.value = lvl;
+      o.connect(og).connect(flt);
+      o.start(t);
+      o.stop(t + len + 0.03);
+    }
+    flt.connect(hp).connect(g);
+    g.connect(musicBus);
+    g.connect(echoIn);
+    noise(t, 0.012, { type: 'highpass', f: 3500, gain: 0.04 * v, dest: musicBus });
+  },
+  // roulement de banjo : l'accord égrené en doubles croches (pouce, index, majeur, aigu)
+  roll(notes, t, d, v = 1) {
+    [notes[0], notes[1], notes[2], notes[0] + 12].forEach((n, i) => INST.banjo(n, t + (i * d) / 4, d / 4, 0.45 * v));
+  },
+  // violon de bal : deux dents de scie qui glissent sur la note, vibrato, bruit d'archet
+  fiddle(m, t, d, v = 1) {
+    const f = mtof(m);
+    const end = t + Math.max(0.08, d * 0.96);
+    const flt = ac.createBiquadFilter();
+    flt.type = 'lowpass';
+    flt.frequency.value = 3200;
+    const hp = ac.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 250;
+    const g = ac.createGain();
+    env(g, t, Math.min(0.06, d / 4), 0.06 * v, 0.06, end);
+    for (const det of [-6, 6]) {
+      const o = osc('sawtooth', f * 0.98, t);
+      o.frequency.exponentialRampToValueAtTime(f, t + 0.05);
+      o.detune.value = det;
+      vibrato(o, t, d, 18, 6, 0.15);
+      o.connect(flt);
+      o.start(t);
+      o.stop(end + 0.05);
+    }
+    flt.connect(hp).connect(g);
+    g.connect(musicBus);
+    g.connect(echoIn);
+    noise(t, Math.min(d, 0.25), { type: 'bandpass', f: Math.min(8000, f * 4), q: 2, gain: 0.012 * v, dest: musicBus });
+  },
+  // accordéon de cantina : deux anches désaccordées (le « musette » qui ondule) et une anche grave
+  accordion(m, t, d, v = 1) {
+    const f = mtof(m);
+    const end = t + Math.max(0.08, d * 0.9);
+    const flt = ac.createBiquadFilter();
+    flt.type = 'lowpass';
+    flt.frequency.value = 2600;
+    const g = ac.createGain();
+    env(g, t, 0.025, 0.035 * v, 0.05, end);
+    for (const [w, k, det, lvl] of [['p50', 1, -12, 1], ['p50', 1, 12, 1], ['p25', 0.5, 0, 0.5]]) {
+      const o = osc(w, f * k, t);
+      o.detune.value = det;
+      const og = ac.createGain();
+      og.gain.value = lvl;
+      o.connect(og).connect(flt);
+      o.start(t);
+      o.stop(end + 0.03);
+    }
+    flt.connect(g);
+    g.connect(musicBus);
+    g.connect(echoIn);
+  },
+  // accords d'accordéon piqués (le « pah » de la polka)
+  squeeze(notes, t, d, v = 1) { for (const n of notes) INST.accordion(n, t, Math.min(d, 0.22), 0.45 * v); },
+  // sifflet de locomotive 8 bits : trois pulses en accord mineur
+  horn8(m, t, d, v = 1) { for (const k of [0, 3, 7]) chipNote('p12', mtof(m + k), t, d, 0.03 * v, { vib: 12 }); },
+  // feu de camp qui crépite, grillons dans la nuit
+  F16(t) {
+    for (let i = 0; i < 3; i++) {
+      if (Math.random() < 0.3) continue;
+      noise(t + Math.random() * 0.4, 0.008 + Math.random() * 0.012, { type: 'highpass', f: 1500 + Math.random() * 3500, gain: 0.05 + Math.random() * 0.07, dest: musicBus });
+    }
+  },
+  Q16(t) { for (let i = 0; i < 3; i++) tone(t + i * 0.045, 4300, 0.03, { gain: 0.03, dest: musicBus }); },
 };
 
 let FUZZ = null;
@@ -777,9 +885,17 @@ function compile(song) {
     }));
   }
   // Y = cri de coyote, sur la note song.howl
-  const drum = (k, at) => ev.push(k === 'Y' ? { s: at, d: 1, fn: 'Yh' + st.drum, arg: noteNum(song.howl || 'A4') } : { s: at, d: 0, fn: k + st.drum });
+  const drum = (k, at) => ev.push(k === 'Y' ? { s: at, d: 1, fn: 'Yh' + st.drum, arg: noteNum(song.howl || 'A4') } : { s: at, d: 0, fn: k + st.drum, role: 'KSWAB'.includes(k) ? 'loud' : null });
   if (song.drums) pattern(song.drums, drum, song.drumsB ? (b) => b % 2 === 0 : null);
   if (song.drumsB) pattern(song.drumsB, drum, (b) => b % 2 === 1);
+  // couche de tension (jouée seulement quand ça chauffe) : grosse caisse sur le temps, tambourin à contretemps,
+  // roulement de caisse claire toutes les 4 mesures
+  for (let b = 0; b < chords.length; b++) {
+    const at = b * bar;
+    ev.push({ s: at, d: 0, fn: 'K' + st.drum, role: 'boost' });
+    for (let o = 2; o < bar; o += 4) ev.push({ s: at + o, d: 0, fn: 'T' + st.drum, role: 'boost' });
+    if (b % 4 === 3) for (let k = 4; k >= 1; k--) ev.push({ s: at + bar - k, d: 0, fn: 'S' + st.drum, role: 'boost' });
+  }
   ev.sort((a, b) => a.s - b.s);
   return { ...song, total, ev };
 }
@@ -973,17 +1089,287 @@ const SONGS = {
     drums: 'K:2 C:1 C:1 S:2 C:1 C:1 K:2 C:1 C:1 S:2 W:2',
     drumsB: 'K:2 C:1 C:1 S:2 C:1 C:1 K:2 C:1 C:1 W:2 O:2',
   },
+
+  // ---- ambiances de la prairie : banjo, violon, accordéon, piano de saloon, feu de camp, grillons, train
+  // Menu : valse au coin du feu, harmonica, guitare grattée, violon lointain, le bois crépite
+  feu: {
+    title: 'Le Feu de Camp', style: '16bit', bpm: 76, div: 4, bar: 12, loops: 2,
+    inst: { lead: 'harmonica', tone: 'nylon', comp: 'strum' }, pad: false,
+    melody:
+      'D5:6 B4:3 D5:3 | G5:9 F#5:3 | E5:6 C5:3 E5:3 | D5:9 -:3 |' +
+      'A4:3 D5:3 F#5:3 A5:3 | G5:6 F#5:3 E5:3 | D5:6 B4:3 G4:3 | G4:9 D5:3 |' +
+      'E5:6 G5:3 E5:3 | C5:6 E5:3 G5:3 | B5:6 A5:3 G5:3 | E5:9 G5:3 |' +
+      'A5:6 G5:3 E5:3 | F#5:6 E5:3 D5:3 | G5:6 D5:3 B4:3 | G4:9 -:3',
+    chords: 'G G C G D D G G C C G Em Am D G G',
+    voices: [{
+      inst: 'fiddle', v: 0.6,
+      melody: '-:12 | B4:12 | -:12 | G4:6 A4:6 | -:12 | C5:12 | -:12 | B4:6 D5:6 |' +
+        '-:12 | G4:12 | -:12 | B4:12 | -:12 | C5:6 A4:6 | -:12 | B4:12',
+    }],
+    bass: 'R:4 -:8',
+    comp: '-:4 c:4 c:4',
+    drums: 'F:6 F:6',
+  },
+  // Menu : nuit sur le désert, ocarina sous les étoiles, harpe, chœur lointain, grillons et coyote
+  desert: {
+    title: 'Nuit sur le Désert', style: '16bit', bpm: 64, div: 4, bar: 16, loops: 2, howl: 'E4',
+    inst: { lead: 'ocarina', pad: 'choir' },
+    melody:
+      'B4:8 E5:4 G5:4 | F#5:6 E5:2 B4:8 | C5:8 E5:4 G5:4 | B5:6 A5:2 G5:8 |' +
+      'A5:8 C6:4 B5:4 | A5:6 E5:2 C5:8 | D#5:8 F#5:4 A5:4 | B5:12 -:4 |' +
+      'G5:8 F#5:4 E5:4 | D5:6 B4:2 G4:8 | E5:8 G5:4 C6:4 | B5:8 D6:4 B5:4 |' +
+      'C6:6 B5:2 A5:4 E5:4 | F#5:4 A5:4 D#5:8 | E5:8 G5:4 B4:4 | E5:12 -:4',
+    chords: 'Em Em C C Am Am B7 B7 Em G C G Am B7 Em Em',
+    bass: 'R:8 5:8',
+    comp: '1:2 5:2 8:2 5:2 3:2 5:2 8:2 5:2',
+    drums: 'Q:8 Q:8',
+    drumsB: 'Q:8 Y:8',
+  },
+  // Menu : piano bastringue du saloon, ragtime avec main gauche « oum-pah »
+  piano: {
+    title: 'Le Piano du Saloon', style: '16bit', bpm: 112, div: 4, bar: 16, loops: 2,
+    inst: { lead: 'piano' }, pad: false,
+    melody:
+      'E5:2 G5:2 C6:3 G5:1 E5:2 G5:2 C6:4 | D6:3 C6:1 B5:2 C6:2 G5:8 | A5:2 C6:2 F6:3 C6:1 A5:2 C6:2 F6:4 | E6:3 D6:1 C6:2 A5:2 F5:8 |' +
+      'G5:2 E5:2 C5:2 E5:2 G5:4 E5:4 | C#6:4 E6:2 C#6:2 A5:4 G5:4 | F#5:2 A5:2 D6:3 C6:1 A5:2 F#5:2 D5:4 | G5:2 B5:2 D6:2 F6:2 E6:2 D6:2 B5:4 |' +
+      'E5:2 G5:2 C6:3 G5:1 E5:2 G5:2 C6:4 | D6:3 C6:1 B5:2 C6:2 E6:8 | F6:3 E6:1 D6:2 C6:2 A5:4 F5:4 | G#5:2 A5:2 C6:4 F6:8 |' +
+      'E6:4 C6:4 C#6:4 E6:4 | D6:4 A5:4 B5:4 F6:4 | E6:2 D6:2 C6:2 G5:2 E5:2 G5:2 C6:4 | C6:4 G5:2 E5:2 C5:4 -:4',
+    chords: 'C C F F C A7 D7 G7 C C F F C.A7 D7.G7 C C',
+    bass: 'R:4 -:4 5:4 -:4',
+    comp: '-:4 c:4 -:4 c:4',
+  },
+  // Menu : polka de cantina à l'accordéon, tambourin
+  cantina: {
+    title: 'La Cantina de Rosita', style: '16bit', bpm: 112, div: 4, bar: 16, loops: 2,
+    inst: { lead: 'accordion', comp: 'squeeze' }, pad: false,
+    melody:
+      'F#5:2 G5:2 A5:4 A5:2 B5:2 A5:4 | F#5:2 A5:2 D6:4 C#6:2 B5:2 A5:4 | G5:2 F#5:2 E5:4 E5:2 F#5:2 G5:4 | A5:4 G5:2 E5:2 C#5:8 |' +
+      'E5:2 F#5:2 G5:4 G5:2 A5:2 G5:4 | C#6:2 B5:2 A5:4 G5:2 E5:2 C#5:4 | D5:2 F#5:2 A5:4 D6:4 A5:4 | D6:8 -:4 A5:4 |' +
+      'D6:2 C#6:2 D6:4 A5:2 F#5:2 A5:4 | B5:2 A5:2 F#5:4 D5:8 | B5:2 A5:2 B5:4 D6:4 B5:4 | G5:4 A5:2 B5:2 G5:8 |' +
+      'A5:4 F#5:2 A5:2 D6:8 | C#6:4 B5:2 A5:2 G5:4 E5:4 | F#5:2 A5:2 D6:4 A5:2 F#5:2 D5:4 | D5:4 A4:4 D5:4 -:4',
+    chords: 'D D A7 A7 A7 A7 D D D D G G D A7 D D',
+    bass: 'R:4 -:4 5:4 -:4',
+    comp: '-:4 c:4 -:4 c:4',
+    drums: 'K:4 T:4 K:4 T:4',
+  },
+  // Partie : la diligence file, violon endiablé, roulements de banjo, sabots et fouet ; ça accélère
+  diligence: {
+    title: 'La Diligence', style: '16bit', bpm: 132, div: 4, bar: 16, loops: 3, accel: 1.04,
+    inst: { lead: 'fiddle', comp: 'roll' }, pad: false,
+    melody:
+      'A5:2 B5:1 C6:1 B5:2 A5:2 E5:2 A5:2 C6:2 E6:2 | D6:2 C6:2 B5:2 A5:2 E5:4 A4:4 | G5:2 A5:1 B5:1 A5:2 G5:2 D5:2 G5:2 B5:2 D6:2 | C6:2 B5:2 A5:2 G5:2 D5:8 |' +
+      'E5:2 A5:2 C6:2 A5:2 E6:2 C6:2 A5:2 C6:2 | B5:2 C6:2 D6:2 C6:2 A5:8 | G5:2 F#5:2 E5:2 B4:2 E5:2 G5:2 B5:4 | B5:4 A5:2 G5:2 E5:8 |' +
+      'A5:4 C6:2 E6:2 A6:4 E6:4 | G6:2 E6:2 D6:2 C6:2 A5:8 | G5:4 C6:2 E6:2 G6:4 E6:4 | F6:2 E6:2 D6:2 C6:2 G5:8 |' +
+      'D6:2 B5:2 G5:2 B5:2 D6:2 G6:2 D6:4 | B5:2 A5:2 G5:2 F#5:2 G5:4 B5:4 | C6:2 B5:2 A5:2 G5:2 E5:2 G5:2 A5:4 | A5:4 E5:2 E5:1 E5:1 A5:4 -:4',
+    chords: 'Am Am G G Am Am Em Em Am Am C C G G Am Am',
+    bass: 'R:4 5:4 R:4 5:4',
+    comp: 'c:4 c:4 c:4 c:4',
+    drums: 'K:2 C:1 C:1 S:2 C:1 C:1 K:2 C:1 C:1 S:2 C:1 C:1',
+    drumsB: 'K:2 C:1 C:1 S:2 C:1 C:1 K:2 C:1 C:1 W:2 C:2',
+  },
+  // Partie : train de nuit en 8 bits, tchou-tchou des balais, sifflet de locomotive
+  train: {
+    title: 'Le Train de Minuit', style: '8bit', bpm: 150, div: 4, bar: 16, loops: 4, accel: 1.05,
+    inst: { lead: 'lead8' }, echoDelay: 3,
+    melody:
+      'A4:2 C5:2 E5:2 A5:6 G5:2 E5:2 | G5:2 A5:2 E5:4 C5:4 A4:4 | A4:2 C5:2 E5:2 A5:6 B5:2 C6:2 | B5:2 A5:2 G5:2 E5:2 A5:8 |' +
+      'C6:4 A5:2 F5:2 C6:4 D6:4 | C6:2 A5:2 F5:2 A5:2 C6:8 | B5:4 G#5:2 E5:2 B5:4 D6:4 | C6:2 B5:2 G#5:2 E5:2 B4:8 |' +
+      'E5:2 E5:1 E5:1 A5:2 C6:2 E6:4 C6:4 | D6:2 C6:2 B5:2 A5:2 E5:8 | D5:2 D5:1 D5:1 F5:2 A5:2 D6:4 A5:4 | C6:2 A5:2 F5:2 A5:2 D6:8 |' +
+      'C6:4 A5:4 F5:4 A5:4 | G#5:4 B5:4 E6:4 D6:4 | C6:2 B5:2 A5:2 E5:2 C5:2 E5:2 A5:4 | A5:4 -:4 A4:2 A4:1 A4:1 -:4',
+    chords: 'Am Am Am Am F F E E Am Am Dm Dm F E Am Am',
+    voices: [{
+      inst: 'horn8',
+      melody: '-:16 | -:16 | -:16 | -:8 A4:6 -:2 | -:16 | -:16 | -:16 | -:8 E4:3 -:1 E4:4 |' +
+        '-:16 | -:16 | -:16 | -:16 | -:16 | -:16 | -:16 | -:8 A4:8',
+    }],
+    bass: 'R:2 -:2 5:2 -:2 R:2 -:2 5:2 -:2',
+    comp: '-:2 c:2 -:2 c:2 -:2 c:2 -:2 c:2',
+    drums: 'K:2 H:1 H:1 S:2 H:1 H:1 K:2 H:1 H:1 S:2 H:1 H:1',
+    drumsB: 'K:2 H:1 H:1 S:2 H:1 H:1 K:2 H:1 H:1 S:1 S:1 S:1 S:1',
+  },
+  // Partie : les vautours tournent, violon qui s'étire, banjo qui égrène, cœur qui bat de plus en plus vite
+  vautour: {
+    title: 'Le Vautour', style: '16bit', bpm: 100, div: 4, bar: 16, loops: 3, accel: 1.05,
+    inst: { lead: 'fiddle' },
+    melody:
+      'E5:12 F#5:2 G5:2 | B5:12 A5:2 G5:2 | F#5:12 G5:2 A5:2 | D5:16 |' +
+      'E5:8 G5:4 C6:4 | B5:8 A5:4 G5:4 | F#5:8 A5:4 D#6:4 | B5:16 |' +
+      'G5:8 B5:4 E6:4 | D#6:4 E6:4 B5:8 | D6:8 B5:4 G5:4 | A5:4 B5:4 D6:8 |' +
+      'C6:8 E6:4 C6:4 | B5:8 A5:4 F#5:4 | G5:8 F#5:4 D#5:4 | E5:12 -:4',
+    chords: 'Em Em D D C C B B Em Em G G Am B Em Em',
+    voices: [{
+      inst: 'banjo', v: 0.8,
+      melody: riff('Em Em D D C C B B Em Em G G Am B Em Em', {
+        Em: 'E4:2 B4:2 E5:2 B4:2 G4:2 B4:2 E5:2 B4:2', D: 'D4:2 A4:2 D5:2 A4:2 F#4:2 A4:2 D5:2 A4:2',
+        C: 'C4:2 G4:2 C5:2 G4:2 E4:2 G4:2 C5:2 G4:2', B: 'B3:2 F#4:2 B4:2 F#4:2 D#4:2 F#4:2 B4:2 A4:2',
+        G: 'G3:2 D4:2 G4:2 D4:2 B3:2 D4:2 G4:2 D4:2', Am: 'A3:2 E4:2 A4:2 E4:2 C4:2 E4:2 A4:2 E4:2',
+      }),
+    }],
+    bass: 'R:8 5:8',
+    drums: 'K:4 -:4 K:2 K:2 -:4',
+    drumsB: 'K:4 -:4 K:2 K:2 B:4',
+  },
 };
 
+// ---- un thème par mini-jeu (joué en premier), suivi de morceaux de la même couleur
+Object.assign(SONGS, {
+  // Fusillade : trompette, guitare saturée, galop, fouet et enclume
+  fusillade: {
+    title: 'Fusillade à Dodge City', style: '16bit', bpm: 140, div: 4, bar: 16, loops: 4, accel: 1.03,
+    inst: { lead: 'trumpet', tone: 'twang16' }, pad: false,
+    melody:
+      'G5:2 -:1 G5:1 Bb5:2 D6:2 -:2 D6:2 C6:2 Bb5:2 | A5:2 Bb5:2 G5:4 D5:8 | Eb5:2 -:1 Eb5:1 G5:2 Bb5:2 -:2 Eb6:2 D6:2 C6:2 | D6:6 C6:2 A5:4 F#5:4 |' +
+      'G5:2 -:1 G5:1 Bb5:2 D6:2 G6:4 F6:2 D6:2 | Eb6:2 D6:2 C6:2 Bb5:2 G5:8 | C6:4 Eb6:2 C6:2 G5:4 Eb5:4 | F#5:2 A5:2 D6:4 -:2 D5:1 D5:1 G5:4',
+    chords: 'Gm Gm Eb D Gm Gm Cm D',
+    voices: [{
+      inst: 'fuzz', v: 1.1,
+      melody: riff('Gm Gm Eb D Gm Gm Cm D', {
+        Gm: 'G2:2 -:1 G2:1 Bb2:2 C3:2 D3:4 -:4', Eb: 'Eb2:2 -:1 Eb2:1 G2:2 Ab2:2 Bb2:4 -:4',
+        D: 'D2:2 -:1 D2:1 F#2:2 G2:2 A2:4 -:4', Cm: 'C3:2 -:1 C3:1 Eb3:2 F3:2 G3:4 -:4',
+      }),
+    }],
+    bass: 'R:2 R:1 R:1 5:2 5:1 5:1 R:2 R:1 R:1 8:2 5:1 5:1',
+    drums: 'K:2 C:1 C:1 S:2 C:1 C:1 K:2 C:1 C:1 S:2 W:2',
+    drumsB: 'K:2 C:1 C:1 S:2 C:1 C:1 K:2 C:1 C:1 A:2 A:2',
+  },
+  // Rodéo : violon de bal, roulements de banjo, sabots
+  rodeo: {
+    title: 'Rodéo au Ranch', style: '16bit', bpm: 140, div: 4, bar: 16, loops: 4,
+    inst: { lead: 'fiddle', comp: 'roll' }, pad: false,
+    melody:
+      'D5:2 G5:2 B5:2 G5:2 D6:2 B5:2 G5:2 B5:2 | A5:2 B5:2 C6:2 B5:2 A5:2 G5:2 E5:2 D5:2 | E5:2 G5:2 C6:2 G5:2 E6:2 C6:2 G5:2 C6:2 | B5:2 C6:2 D6:2 C6:2 B5:2 A5:2 G5:4 |' +
+      'G5:1 A5:1 B5:2 D6:2 B5:2 G5:1 A5:1 B5:2 D6:4 | E6:2 D6:2 B5:2 G5:2 E5:4 G5:4 | F#5:2 A5:2 D6:2 A5:2 F#5:2 A5:2 C6:2 A5:2 | B5:2 A5:2 F#5:2 D5:2 G5:4 -:4',
+    chords: 'G G C C G Em D D',
+    bass: 'R:4 5:4 R:4 5:4',
+    comp: 'c:4 c:4 c:4 c:4',
+    drums: 'K:2 C:1 C:1 H:2 C:1 C:1 K:2 C:1 C:1 H:2 C:1 C:1',
+    drumsB: 'K:2 C:1 C:1 H:2 C:1 C:1 K:2 C:1 C:1 W:2 C:2',
+  },
+  // Duel : trompette solitaire à midi, cloche et tic-tac ; chaque tour est plus pressé
+  midi: {
+    title: 'Midi Pile', style: '16bit', bpm: 90, div: 4, bar: 16, loops: 4, accel: 1.06,
+    inst: { lead: 'trumpet', tone: 'nylon' },
+    melody:
+      'E5:12 A5:2 C6:2 | B5:8 A5:4 E5:4 | F5:12 A5:2 D6:2 | C6:8 A5:4 F5:4 |' +
+      'G#5:8 B5:4 D6:4 | E6:12 -:4 | C6:4 B5:4 A5:4 E5:4 | G#5:4 B5:4 E5:8',
+    chords: 'Am Am Dm Dm E E Am E',
+    bass: 'R:8 -:8',
+    comp: '1:4 -:4 5:4 -:4',
+    drums: 'B:4 H:4 H:4 H:4',
+    drumsB: 'H:4 H:4 H:4 S:2 S:2',
+  },
+  // Où est Charlie : jour de marché, banjo sautillant et accordéon
+  marche: {
+    title: 'Jour de Marché', style: '16bit', bpm: 126, div: 4, bar: 16, loops: 4,
+    inst: { lead: 'banjo', comp: 'squeeze' }, pad: false,
+    melody:
+      'C5:2 F5:2 A5:2 F5:2 C6:4 A5:4 | Bb5:2 A5:2 G5:2 F5:2 D5:4 F5:4 | E5:2 G5:2 Bb5:2 G5:2 C6:4 Bb5:4 | A5:4 G5:2 F5:2 C5:8 |' +
+      'F5:1 G5:1 A5:2 C6:2 A5:2 F6:4 C6:4 | D6:2 C6:2 Bb5:2 A5:2 Bb5:4 D6:4 | C6:2 Bb5:2 G5:2 E5:2 G5:2 Bb5:2 E5:4 | F5:4 A5:2 C6:2 F5:4 -:4',
+    chords: 'F Bb C7 F F Bb C7 F',
+    bass: 'R:4 -:4 5:4 -:4',
+    comp: '-:4 c:4 -:4 c:4',
+    drums: 'K:4 H:2 H:2 K:4 T:4',
+  },
+  // Assaut du fort : clairon de la cavalerie, caisse claire de marche
+  clairon: {
+    title: 'Le Clairon du Fort', style: '16bit', bpm: 120, div: 4, bar: 16, loops: 4, accel: 1.03,
+    inst: { lead: 'trumpet' },
+    melody:
+      'G4:2 -:1 G4:1 C5:2 E5:2 G5:4 E5:4 | C5:2 -:1 C5:1 E5:2 G5:2 C6:8 | D5:2 -:1 D5:1 G5:2 B5:2 D6:4 B5:4 | C6:4 G5:4 E5:4 C5:4 |' +
+      'E5:2 G5:2 C6:2 E6:2 G6:4 E6:4 | F5:2 A5:2 C6:2 F6:2 C6:4 A5:4 | G5:2 B5:2 D6:2 G6:2 F6:2 D6:2 B5:2 G5:2 | C6:4 G5:2 -:1 G5:1 C6:4 -:4',
+    chords: 'C C G C C F G C',
+    bass: 'R:4 5:4 R:4 5:4',
+    comp: '-:2 c:2 -:2 c:2 -:2 c:2 -:2 c:2',
+    drums: 'K:2 S:1 S:1 S:2 S:2 K:2 S:1 S:1 S:2 S:2',
+    drumsB: 'K:2 S:1 S:1 S:2 S:2 K:2 S:1 S:1 S:1 S:1 S:1 S:1',
+  },
+  // Roulotte : galop 8 bits sur la piste de Red Rock
+  roulotte: {
+    title: 'La Roulotte', style: '8bit', bpm: 156, div: 4, bar: 16, loops: 5, accel: 1.04,
+    inst: { lead: 'twang8' }, echoDelay: 3,
+    melody:
+      'D5:2 D5:1 D5:1 F5:2 A5:2 D6:4 C6:2 A5:2 | Bb5:2 A5:2 G5:2 F5:2 E5:4 D5:4 | D5:2 F5:2 Bb5:4 A5:2 G5:2 F5:4 | E5:2 G5:2 C6:4 Bb5:2 A5:2 G5:4 |' +
+      'A5:2 A5:1 A5:1 D6:2 F6:2 E6:2 D6:2 A5:4 | F5:2 G5:2 A5:2 F5:2 D5:8 | Bb5:4 D6:4 F6:4 D6:4 | C#6:2 A5:2 E5:2 C#5:2 A4:2 A4:1 A4:1 -:4',
+    chords: 'Dm Dm Bb C Dm Dm Bb A',
+    bass: 'R:2 R:1 R:1 5:2 5:1 5:1 R:2 R:1 R:1 8:2 5:1 5:1',
+    comp: '-:4 c:2 -:2 -:4 c:2 -:2',
+    drums: 'K:2 C:1 C:1 S:2 C:1 C:1 K:2 C:1 C:1 S:2 W:2',
+    drumsB: 'K:2 C:1 C:1 S:2 C:1 C:1 K:2 C:1 C:1 W:2 O:2',
+  },
+  // La pinte : piano bastringue endiablé, la tournée du patron
+  tournee: {
+    title: 'Tournée Générale', style: '16bit', bpm: 132, div: 4, bar: 16, loops: 4, accel: 1.03,
+    inst: { lead: 'piano' }, pad: false,
+    melody:
+      'B4:2 D5:2 G5:3 D5:1 B5:2 A5:2 G5:4 | G#5:2 B5:2 E6:3 D6:1 B5:2 G#5:2 E5:4 | A5:2 C#6:2 E6:3 C#6:1 G6:2 E6:2 C#6:4 | D6:3 C6:1 A5:2 F#5:2 D5:4 C6:4 |' +
+      'B5:2 D6:2 G6:3 D6:1 B5:2 D6:2 G6:4 | G#6:2 E6:2 D6:2 B5:2 G#5:4 E5:4 | A5:2 C#6:2 E6:4 F#6:2 D6:2 C6:4 | B5:2 A5:2 G5:2 D5:2 G5:4 -:4',
+    chords: 'G E7 A7 D7 G E7 A7.D7 G',
+    bass: 'R:4 -:4 5:4 -:4',
+    comp: '-:4 c:4 -:4 c:4',
+    drums: 'K:4 H:2 H:2 S:4 H:2 H:2',
+  },
+  // La mine : guitare dans le noir, guimbarde, coups de pioche sur l'enclume
+  filon: {
+    title: 'Le Filon', style: '16bit', bpm: 120, div: 4, bar: 16, loops: 4, accel: 1.04,
+    inst: { lead: 'twang16' },
+    melody:
+      'C5:2 Eb5:2 G5:4 F5:2 Eb5:2 D5:4 | Eb5:2 D5:2 C5:4 G4:8 | Ab4:2 C5:2 Eb5:4 Ab5:4 G5:4 | G5:4 F5:2 Eb5:2 D5:4 B4:4 |' +
+      'C6:4 G5:2 Eb5:2 C6:4 D6:4 | Eb6:2 D6:2 C6:2 G5:2 Eb5:8 | F5:2 Ab5:2 C6:4 Ab5:2 F5:2 C5:4 | B4:2 D5:2 G5:4 F5:2 D5:2 B4:4',
+    chords: 'Cm Cm Ab G Cm Cm Fm G',
+    voices: [{
+      inst: 'jawharp',
+      melody: riff('Cm Cm Ab G Cm Cm Fm G', {
+        Cm: 'C3:2 -:2 C3:2 G2:2 -:2 C3:2 -:4', Ab: 'Ab2:2 -:2 Ab2:2 Eb3:2 -:2 Ab2:2 -:4',
+        G: 'G2:2 -:2 G2:2 D3:2 -:2 G2:2 -:4', Fm: 'F2:2 -:2 F2:2 C3:2 -:2 F2:2 -:4',
+      }),
+    }],
+    bass: 'R:4 -:4 R:4 5:4',
+    drums: 'K:4 A:4 K:2 C:2 A:4',
+    drumsB: 'K:4 A:4 K:2 C:2 C:2 C:2',
+  },
+  // Conquête de l'Ouest : grande chevauchée qui se construit, trompette, chœur, chant d'hommes
+  ruee: {
+    title: "La Ruée vers l'Or", style: '16bit', bpm: 108, div: 4, bar: 16, loops: 3,
+    inst: { lead: 'trumpet', pad: 'choir' },
+    melody:
+      'D5:4 F5:4 A5:8 | G5:2 F5:2 E5:2 F5:2 D5:8 | D5:4 F5:4 Bb5:8 | A5:2 G5:2 F5:2 G5:2 D5:8 |' +
+      'C5:4 F5:4 A5:4 C6:4 | Bb5:4 A5:4 F5:8 | E5:4 A5:4 C#6:8 | B5:2 C#6:2 D6:2 C#6:2 A5:8 |' +
+      'D6:6 C6:2 A5:4 F5:4 | E5:4 F5:4 A5:8 | Bb5:6 A5:2 G5:4 D5:4 | G5:4 A5:4 Bb5:8 |' +
+      'D6:6 C6:2 Bb5:4 F5:4 | E5:4 G5:4 C6:8 | D6:4 A5:4 F5:4 D5:4 | E5:4 A5:4 C#6:4 E6:4',
+    chords: 'Dm Dm Bb Bb F F A A Dm Dm Gm Gm Bb C Dm A',
+    voices: [{
+      inst: 'chant', v: 0.8,
+      melody: riff('Dm Dm Bb Bb F F A A Dm Dm Gm Gm Bb C Dm A', {
+        Dm: 'D3:4 -:4 D3:4 -:4', Bb: 'Bb2:4 -:4 Bb2:4 -:4', F: 'F3:4 -:4 F3:4 -:4',
+        A: 'A2:4 -:4 A2:4 -:4', Gm: 'G2:4 -:4 G2:4 -:4', C: 'C3:4 -:4 C3:4 -:4',
+      }),
+    }],
+    bass: 'R:4 R:2 5:2 R:4 8:2 5:2',
+    comp: '1:2 5:2 8:2 5:2 3:2 5:2 8:2 5:2',
+    drums: 'K:4 H:2 H:2 S:4 H:2 H:2',
+    drumsB: 'K:4 H:2 H:2 S:4 S:1 S:1 S:1 S:1',
+  },
+});
+
 const PLAYLISTS = {
-  menu: ['poussiere', 'coyote', 'montre', 'colt'],
-  game: ['duel', 'glas', 'collines', 'cri', 'plomb', 'nocturne'],
+  menu: ['poussiere', 'feu', 'coyote', 'desert', 'montre', 'piano', 'colt', 'cantina'],
+  game: ['duel', 'diligence', 'glas', 'collines', 'train', 'cri', 'plomb', 'vautour', 'nocturne'],
+  // mini-jeux : playMusic('mini-<kind>')
+  'mini-shooter': ['fusillade', 'plomb', 'duel'],
+  'mini-lasso': ['rodeo', 'diligence', 'coyote'],
+  'mini-duel': ['midi', 'glas', 'cri'],
+  'mini-charlie': ['marche', 'piano', 'cantina', 'montre'],
+  'mini-fort': ['clairon', 'collines', 'nocturne'],
+  'mini-wagon': ['roulotte', 'diligence', 'nocturne'],
+  'mini-pinte': ['tournee', 'piano', 'cantina'],
+  'mini-mine': ['filon', 'train', 'vautour'],
+  'mini-rts': ['ruee', 'collines', 'cri', 'vautour', 'glas', 'plomb'],
 };
 const compiled = {};
 const getSong = (id) => (compiled[id] ||= compile(SONGS[id]));
 
 // Vraies musiques : fichiers à déposer dans public/music/ (mp3, ogg, m4a ou wav).
-// Ceux qui sont présents remplacent la playlist synthétisée correspondante,
+// Ceux qui sont présents s'intercalent dans la playlist synthétisée correspondante,
 // passés dans un "crusher" pour sonner 8 bits (NES) ou 16 bits (SNES).
 // Les fichiers des dossiers 8bit/ et 16bit/ sont déjà passés au crusher (ffmpeg) :
 // ils sont joués tels quels, sans le traitement en direct.
@@ -1085,26 +1471,36 @@ const plPos = { menu: 0, game: Math.floor(Math.random() * PLAYLISTS.game.length)
 let wanted = null;
 let current = '';
 
-async function findTrack(file) {
-  // Site statique : pas de listing de dossier, on teste les noms de fichiers attendus.
-  for (const ext of ['mp3', 'ogg', 'm4a', 'wav']) {
-    const url = `music/${file}.${ext}`;
-    try {
-      const r = await fetch(url, { method: 'HEAD' });
-      if (r.ok && (r.headers.get('content-type') || '').startsWith('audio')) return url;
-    } catch {}
-  }
+// Liste des fichiers de public/music/, fournie par le serveur local (npm start, server.js).
+// En ligne, le dossier n'est pas publié (.surgeignore) : on ne cherche rien, pour ne pas remplir la console de 404.
+const LOCAL_HOST = /^(localhost|127\.|\[::1\]$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
+async function musicIndex() {
+  if (!LOCAL_HOST) return null;
+  try {
+    const r = await fetch('music/index.json', { cache: 'no-store' });
+    if (r.ok) return new Set(await r.json());
+  } catch {}
   return null;
 }
 
+// les fichiers trouvés rejoignent la rotation au morceau suivant, sans couper celui en cours
 async function loadCustomMusic() {
   hasCrusher = await crusherReady;
-  await Promise.all(Object.entries(CUSTOM_TRACKS).map(async ([list, tracks]) => {
-    const found = await Promise.all(tracks.map(async ([file, title, style]) => ({ url: await findTrack(file), title, style })));
-    const ok = found.filter((t) => t.url);
+  const have = await musicIndex();
+  if (!have) return;
+  for (const [list, entries] of Object.entries(CUSTOM_TRACKS)) {
+    const ok = entries.map(([file, title, style]) => {
+      const ext = ['mp3', 'ogg', 'm4a', 'wav'].find((e) => have.has(`${file}.${e}`));
+      return { url: ext && `music/${file}.${ext}`, title, style };
+    }).filter((t) => t.url);
     if (ok.length) customFiles[list] = ok;
-  }));
-  if (wanted && customFiles[wanted]) playMusic(wanted, true);
+  }
+}
+
+// playlist jouée : les morceaux synthétisés, avec les fichiers trouvés répartis régulièrement entre eux
+function tracks(name) {
+  const at = (list) => list.map((x, i) => [(i + 0.5) / list.length, x]);
+  return [...at(customFiles[name] || []), ...at(PLAYLISTS[name] || [])].sort((a, b) => a[0] - b[0]).map(([, x]) => x);
 }
 
 function announce(title) {
@@ -1114,6 +1510,105 @@ function announce(title) {
 
 export const currentTrack = () => current;
 
+// ------------------------------------------------------------------ musique dynamique
+// level : intensité 0..1 (0,5 = le morceau tel qu'écrit). Au calme (< 0,35) : son étouffé, sans grosses percussions,
+// un peu plus lent ; sous tension (> 0,75) : couche de percussions en plus, plus rapide.
+// heart : cœur qui bat ; tick : tic-tac d'horloge ; hush : musique presque coupée (face-à-face du duel).
+const MOOD0 = { level: 0.5, heart: false, tick: false, hush: false };
+const mood = { ...MOOD0 };
+const tempo = () => 1 + (mood.level - 0.5) * 0.16;
+
+export function setMood(m = {}) {
+  const next = { ...MOOD0, ...m };
+  if (Object.keys(MOOD0).every((k) => next[k] === mood[k])) return;
+  const retempo = next.level !== mood.level;
+  Object.assign(mood, next);
+  if (!ac) return;
+  applyMood();
+  if (retempo && player) {
+    // on garde la position dans le morceau : la suite est replacée au nouveau tempo
+    const now = ac.currentTime, step = (now - player.loopStart) / player.stepDur;
+    player.stepDur = player.baseDur / tempo();
+    player.loopStart = now - step * player.stepDur;
+  }
+}
+
+function applyMood() {
+  const t = ac.currentTime;
+  moodLP.frequency.setTargetAtTime(mood.level < 0.35 ? 1500 : 18000, t, 0.4);
+  hushG.gain.setTargetAtTime(mood.hush ? 0.2 : 1, t, mood.hush ? 0.5 : 0.25);
+  if (customEl) customEl.playbackRate = mood.level > 0.75 ? 1.04 : 1;
+}
+
+// cœur et horloge, joués par-dessus n'importe quel morceau (fichiers compris)
+let nextBeat = 0, nextTick = 0, tickN = 0;
+function layers() {
+  const now = ac.currentTime, ahead = now + 0.25;
+  if (mood.heart) {
+    nextBeat = Math.max(nextBeat, now + 0.02);
+    for (; nextBeat < ahead; nextBeat += 60 / (mood.level > 0.75 ? 104 : 80)) {
+      tone(nextBeat, 75, 0.14, { f2: 42, gain: 0.5, dest: musicBus });
+      tone(nextBeat + 0.17, 65, 0.2, { f2: 38, gain: 0.38, dest: musicBus });
+    }
+  } else nextBeat = 0;
+  if (mood.tick) {
+    nextTick = Math.max(nextTick, now + 0.02);
+    for (; nextTick < ahead; nextTick += 0.5, tickN++) {
+      tone(nextTick, tickN % 2 ? 1900 : 2500, 0.035, { type: 'triangle', gain: 0.07, dest: musicBus });
+      noise(nextTick, 0.015, { type: 'highpass', f: 5000, gain: 0.05, dest: musicBus });
+    }
+  } else nextTick = 0;
+}
+
+// accord d'orchestre (cuivres et cordes graves) qui passe au-dessus de la musique atténuée
+function stab(notes, t, len, gain) {
+  const flt = ac.createBiquadFilter();
+  flt.type = 'lowpass';
+  flt.frequency.setValueAtTime(2400, t);
+  flt.frequency.exponentialRampToValueAtTime(500, t + len);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(gain * 0.3, t + 0.4);
+  g.gain.exponentialRampToValueAtTime(0.0005, t + len);
+  for (const n of notes) {
+    for (const det of [-9, 9]) {
+      const o = osc('sawtooth', mtof(n), t);
+      o.detune.value = det;
+      o.connect(flt);
+      o.start(t);
+      o.stop(t + len + 0.05);
+    }
+  }
+  flt.connect(g);
+  g.connect(stingBus);
+  g.connect(echoIn);
+}
+
+// Effets ponctuels liés à l'action : 'aim' (la musique retient son souffle pendant sec secondes),
+// 'hit' (balle réelle), 'death' (un joueur tombe), 'blank' (à blanc, soulagement)
+export function musicCue(kind, sec = 1.5) {
+  if (!ac) return;
+  const t = ac.currentTime, g = duckG.gain;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(g.value, t);
+  if (kind === 'aim') {
+    g.linearRampToValueAtTime(0.3, t + 0.4);
+    g.setValueAtTime(0.3, t + sec);
+    g.linearRampToValueAtTime(1, t + sec + 1); // au cas où la suite n'arrive jamais
+  } else if (kind === 'hit' || kind === 'death') {
+    const dead = kind === 'death';
+    g.linearRampToValueAtTime(dead ? 0.03 : 0.12, t + 0.03);
+    g.setValueAtTime(dead ? 0.03 : 0.12, t + (dead ? 2.5 : 1));
+    g.linearRampToValueAtTime(1, t + (dead ? 5 : 2.6));
+    noise(t, 1.2, { f: 400, f2: 60, gain: 0.5, dest: stingBus }); // grosse caisse d'orchestre
+    stab(dead ? [28, 35, 40, 43] : [40, 46, 52], t, dead ? 3.5 : 1.8, dead ? 0.1 : 0.09);
+  } else if (kind === 'blank') {
+    g.linearRampToValueAtTime(1, t + 0.8);
+    [64, 67, 71, 76].forEach((m, i) => tone(t + i * 0.07, mtof(m), 0.5, { type: 'triangle', gain: 0.09, dest: stingBus }));
+  }
+}
+
 export function stopMusic() {
   if (player) { clearInterval(player.timer); player = null; }
   if (customEl) { customEl.pause(); customEl = null; }
@@ -1121,18 +1616,23 @@ export function stopMusic() {
   customNodes = [];
 }
 
-function startSong(p, at) {
-  const id = PLAYLISTS[p.list][plPos[p.list] % PLAYLISTS[p.list].length];
+function startSong(p, id, at) {
   p.song = getSong(id);
   p.loop = 0;
   p.i = 0;
   p.loopStart = at;
-  p.stepDur = 60 / p.song.bpm / p.song.div;
+  p.baseDur = 60 / p.song.bpm / p.song.div;
+  p.stepDur = p.baseDur / tempo();
   announce(p.song.title);
 }
 
 function tick() {
   const p = player;
+  // le morceau suivant est un fichier : il prend la relève à la fin de celui-ci
+  if (p.handoff) {
+    if (ac.currentTime >= p.handoff) playMusic(p.list, true);
+    return;
+  }
   const horizon = ac.currentTime + 0.3;
   let guard = 0;
   while (guard++ < 400) {
@@ -1143,11 +1643,15 @@ function tick() {
       p.loop++;
       if (p.loop >= song.loops) {
         plPos[p.list]++;
-        startSong(p, end + 0.6);
+        const list = tracks(p.list);
+        const next = list[plPos[p.list] % list.length];
+        if (typeof next !== 'string') { p.handoff = end + 0.6; break; }
+        startSong(p, next, end + 0.6);
       } else {
         p.i = 0;
         p.loopStart = end;
-        if (song.accel) p.stepDur /= song.accel;
+        if (song.accel) p.baseDur /= song.accel;
+        p.stepDur = p.baseDur / tempo();
       }
       continue;
     }
@@ -1158,6 +1662,8 @@ function tick() {
     if (e.when === 'odd' && p.loop % 2 === 0) continue;
     if (e.when === 'even' && p.loop % 2 === 1) continue;
     if (t < ac.currentTime - 0.05) continue;
+    if (e.role === 'loud' && mood.level < 0.35) continue;
+    if (e.role === 'boost' && mood.level < 0.75) continue;
     INST[e.fn](...(e.d ? [e.arg, t, e.d * p.stepDur, e.v ?? 1] : [t]));
   }
 }
@@ -1165,24 +1671,29 @@ function tick() {
 export function playMusic(name, force = false) {
   if (!ac) { wanted = name; return; }
   if (!force && wanted === name && (player || customEl)) return;
+  if (wanted !== name) setMood();
   wanted = name;
   stopMusic();
-  if (customFiles[name]) {
-    const list = customFiles[name];
-    const track = list[plPos[name] % list.length];
-    customEl = new Audio(track.url);
-    customEl.loop = list.length === 1;
-    customEl.onended = () => { plPos[name]++; playMusic(name, true); };
-    customNodes = crushChain(customEl, track.style, hasCrusher, isBaked(track.url)); // volume/mute gérés par musicBus et master
-    customEl.play().catch(() => {});
-    announce(track.title);
+  duckG.gain.cancelScheduledValues(ac.currentTime);
+  duckG.gain.setValueAtTime(1, ac.currentTime);
+  plPos[name] ??= 0;
+  const list = tracks(name);
+  if (!list.length) return;
+  const track = list[plPos[name] % list.length];
+  if (typeof track === 'string') {
+    player = { list: name };
+    startSong(player, track, ac.currentTime + 0.1);
+    tick();
+    player.timer = setInterval(tick, 50);
     return;
   }
-  if (!PLAYLISTS[name]) return;
-  player = { list: name };
-  startSong(player, ac.currentTime + 0.1);
-  tick();
-  player.timer = setInterval(tick, 50);
+  customEl = new Audio(track.url);
+  customEl.loop = list.length === 1;
+  customEl.onended = () => { plPos[name]++; playMusic(name, true); };
+  customNodes = crushChain(customEl, track.style, hasCrusher, isBaked(track.url)); // volume/mute gérés par musicBus et master
+  customEl.playbackRate = mood.level > 0.75 ? 1.04 : 1;
+  customEl.play().catch(() => {});
+  announce(track.title);
 }
 
 // passe au morceau suivant de la playlist en cours
@@ -1325,7 +1836,18 @@ const SFX = {
   go(t) { tone(t, 1320, 0.25, { type: 'square', gain: 0.07 }); tone(t, 660, 0.25, { type: 'square', gain: 0.05 }); },
 };
 
+// Limiteur : chaque bruitage crée plusieurs générateurs qui durent jusqu'à une seconde. Avec une arme
+// automatique ou une salve d'explosions, des dizaines se superposaient et saturaient les téléphones.
+// Un même son au plus toutes les 40 ms, et au plus 14 bruitages lancés par quart de seconde.
+const sfxLast = {};
+const sfxRecent = [];
 export function sfx(name, delay = 0) {
-  if (!ac || !SFX[name]) return;
+  if (!ac || !SFX[name] || document.hidden) return;
+  const now = performance.now();
+  if (!delay && now - (sfxLast[name] || -1e9) < 40) return;
+  while (sfxRecent.length && now - sfxRecent[0] > 250) sfxRecent.shift();
+  if (sfxRecent.length >= 14) return;
+  sfxRecent.push(now);
+  if (!delay) sfxLast[name] = now;
   SFX[name](ac.currentTime + delay);
 }

@@ -1,6 +1,5 @@
-# 🤠 Buckshot Saloon
+# Buckshot Saloon
 
-Clone multijoueur de *Buckshot Roulette* dans un saloon du Far West, en pixel art 16 bits.
 
 ## Installation
 
@@ -67,11 +66,18 @@ En partie, appuie sur **Entrée** pour envoyer un message dans le chat.
 
 Par les fenêtres, on voit l'heure et la météo de l'ambiance : soleil, aube, coucher de soleil, nuit étoilée, orage avec éclairs et tonnerre, poussière ou neige. On y voit aussi passer des nuages, des vautours, un virevoltant ou un cavalier au loin. L'éclairage de la pièce suit l'ambiance : rayons de soleil par la fenêtre le jour, lampes plus vives la nuit.
 
+## Sur téléphone
+
+- **Installer l’app** : le bouton « Installer l’app sur ce téléphone » du menu ouvre la fenêtre d’installation (Android). Sur iPhone, dans Safari : Partager, puis « Sur l’écran d’accueil ». L’app s’ouvre alors en plein écran.
+- Les commandes tactiles (stick, boutons) apparaissent dès qu’on joue au doigt. Le paysage donne l’image la plus grande.
+- `public/sw.js` (service worker) : le réseau d’abord pour le code, le cache seulement hors ligne ou si le réseau traîne, ce qui garde l’hôte et les joueurs sur la même version. `public/music` n’est jamais mis en cache. Les polices sont hébergées dans `public/fonts`.
+- Stabilité : animations plafonnées à 60 images/s, bruitages limités, cache du texte pixel borné et canvas libérés dès qu’ils ne servent plus (Safari plante au-delà de sa limite de mémoire canvas).
+
 ## Mini-jeux (2 à 4 joueurs)
 
 Une table accueille jusqu'à 4 joueurs. Dans le lobby, l'hôte choisit le jeu : la **Roulette** ou le **Duel** (à deux exactement), ou un mini-jeu à plusieurs. En solo, les mini-jeux opposent le joueur à 3 bots (un seul pour le duel).
 
-**Ambiances** : la Fusillade, le Lasso, le Duel, « Où est Charlie ? », l'Assaut du fort et la Roulotte se jouent chaque fois sous une ambiance tirée au hasard, annoncée pendant le compte à rebours et la même pour toute la table (`public/js/env.js`) :
+**Ambiances** : la Fusillade, le Lasso, le Duel, « Où est Charlie ? », l'Assaut du fort, la Roulotte et la Conquête de l'Ouest se jouent chaque fois sous une ambiance tirée au hasard, annoncée pendant le compte à rebours et la même pour toute la table (`public/js/env.js`) :
 
 | Ambiance | Ce qui change |
 |---|---|
@@ -85,15 +91,22 @@ Une table accueille jusqu'à 4 joueurs. Dans le lobby, l'hôte choisit le jeu : 
 
 « Où est Charlie ? » n'a ni orage ni tempête de poussière (la foule doit rester lisible), et la nuit y est plus douce.
 
-### Fusillade (rail shooter, 99 s)
+### Fusillade (rail shooter, 2 min 30)
 
-La caméra avance toute seule. On descend du train à la **gare** de Dusty Gulch (bâtiment, château d'eau, train à quai : bandits aux fenêtres, aux portes et sur le toit des wagons), on traverse la grand-rue, et on pousse les portes battantes du saloon, au bout de la rue, pour le face-à-face avec El Diablo.
-La rue change à chaque partie : les façades sont tirées au hasard parmi 15 (banque, bazar, hôtel, shérif, barbier, croque-mort, télégraphe, écurie, église et son clocher, prison, armurier, docteur, forge, théâtre, laverie), avec leur largeur, leur hauteur, leur couleur, leur fronton, leurs auvents, les ruelles, le château d'eau et les abris. Le saloon ferme toujours la rue. Le Duel se joue lui aussi devant une rue tirée au hasard.
+La caméra avance toute seule. On descend du train à la **gare** de Dusty Gulch (bâtiment, château d'eau, train à quai : bandits aux fenêtres, aux portes et sur le toit des wagons), on traverse **les abords de la ville**, puis la grand-rue, et on pousse les portes battantes du saloon, au bout de la rue, pour le face-à-face avec El Diablo.
+Le train change à chaque partie : voitures de voyageurs, wagons de marchandises (grande porte coulissante, lucarnes) et wagons à bestiaux (bœufs derrière la claire-voie).
+Les abords de la ville sont tirés au sort parmi trois variantes (`public/js/shooteredge.js`), chacune avec son coup dur :
+
+- **Boot Hill** : le cimetière, sa chapelle et son clocher, un mausolée, une crypte, l'arbre aux pendus, un corbillard et la maison du fossoyeur ; bandits derrière les tombes et les croix. Coup dur : **embuscade au cimetière**.
+- **Le ranch** : la ferme et son porche, l'éolienne, l'enclos et ses vaches, la grange et son grenier à foin, le silo, la remise. Coup dur : **cavaliers**.
+- **La mine d'or** : le bureau des essais, deux galeries dans la falaise, le chevalement et sa molette, le moulin à bocards, le baraquement, les wagonnets sur leurs rails et les caisses de TNT. Coup dur : **dynamite**.
+
+La rue change à chaque partie : les façades sont tirées au hasard parmi 15 (banque, bazar, hôtel, shérif, barbier, croque-mort, télégraphe, écurie, église et son clocher, prison, armurier, docteur, forge, théâtre, laverie), avec leur largeur, leur hauteur, leur couleur, leur fronton, leurs auvents, les ruelles, le château d'eau et les abris. Le saloon ferme toujours la rue. La grand-rue a droit à un autre coup dur (cavaliers ou dynamite). Le Duel se joue lui aussi devant une rue tirée au hasard.
 Les bandits surgissent des fenêtres, des portes, des toits et de derrière les abris ; un cercle à la couleur du joueur visé se resserre avant qu'ils tirent.
 
 - Souris : viser · clic : tirer (6 balles) · clic droit, **R** ou **Espace** : recharger
-- Bandit +100 · bandit sur un toit ou dans le clocher +150 · bouteille +50 · El Diablo +50 par balle, +500 pour l'abattre
-- Civil (mains en l'air) ou prospecteur −100 · se faire tirer dessus −50
+- Bandit +100 · bandit sur un toit ou dans le clocher +150 · cavalier +150 · bâton de dynamite abattu en vol +75 · bouteille +50 · El Diablo +50 par balle, +500 pour l'abattre
+- Civil (mains en l'air) ou prospecteur −100 · se faire tirer dessus −50 · dynamite qui touche le sol −75 pour tout le monde
 
 **El Diablo** s'annonce par des battements de cœur, des bandes noires et son avis de recherche, puis surgit au balcon dans un coup de tonnerre. Une fois et demie plus grand que ses hommes, entouré d'une aura rouge, il arpente tout le balcon avec ses deux revolvers ; sa jauge en haut de l'écran a une case par point de vie. À mi-vie, il est **enragé** (jauge orange, aura plus vive). Abattu, il bascule par-dessus la rambarde.
 
@@ -119,13 +132,15 @@ Les armes remplacent le revolver jusqu'à la fin de leur temps ou de leur charge
 **Décor destructible et vivant** (purement visuel : chacun voit casser ce que lui et les autres touchent) :
 
 - **À casser** : vitres (éclats restés dans le cadre), pots de fleurs qui tombent du rebord, lanternes qui chutent et brûlent un instant, enseignes suspendues (elles se balancent, pendent par une chaîne, puis tombent au troisième tir), tonneaux et abreuvoirs qui fuient et font une flaque, horloge de la gare (les aiguilles s'arrêtent), phare de la locomotive, miroir du bar qui se fêle, lustres du saloon (ils oscillent, puis s'écrasent au sol et la salle s'assombrit).
-- **Ce qui bouge** : oiseaux sur les toits et les wagons qui s'envolent quand une balle passe près d'eux, poules qui picorent puis détalent, chien qui dort puis s'enfuit, chat sur un rebord ou sur le comptoir du saloon, fumée des cheminées (plus noire à la forge), girouettes, drapeaux, linge qui sèche près de la laverie, vapeur de la locomotive, touches du pianola qui s'enfoncent toutes seules, fumée de cigare près des tables.
+- **Ce qui bouge** : oiseaux sur les toits et les wagons qui s'envolent quand une balle passe près d'eux, poules qui picorent puis détalent, chien qui dort puis s'enfuit, chat sur un rebord ou sur le comptoir du saloon, fumée des cheminées (plus noire à la forge), girouettes, drapeaux, linge qui sèche près de la laverie, vapeur de la locomotive, touches du pianola qui s'enfoncent toutes seules, fumée de cigare près des tables ; aux abords : corbeaux sur l'arbre mort et les croix, vaches qui broutent puis détalent, éolienne, molette du chevalement.
 
 **Retournements de situation** (tirés de la graine : toute la table vit les mêmes) :
 
 - **Attaque du train !** : à la gare, une salve de bandits jaillit, plusieurs sur le toit des wagons.
-- **Embuscade !** : pendant un arrêt dans la rue, cinq bandits surgissent d'un coup et tirent vite.
-- **Prime doublée** : pendant 8 s, chaque bandit (et El Diablo) rapporte deux fois plus ; le compte à rebours s'affiche dans le bandeau du haut.
+- **Embuscade !** : pendant un arrêt dans la rue (ou au cimetière de Boot Hill), cinq bandits surgissent d'un coup et tirent vite.
+- **Cavaliers en vue !** : trois ou quatre bandits à cheval traversent l'écran au galop, dans un sens puis dans l'autre, et tirent en passant. Abattu, le cavalier vide les étriers et son cheval s'enfuit.
+- **Dynamite !** : des bandits surgissent, un bâton allumé à la main, et le lancent vers les joueurs. Abattez-le en vol (+75) ; s'il touche le sol, il explose et tout le monde perd 75 pts (sauf sous l'étoile du shérif). Abattre le lanceur avant qu'il lance désamorce son bâton.
+- **Prime doublée** : pendant 8 s, aux abords ou dans la rue, chaque bandit, cavalier (et El Diablo) rapporte deux fois plus ; le compte à rebours s'affiche dans le bandeau du haut.
 - **Panne de lumière** : au saloon, 6 s dans le noir ; seule une lueur autour du viseur, et chaque coup de feu éclaire la salle un instant.
 - **Pari sur El Diablo** : à son arrivée, appuie sur **B** pour miser 200 $. Celui qui l'abat empoche 1 000 $ ; les autres parieurs perdent leur mise (et tout le monde la perd s'il s'en sort).
 - **Rattrapage** : quand quelqu'un mène de 150 pts ou plus, les bandits le visent plus souvent (la couleur du cercle montre qui est visé). Le dernier, s'il a au moins 300 pts de retard, reçoit des **renforts** : un barillet de 8 balles qui se recharge plus vite.
@@ -215,19 +230,128 @@ Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour
 - Fin de manche : chaque chope encore sur le comptoir rapporte 100 pts moins son écart au bout, en cm. La plus proche offre la tournée : +50. Une chope tombée ne rapporte rien.
 - Une chope trop à gauche ou trop à droite tombe derrière le comptoir ou devant. Celle qui passe le bout s'écrase sur le plancher.
 - Les chopes restent sur le comptoir pendant la manche, et elles s'entrechoquent : on peut pousser celle d'un adversaire dans le vide, ou la sienne un peu plus près du bout. L'ordre de passage tourne à chaque manche, car le dernier à lancer a l'avantage.
-- À partir de la 2e manche, de la bière renversée fait parfois une flaque sur le comptoir : la chope y glisse plus loin, il faut doser moins fort.
+- **Le barman change de bière** à chaque lancer (à partir de la 2e manche), et tout le monde voit ce qu'on te sert :
+  - blonde : la classique ;
+  - brune : lourde, elle pousse fort les autres chopes ;
+  - petit whisky : petit et léger, facile à dégager ;
+  - mousseuse : elle freine moins et glisse plus loin ;
+  - chope du mineur : énorme et très lourde, un vrai mur.
+- **Chaque manche a ses surprises** à partir de la 2e (une ou deux, annoncées au début et rappelées en haut à droite). Elles sont tirées selon la salle et la météo :
+  - flaque de bière : on y glisse plus loin ;
+  - sciure : on y freine ;
+  - courant d'air par la fenêtre : il pousse les chopes de côté dans une zone, plus fréquent dans la tempête de poussière, sous l'orage ou la neige ;
+  - portes battantes : vent dans le dos ou de face sur tout le comptoir ;
+  - comptoir ciré, ou gelé sous la neige : tout glisse plus ;
+  - virage du train : dans le wagon-bar, tout penche d'un côté ;
+  - bouteilles oubliées : des obstacles sur lesquels les chopes rebondissent ;
+  - pièce d'or : +30 pour la première chope qui passe dessus.
+- **Dernière tournée** : la dernière manche compte double.
 - 5 manches à deux, 4 à trois, 3 à quatre. Les craies sur le comptoir marquent 10, 25, 50 et 100 cm du bout.
 
 La glissade est simulée pas à pas, de la même façon dans chaque navigateur (`public/js/pintegame.js`) : seuls la direction et la puissance passent par l'hôte.
 
-### La mine (60 s, en wagonnet)
+### La mine (course en wagonnet, environ 1 min)
 
-Chacun file en wagonnet dans les galeries d'une mine. Trois voies superposées sont reliées par des **embranchements** : on prépare l'aiguillage, et le wagonnet change de voie au prochain embranchement. Après chaque embranchement, une des deux voies est bouchée : à toi de prendre la bonne, où l'or t'attend. Le wagonnet accélère au fil du trajet, du puits jusqu'à la sortie.
+Une course en wagonnet, du puits jusqu'à la sortie de la mine. Trois voies sont reliées par des **embranchements** : on prépare l'aiguillage, et le wagonnet change de voie au prochain embranchement. Après chaque embranchement, une des deux voies est bouchée : à toi de prendre la bonne, où l'or t'attend. Chaque wagonnet roule à sa propre vitesse, qui augmente au fil de la descente.
 
-- Flèches **haut** / **bas** (**Z** / **S**) ou clic au-dessus / au-dessous du wagonnet : préparer l'aiguillage (une flèche jaune clignote près du wagonnet, et le levier de l'embranchement s'allume). **Espace** ou clic droit : aiguillage au neutre.
-- Pépite +10 · grosse pépite +25 · diamant +50
-- Éboulis, poutre tombée, tonneau, wagonnet renversé −20 · caisse de TNT −40 (le score ne descend pas sous 0). Après un choc, le wagonnet tangue 0,9 s et l'aiguillage ne répond plus.
-- Tout le monde roule sur le même parcours (tiré de la graine, `public/js/minegame.js`) à la même vitesse : les autres joueurs apparaissent en fantômes, et chacun ramasse son or. Le parcours a toujours une issue : un pilote parfait ne touche rien.
+La course passe par **4 étapes**, chacune filmée autrement. Un bandeau annonce chaque nouvelle étape :
+
+| Étape | Caméra | Particularités |
+|---|---|---|
+| 1. Les galeries | De côté | Éboulements qui tombent du plafond au dernier moment, nuées de chauves-souris |
+| 2. La descente | De derrière le wagonnet, en fausse 3D | Ça va plus vite (pente), accélérateurs fréquents |
+| 3. Le gouffre | De côté, en plan large | Ponts de bois sur tréteaux au-dessus d'une rivière souterraine, rails cassés, tremplins |
+| 4. La sortie | De derrière, vers la lumière au bout du tunnel | Ligne droite couverte d'or |
+
+À la sortie, on passe dehors, au soleil (selon l'ambiance de la partie). Les wagonnets se rangent par ordre d'arrivée, avec le classement et les temps. La partie s'arrête quand tout le monde est sorti, ou au bout de 95 s.
+
+- Flèches (**Z Q S D**) ou clic : préparer l'aiguillage. De côté, **haut** ou un clic au-dessus du wagonnet vise la voie du dessus ; de derrière, **gauche** ou un clic à gauche vise la voie de gauche (haut et gauche marchent dans les deux vues). Une flèche jaune clignote près du wagonnet, et le levier de l'embranchement s'allume. **Espace** ou clic droit : aiguillage au neutre.
+- Sur les rails :
+  - **Accélérateur** (chevrons dorés) : turbo, vitesse ×1,6 pendant 2,6 s.
+  - **Flaque de boue** : vitesse ×0,55 pendant 2 s.
+  - **Tremplin** : le wagonnet saute et passe par-dessus tout ce qui suit sur 140 px (obstacle, rail cassé, or compris).
+- Pépite +10 · grosse pépite +25 · diamant +50.
+- Éboulis, éboulement, poutre tombée, tonneau, wagonnet renversé −20 · rail cassé −30 · caisse de TNT −40 (le score ne descend pas sous 0). Après un choc, le wagonnet tangue et freine pendant 0,9 s, et l'aiguillage ne répond plus.
+- Bonus d'arrivée : 1er +150, 2e +100, 3e +60, 4e +30. Le classement final se fait aux points (or, chocs et bonus d'arrivée).
+- Le parcours est tiré de la graine (`public/js/minegame.js`) : chaque navigateur simule son wagonnet et envoie sa position. Les autres joueurs apparaissent en fantômes, et chacun ramasse son or. L'hôte vérifie que les positions annoncées sont possibles. Rien n'est posé près des changements d'étape, et le parcours a toujours une issue : un pilote parfait ne touche rien.
+
+### Conquête de l'Ouest (mini-RTS, 7 min, chacun pour soi)
+
+Chaque joueur tient un **fort** sur une grande carte (768 × 432 px, l'écran en montre une partie). Le **décor** est tiré au hasard à chaque partie, ainsi que la place des forts (face à face ou en diagonale à deux joueurs) ; l'ambiance (heure, météo) est choisie pour aller avec le décor :
+
+| Décor | Terrains et disposition |
+|---|---|
+| La prairie | Herbe, désert, champs de cactus, mesas, bosquets et collines ; une rivière du nord au sud qu'on traverse aux gués et aux ponts |
+| Le grand canyon | Terre rouge, longues crêtes rocheuses percées de défilés, buttes et collines ; pas d'eau |
+| La sierra enneigée | Neige, prairies d'altitude, forêts de pins, montagnes ; un lac gelé au centre et deux torrents qu'on passe aux ponts et aux gués |
+| Le bayou | Herbe grasse, marais, cyprès, mares ; un large bras d'eau boueuse aux ponts de bois |
+| Les salines | Croûte de sel, sable, aiguilles rocheuses ; un grand lac salé (et son îlot) au milieu |
+
+| Terrain | Effet |
+|---|---|
+| Prairie, désert, neige | On y bâtit ; le désert et la neige ralentissent un peu |
+| Croûte de sel | On y file plus vite (× 1,2) |
+| Colline | Un peu lente ; **+10 de portée** pour les pistoleros, les tireurs et les tours qui s'y trouvent |
+| Bois | Lent, on n'y bâtit pas ; les unités à couvert prennent **35 % de dégâts en moins** |
+| Cactus, marais | Lents (le marais, très lent), on n'y bâtit pas |
+| Gué, pont | Les seuls passages sur l'eau |
+| Rochers, eau | Infranchissables |
+
+Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près de chaque fort, un filon de minerai un peu plus loin, et les plus riches au milieu, là où l'on se bat. Les forts sont toujours reliés (au besoin, un pont ou un défilé est taillé).
+
+- **Écran** : en haut, tes ressources avec leurs icônes et leurs revenus (or, vivres, population, PV du fort) et ton chantier ou l'ordre de ton armée. En bas, le panneau de commandes suit la sélection : sans sélection, les bâtiments et les recrues ; avec des unités, leurs fiches (nombre, galons, PV et expérience d'une unité seule) et leurs ordres ; avec un bâtiment, sa fiche, son amélioration, ses recrues et ses entraînements. À droite, toujours : **Tous** (choisir toute l'armée), **Défendre**, les boutons d'attaque et la **mini-carte**. Chaque bouton a sa bulle d'aide. Le survol d'une unité, d'un bâtiment ou d'un terrain particulier affiche ce qu'il est.
+- **Caméra** : **glisser** sur la carte (clic gauche ou bouton du milieu maintenu) pour la déplacer, flèches, bords de l'écran (après un court arrêt), mini-carte (clic ou glissé) ; **molette** : zoomer et dézoomer vers le pointeur (5 crans, de × 0,5, presque toute la carte, à × 2), aussi avec **+** / **=** et **)** / **_** (ou Page préc. / Page suiv.) ; Maj + molette : de côté ; **H** : retour au fort (et le choisit) ; **Espace** : là où l'on t'attaque. Au doigt : on glisse sur la carte, on pince à deux doigts pour zoomer.
+- **Choisir ses unités** : clic sur une unité, ou **Maj + glisser** (ou Ctrl + glisser) pour tirer un cadre ; Maj + clic : ajouter ou retirer ; double-clic : toutes celles de ce type à l'écran ; **T** : toute l'armée ; **Échap** : plus rien. Au doigt : toucher ses unités (deux fois : toutes celles de ce type), ou **Tous**.
+- **Ordres à la sélection** : clic droit sur la carte, elles y vont sans s'arrêter (pour se replier ou contourner), puis gardent la place ; clic droit sur un ennemi (unité ou bâtiment), elles s'acharnent sur lui ; sur ton fort, elles rentrent. **Charger** (**C** puis clic, ou Maj + clic droit) : elles y vont en tirant sur tout ce qu'elles croisent. **Tenir** (**S**) : elles ne bougent plus et tirent à portée. **Halte** (**X**) : elles s'arrêtent et gardent la place (en poursuivant un peu les ennemis qui approchent). Défendre et Attaquer valent alors pour la sélection seulement. Au doigt : toucher la carte ou un ennemi. Les unités se rangent en formation, et la portée d'une unité seule s'affiche.
+- **Ordres à toute l'armée** (sans sélection) : clic droit sur la carte, elle s'y rend en combattant ; sur un ennemi ou bouton à ses couleurs, elle attaque son fort ; **Défendre** (**D**), elle rentre. Ces ordres annulent les ordres particuliers. Les nouvelles recrues suivent l'ordre général.
+- **Construire** : clic sur un bâtiment du panneau (ou **1** à **6**, ou la rangée du haut en AZERTY), puis sur la carte. On bâtit dans son territoire (pointillés) : autour du fort, et autour des mines et des tours, qui l'étendent vers les filons lointains. Clic droit ou **Échap** : annuler.
+- **Pas de spam** : un seul chantier à la fois (construction ou amélioration), chaque bâtiment de plus du même type coûte plus cher, leur nombre est limité, et bâtir ne rapporte pas de points.
+
+  | Bâtiment | Or (+ par exemplaire) | Max | Chantier | Effet | Améliorations (niv. 2 / niv. 3) |
+  |---|---|---|---|---|---|
+  | Fort | | | | Or +1,5/s, tire sur les ennemis proches | 160 or, 12 s / 300 or, 16 s |
+  | Mine | 60 (+15) | 8 | 6 s | Sur un filon : or +2,6/s (filon d'or) ou +1,4/s (minerai) ; étend le territoire | 70 or, 7 s / 130 or, 9 s |
+  | Ranch | 50 (+25) | 4 | 5 s | Vivres +1,1/s et **+5 places** dans l'armée | 60 or, 6 s / 110 or, 8 s |
+  | Plantation | 60 (+30) | 4 | 5 s | Or +0,9/s et vivres +0,6/s | 60 or, 6 s / 110 or, 8 s |
+  | Écurie | 100 (+80) | 2 | 8 s | Débloque les cavaliers | 90 or, 9 s / 170 or, 12 s |
+  | Armurerie | 120 (+90) | 2 | 9 s | Débloque les tireurs et les dynamiteurs | 100 or, 9 s / 180 or, 12 s |
+  | Tour de guet | 80 (+30) | 5 | 7 s | Tire sur les ennemis proches ; étend le territoire | 70 or, 7 s / 130 or, 9 s |
+
+- **Améliorer** : clic sur un de ses bâtiments, puis **Amélio.** (ou **U**). Chaque bâtiment monte deux fois : PV × 1,35 puis × 1,75 ; production (or, vivres) × 1,4 puis × 1,8 ; tir des forts et des tours × 1,45 puis × 1,9 et +8 puis +16 de portée ; recrues 20 % puis 35 % plus rapides au fort, à l'écurie et à l'armurerie ; +2 puis +4 places par ranch. Chaque niveau change l'allure du bâtiment (le bouton d'amélioration en montre l'aperçu) :
+
+  | Bâtiment | Niveau 2 | Niveau 3 |
+  |---|---|---|
+  | Fort | Blockhaus d'angle à toit, maison à étage, soubassement de pierre, trois drapeaux | Fort de pierre crénelé, tours rondes, donjon, canon au-dessus de la porte |
+  | Mine | Chevalement en bois dont la molette tourne, second wagonnet, lampe | Chevalement d'acier, machine à vapeur qui fume, tas d'or |
+  | Ranch | Silo, grenier à foin, une vache de plus | Éolienne dont les pales tournent, abreuvoir |
+  | Plantation | Champ plus grand, épouvantail, grange | Château d'eau et rigoles d'irrigation |
+  | Écurie | Grenier à foin, selle sur la barrière | Soubassement de pierre, lanterneau et girouette, cheval blanc |
+  | Armurerie | Forge et sa cheminée, caisses de fusils, enclume | Parapet crénelé, drapeau, canon devant la porte |
+  | Tour de guet | Plus haute, toit à ses couleurs, lanterne, échelle | Base de pierre, sommet crénelé, mitrailleuse |
+
+- **Recruter** : boutons d'unités (ou **A Z E R**) ; avec un bâtiment choisi, la recrue sort de celui-là. Il faut l'or et les vivres, et la recrue met quelques secondes à sortir (file de 5 par bâtiment). Population : 10, +5 par ranch (et +2 par niveau du ranch), 40 au plus. Chaque unité en contre une autre (dégâts × 1,6).
+
+  | Unité | Coût | Points forts | Entraînements |
+  |---|---|---|---|
+  | Pistolero (fort) | 25 or, 15 vivres | Polyvalent, fort contre les cavaliers | Colts nickelés, Tir en éventail |
+  | Cavalier (écurie) | 45 or, 30 vivres | Rapide et solide, fort contre les tireurs | Selles de cuir, Mustangs sauvages (+8 % de vitesse chacun) |
+  | Tireur (armurerie) | 40 or, 20 vivres | Tire de loin, fragile, fort contre les pistoleros | Lunettes de visée, Winchester (+6 de portée chacun) |
+  | Dynamiteur (armurerie) | 55 or, 25 vivres | Rase les bâtiments | Mèches courtes, Nitroglycérine (dynamite +25 % chacun) |
+
+- **Entraîner** (au bâtiment qui recrute l'unité, bouton à la flèche verte) : deux niveaux par type d'unité, 90 or et 40 vivres (12 s) puis 170 or et 80 vivres (18 s) ; le second demande le bâtiment au niveau 2. Chaque niveau : +18 % de PV et de dégâts pour ce type, y compris les unités déjà sur pied. Les petits carrés verts des boutons montrent le niveau atteint. Chaque entraînement change aussi la tenue des unités (le bouton d'entraînement en montre l'aperçu) :
+
+  | Unité | Entraînement 1 | Entraînement 2 |
+  |---|---|---|
+  | Pistolero | Feutre clair, gilet de cuir, foulard rouge, colt nickelé | Chapeau noir à bande d'argent, cache-poussière, deux colts |
+  | Cavalier | Couverture de selle à ses couleurs, selle, bride | Mustang pie à crinière noire, poncho rayé |
+  | Tireur | Lunette de visée | Winchester plus longue, cartouchière, cache-poussière gris |
+  | Dynamiteur | Casque de mineur et sa lampe, sacoche | Lunettes, bâtons sur la poitrine, fiole de nitroglycérine |
+
+- **Expérience** : les unités gagnent des points en infligeant des dégâts et en abattant des ennemis, et prennent du galon : **vétéran** (6 points), **élite** (15), **légende** (30). Chaque galon : +12 % de PV (et un peu de soin), +15 % de dégâts, un peu plus de vitesse. Les galons s'affichent en carrés dorés au-dessus de la tête ; une élite porte une étoile sur la poitrine, une légende aussi une bande dorée au chapeau ; une unité seule choisie montre sa barre d'expérience.
+- Forts et tours se défendent seuls, et les bâtiments se réparent après 8 s sans dégâts (le fort plus vite).
+- Un fort rasé élimine son joueur (ses bâtiments et ses unités disparaissent). Le dernier fort debout gagne ; au bout de 7 min, le meilleur score l'emporte (ennemi abattu +10, bâtiment rasé +40, fort rasé +300, plus 1 point par 10 or produits).
+- En solo, contre 3 bots qui suivent les mêmes règles : ils développent leur économie, s'étendent avec des tours vers les filons, améliorent leur fort et leurs mines, entraînent leurs unités les plus nombreuses et n'attaquent pas avant 2 min 30.
+- Ici l'hôte simule toute la partie (`public/js/rtsgame.js` : décors, carte, chemins, combats, expérience, bots) et envoie 2 instantanés par seconde ; chaque navigateur recalcule la carte depuis la graine et lisse les déplacements (`public/js/rts.js`).
 
 Comment ça marche : l'hôte envoie une graine, et chaque navigateur génère exactement les mêmes cibles et les mêmes animaux (`public/js/worlds.js`), y compris toute la foule d'« Où est Charlie ? » et le trajet de chaque passant.
 Seuls les coups passent par l'hôte, qui arbitre au premier arrivé (`public/js/mini.js`, `public/js/fortgame.js` pour l'assaut du fort, `public/js/wagongame.js` pour la roulotte et `public/js/minegame.js` pour la mine) ; les viseurs et les chevaux des autres sont diffusés en direct à toute la table.
@@ -239,14 +363,33 @@ Les résultats des mini-jeux apparaissent dans l'historique et les compteurs `mg
 
 La musique est composée pour le jeu, façon western spaghetti, et synthétisée en chiptune en WebAudio :
 
-- **Menu** : Poussière de l'Ouest (16 bits, sifflement et sabots), Le Saloon du Coyote (16 bits, trompette mariachi et guitare twang), La Montre à Gousset (16 bits, valse à la boîte à musique, guimbarde, sifflement qui répond, tic-tac et cloche), Le Colt du Shérif (16 bits, ballade de cow-boy : guitare espagnole grattée, basse qui alterne, harmonica)
-- **Partie** : Duel au Soleil (8 bits, galop, accélère à chaque tour), Le Glas de Boot Hill (16 bits, cloche, trompette et cordes), L'Or des Collines (16 bits, voix de soprano sans paroles sur une harpe obstinée et un chœur, roulements de caisse claire qui montent), Le Cri du Coyote (16 bits, ocarina, cri « aah-ii-ah », guitare saturée, sabots, tambourin et fouet), Sous le Soleil de Plomb (16 bits, sifflement, chant d'hommes en coups de poing, enclume, cloche et fouet au galop), Chevauchée Nocturne (8 bits, guitare twang, guimbarde, galop qui accélère)
+- **Menu** : Poussière de l'Ouest (16 bits, sifflement et sabots), Le Saloon du Coyote (16 bits, trompette mariachi et guitare twang), La Montre à Gousset (16 bits, valse à la boîte à musique, guimbarde, sifflement qui répond, tic-tac et cloche), Le Colt du Shérif (16 bits, ballade de cow-boy : guitare espagnole grattée, basse qui alterne, harmonica), Le Feu de Camp (16 bits, valse à l'harmonica, guitare grattée, violon lointain, le bois crépite), Nuit sur le Désert (16 bits, ocarina, harpe et chœur lointain, grillons et coyote), Le Piano du Saloon (16 bits, ragtime au piano bastringue), La Cantina de Rosita (16 bits, polka à l'accordéon et tambourin)
+- **Partie** : Duel au Soleil (8 bits, galop, accélère à chaque tour), Le Glas de Boot Hill (16 bits, cloche, trompette et cordes), L'Or des Collines (16 bits, voix de soprano sans paroles sur une harpe obstinée et un chœur, roulements de caisse claire qui montent), Le Cri du Coyote (16 bits, ocarina, cri « aah-ii-ah », guitare saturée, sabots, tambourin et fouet), Sous le Soleil de Plomb (16 bits, sifflement, chant d'hommes en coups de poing, enclume, cloche et fouet au galop), Chevauchée Nocturne (8 bits, guitare twang, guimbarde, galop qui accélère), La Diligence (16 bits, violon endiablé, roulements de banjo, sabots et fouet), Le Train de Minuit (8 bits, rythme de locomotive et sifflet du train), Le Vautour (16 bits, violon qui s'étire, banjo qui égrène, cœur qui bat de plus en plus vite)
+- **Mini-jeux** : chacun a sa playlist, qui commence par son propre thème puis enchaîne des morceaux de la même couleur :
 
-Ce sont des compositions originales : elles reprennent les sonorités des grands westerns (sifflement, voix de soprano, chœur, ocarina, guitare saturée, guimbarde, boîte à musique, guitare espagnole, trompette mariachi, cloche, fouet, enclume), pas leurs mélodies.
+| Mini-jeu | Thème | Puis |
+|---|---|---|
+| Fusillade | Fusillade à Dodge City (trompette, guitare saturée, galop, enclume) | Sous le Soleil de Plomb, Duel au Soleil |
+| Rodéo au lasso | Rodéo au Ranch (violon de bal, banjo, sabots) | La Diligence, Le Saloon du Coyote |
+| Duel | Midi Pile (trompette solitaire, cloche, tic-tac, plus pressé à chaque tour) | Le Glas de Boot Hill, Le Cri du Coyote |
+| Où est Charlie ? | Jour de Marché (banjo sautillant, accordéon) | Le Piano du Saloon, La Cantina de Rosita, La Montre à Gousset |
+| Assaut du fort | Le Clairon du Fort (clairon de cavalerie, caisse claire de marche) | L'Or des Collines, Chevauchée Nocturne |
+| Défends la roulotte | La Roulotte (8 bits, galop) | La Diligence, Chevauchée Nocturne |
+| La pinte | Tournée Générale (piano bastringue endiablé) | Le Piano du Saloon, La Cantina de Rosita |
+| La mine | Le Filon (guitare, guimbarde, coups de pioche) | Le Train de Minuit, Le Vautour |
+| Conquête de l'Ouest | La Ruée vers l'Or (trompette, chœur, chant d'hommes) | L'Or des Collines, Le Cri du Coyote, Le Vautour, Le Glas de Boot Hill, Sous le Soleil de Plomb |
+
+**Musique dynamique** : la musique suit ce qui se passe (`setMood` et `musicCue` dans `public/js/audio.js`).
+
+- Au calme, le son est étouffé, sans grosses percussions, un peu plus lent. Sous tension, il accélère et une couche de percussions s'ajoute (grosse caisse, tambourin, roulements de caisse claire). Pour les MP3, la lecture accélère un peu.
+- **Roulette** : la tension monte dans la manche décisive et quand un joueur est à 1 PV. Le cœur bat quand il ne te reste qu'un PV, une horloge fait tic-tac sur la dernière cartouche. Quand le fusil est pointé, la musique retient son souffle. Une balle réelle la coupe net, avec un coup d'orchestre (plus long et plus grave si le joueur tombe). Une cartouche à blanc la relance avec un petit arpège.
+- **Mini-jeux** : calme pendant la cinématique et les règles, la tension monte au fil de la partie, puis tic-tac sur les 10 dernières secondes. Dans le duel, la musique se tait presque pendant le face-à-face et le cœur bat jusqu'au signal. Dans « Où est Charlie ? », la chasse s'emballe quand le temps de la manche file. À la pinte, le tic-tac presse celui qui vise.
+
+Ce sont des compositions originales : elles reprennent les sonorités des grands westerns (sifflement, voix de soprano, chœur, ocarina, guitare saturée, guimbarde, boîte à musique, guitare espagnole, trompette mariachi, banjo, violon, accordéon, piano bastringue, cloche, fouet, enclume), pas leurs mélodies.
 
 Le son 8 bits imite le NES (ondes pulse 12,5/25/50 %, triangle 4 bits, bruit LFSR, accords en arpèges rapides), le son 16 bits imite la SNES (instruments filtrés + écho). Le bouton ⏭ de la barre du haut passe au morceau suivant.
 
-Pour utiliser tes propres morceaux, dépose-les dans `public/music/` avec les noms listés dans `CUSTOM_TRACKS` (`public/js/audio.js`), ou `menu.mp3` / `game.mp3`. Ils remplacent la musique synthétisée et passent dans un filtre 8/16 bits.
+Pour utiliser tes propres morceaux, dépose-les dans `public/music/` avec les noms listés dans `CUSTOM_TRACKS` (`public/js/audio.js`), ou `menu.mp3` / `game.mp3`. Ils s'intercalent entre les morceaux synthétisés (répartis régulièrement dans la playlist) et passent dans un filtre 8/16 bits. Le jeu ne les cherche qu'en local, dans la liste que le serveur `npm start` fournit (`music/index.json`) : il ne demande que les fichiers présents, sans erreurs 404 dans la console.
 Le dossier `music/` est exclu du déploiement Surge (`public/.surgeignore`) : ces fichiers ne jouent qu'en local, pour ne pas mettre en ligne de morceaux protégés.
 
 ## Jouer à distance

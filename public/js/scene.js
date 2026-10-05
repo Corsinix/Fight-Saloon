@@ -1,6 +1,6 @@
 // Rendu de la table de jeu + file d'animations pilotée par les événements serveur.
 import * as S from './sprites.js';
-import { sfx } from './audio.js';
+import { sfx, musicCue } from './audio.js';
 import { ITEMS, SKIN, CLOTH_COLORS } from './data.js';
 import { Room } from './room.js';
 import { Cutscene } from './cutscene.js';
@@ -21,17 +21,24 @@ const color = (live) => (live ? 'ROUGE' : 'BLANCHE');
 // une fois le canvas agrandi, ça donne du flou. On dessine donc chaque texte une fois, 8 fois plus
 // grand, on cale la grille sur le bord réel des lettres et on lit le centre de chaque gros pixel :
 // chaque pixel de la police Silkscreen tombe pile sur un pixel du jeu. Résultat mis en cache.
+// Cache « le moins récemment utilisé » : les textes qui changent à chaque image (chronos, scores) chassent
+// les plus anciens un par un, sans tout recalculer. Un seul grand canvas de travail sert à tous les textes.
 const textCache = new Map();
+const TEXT_CACHE_MAX = 500;
+let work = null;
 const hexRgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 const UP = 8;
 
 function textMask(str, size, font) {
-  const big = document.createElement('canvas');
+  if (!work) { work = document.createElement('canvas'); work.width = 512; work.height = 256; }
+  const big = work;
   const b = big.getContext('2d', { willReadFrequently: true });
   const bigFont = `${size * UP}px Silkscreen, monospace`;
   b.font = bigFont;
   const bw = Math.ceil(b.measureText(str).width) + UP * 4, bh = Math.ceil(size * UP * 1.5) + UP * 4;
-  big.width = bw; big.height = bh;
+  // le canvas de travail ne fait que grandir (le redimensionner efface aussi le contexte)
+  if (bw > big.width || bh > big.height) { big.width = Math.max(big.width, bw); big.height = Math.max(big.height, bh); }
+  else b.clearRect(0, 0, bw, bh);
   b.font = bigFont;
   b.textBaseline = 'top';
   b.fillStyle = '#fff';
@@ -54,9 +61,15 @@ function textMask(str, size, font) {
 
 function textSprite(str, size, col, shadow) {
   const key = `${size}|${col}|${shadow}|${str}`;
-  const hit = textCache.get(key);
-  if (hit) return hit;
   const font = `${size}px Silkscreen, monospace`;
+  const hit = textCache.get(key);
+  // un texte dessiné avec la police de secours est refait dès que Silkscreen est chargée
+  if (hit && !(hit.fallback && document.fonts.check(font))) {
+    textCache.delete(key);
+    textCache.set(key, hit);
+    return hit;
+  }
+  if (hit) { textCache.delete(key); hit.c.width = 0; }
   const m = textMask(str, size, font);
   const w = m.w + 2, h = m.h + 2;
   const mask = new Uint8Array(w * h);
@@ -78,13 +91,27 @@ function textSprite(str, size, col, shadow) {
   }
   for (let i = 0; i < w * h; i++) if (mask[i]) put(i, fg);
   x.putImageData(out, 0, 0);
-  const sprite = { c, w: m.w, dy: m.dy };
-  // pas de cache tant que la police pixel n'est pas chargée (sinon on garderait la police de secours)
-  if (document.fonts.check(font)) {
-    if (textCache.size > 600) textCache.clear();
-    textCache.set(key, sprite);
+  // Toujours en cache, même avec la police de secours : sans ça, un réseau lent faisait recréer chaque texte
+  // à chaque image (des milliers de canvas, de quoi faire planter un téléphone).
+  const fallback = !document.fonts.check(font);
+  if (fallback) document.fonts.load(font).catch(() => {});
+  const sprite = { c, w: m.w, dy: m.dy, fallback };
+  textCache.set(key, sprite);
+  while (textCache.size > TEXT_CACHE_MAX) {
+    const [k, old] = textCache.entries().next().value;
+    textCache.delete(k);
+    old.c.width = 0; // libère tout de suite la mémoire du canvas (Safari la garde sinon)
   }
   return sprite;
+}
+
+// Cadence des animations plafonnée à 60 images/s : les écrans à 90 ou 120 Hz (beaucoup de téléphones)
+// feraient sinon tout le travail deux fois plus souvent, et le téléphone chauffe puis ralentit.
+// gate garde l'heure prévue de l'image suivante ; renvoie vrai quand il est temps de dessiner.
+export function due60(gate, t) {
+  if (t < gate.next - 2) return false;
+  gate.next = Math.max(gate.next + 1000 / 60, t);
+  return true;
 }
 
 // Position du pointeur en pixels du jeu (W × H). Sur téléphone le canvas est centré avec object-fit: contain :
@@ -130,7 +157,9 @@ export class Scene {
     this.motes = Array.from({ length: 28 }, () => ({ x: Math.random() * W, y: Math.random() * 130, v: 0.5 + Math.random() }));
     this.now = performance.now();
     this.bindInput();
-    const loop = (t) => { this.frame(t); this.raf = requestAnimationFrame(loop); };
+    // 60 images/s au plus ; l'image suivante est demandée d'abord, pour qu'une erreur ne fige pas le jeu
+    const gate = { next: 0 };
+    const loop = (t) => { this.raf = requestAnimationFrame(loop); if (due60(gate, t)) this.frame(t); };
     this.raf = requestAnimationFrame(loop);
   }
 
@@ -346,6 +375,7 @@ export class Scene {
         const Tb = 1250 + (ev.suspense || 800);
         const victim = this.name(ev.target);
         cue(0, () => {
+          musicCue('aim', Tb / 1000);
           if (by === me) this.say(self ? 'Tu retournes le fusil contre toi…' : `Tu mets ${victim} en joue…`);
           else this.say(atMe ? `${this.name(by)} pointe le fusil sur toi…` : `${this.name(by)} glisse le canon sous son propre menton…`);
         });
@@ -356,6 +386,7 @@ export class Scene {
           if (ev.live && ev.lucky) {
             // le fer à cheval dévie la balle
             sfx('gunshot'); sfx('clank', 0.05);
+            musicCue('blank');
             this.shake = 4;
             this.sparksAt(atMe ? { x: 192, y: 150 } : { x: 192, y: 100 });
             this.smokeAt(this.muzzlePos(by, ev.target), 8);
@@ -370,12 +401,14 @@ export class Scene {
               this.oppFx.tintUntil = this.now + 160;
             }
             const dead = ev.state.players[ev.target].hp <= 0;
+            musicCue(dead ? 'death' : 'hit');
             if (dead) { if (atMe) this.meDead = true; else this.oppFx.dead = true; }
             const keeps = !self && !dead ? (by === me ? ' Tu gardes le fusil !' : ` ${this.name(by)} garde le fusil.`) : '';
             this.say(`BANG ! ${ev.dmg > 1 ? 'Canon scié : 2 dégâts !' : ''} ${dead ? `${atMe ? 'Tu t’effondres' : `${victim} s’effondre`}…` : ''}${keeps}`);
             this.smokeAt(this.muzzlePos(by, ev.target), 8);
           } else {
             sfx('click');
+            musicCue('blank');
             this.say(`…clic. Cartouche à blanc.${self ? (by === me ? ' Tu rejoues !' : ` ${this.name(by)} rejoue.`) : ''}`);
           }
         });

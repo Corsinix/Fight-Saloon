@@ -9,7 +9,7 @@ import { riderLook, drawHat } from './lasso.js';
 import { drawStreet, streetLights } from './shooter.js';
 import { W, H, DUEL, streetLayout } from './worlds.js';
 
-const CAM_X = 1820; // le saloon entre les deux duellistes
+const CAM_X = 2204; // le saloon entre les deux duellistes
 const GROUND_Y = 204;
 const SCALE = 2;
 const POS = [104, 280]; // moi à gauche, l'adversaire à droite
@@ -67,6 +67,7 @@ export class DuelScene extends MiniScene {
     super(canvas, hooks);
     this.kind = 'duel';
     this.cur = null;
+    this.tw = { x: -40 }; // la boucle d'animation tourne avant le début de la partie
   }
 
   title() { return 'DUEL AU SOLEIL'; }
@@ -81,6 +82,15 @@ export class DuelScene extends MiniScene {
   goText() { return ''; }
   clock() { return null; }
   progress() { return null; }
+
+  // face-à-face : la musique se tait presque, le cœur bat jusqu'au signal
+  mood() {
+    const c = this.cur, t = this.t;
+    if (this.over || t < 0 || !c) return super.mood();
+    if (c.result) return { level: 0.6 };
+    if (t < c.at + DUEL.intro) return { level: 0.5 };
+    return { level: 0.2, hush: true, heart: true };
+  }
 
   // moi à gauche ; un spectateur voit le joueur 0 à gauche
   get left() { return this.me; }
