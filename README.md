@@ -237,6 +237,13 @@ La roulotte, tirée par ses deux chevaux, quitte Dusty Gulch pour Red Rock. Une 
 
 Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour. La chope la plus proche du bout gagne, mais si elle va trop fort, elle tombe et se brise. Le comptoir est celui de la Roulette (saloon, cantina, wagon-bar ou bureau du shérif), sous une ambiance tirée au hasard.
 
+- **Chaque manche a son comptoir** (le droit à la 1re, jamais deux fois le même de suite). Les rambardes en laiton renvoient la chope au lieu de la laisser tomber : sur ces comptoirs, l'aiguille balaie plus large et plus lentement, et la trajectoire à la craie montre les ricochets.
+  - droit : le comptoir classique ;
+  - à rambardes : plus large, bordé de laiton, avec une tireuse à bière au milieu qu'il faut contourner ;
+  - chicane : deux cloisons en travers, impossible de passer sans ricocher ;
+  - coude : le bout du comptoir est décalé vers le fond, il faut rebondir sur le mur en biais ;
+  - goulet : le comptoir s'élargit puis se resserre entre deux rambardes qui guident la chope.
+
 - Clic ou **Espace** : bloquer l'aiguille de **direction** (zone verte : la chope reste sur le comptoir jusqu'au bout), puis bloquer la jauge de **puissance**. 15 s pour lancer, sinon le tour passe.
 - Fin de manche : chaque chope encore sur le comptoir rapporte 100 pts moins son écart au bout, en cm. La plus proche offre la tournée : +50. Une chope tombée ne rapporte rien.
 - Une chope trop à gauche ou trop à droite tombe derrière le comptoir ou devant. Celle qui passe le bout s'écrase sur le plancher.
@@ -246,16 +253,20 @@ Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour
   - brune : lourde, elle pousse fort les autres chopes ;
   - petit whisky : petit et léger, facile à dégager ;
   - mousseuse : elle freine moins et glisse plus loin ;
-  - chope du mineur : énorme et très lourde, un vrai mur.
+  - chope du mineur : énorme et très lourde, un vrai mur ;
+  - tord-boyaux : sa trajectoire tourne vers toi ou vers le mur (c'est annoncé), il faut viser de l'autre côté ;
+  - bière au piment : au choc, elle fait gicler les autres chopes bien plus loin.
 - **Chaque manche a ses surprises** à partir de la 2e (une ou deux, annoncées au début et rappelées en haut à droite). Elles sont tirées selon la salle et la météo :
   - flaque de bière : on y glisse plus loin ;
-  - sciure : on y freine ;
+  - sciure : on y freine dur (cinq fois plus que sur le bois) ; la jauge donne de quoi la traverser, mais il faut viser plus fort ;
   - courant d'air par la fenêtre : il pousse les chopes de côté dans une zone, plus fréquent dans la tempête de poussière, sous l'orage ou la neige ;
   - portes battantes : vent dans le dos ou de face sur tout le comptoir ;
   - comptoir ciré, ou gelé sous la neige : tout glisse plus ;
   - virage du train : dans le wagon-bar, tout penche d'un côté ;
   - bouteilles oubliées : des obstacles sur lesquels les chopes rebondissent ;
-  - pièce d'or : +30 pour la première chope qui passe dessus.
+  - pièce d'or : +30 pour la première chope qui passe dessus ;
+  - chat endormi : la chope s'enfonce dans sa fourrure et perd presque tout son élan ;
+  - sous-bock : +50 pour chaque chope qui s'arrête dessus en fin de manche.
 - **Dernière tournée** : la dernière manche compte double.
 - 5 manches à deux, 4 à trois, 3 à quatre. Les craies sur le comptoir marquent 10, 25, 50 et 100 cm du bout.
 
@@ -328,7 +339,7 @@ Sur le champ de courses de Dusty Gulch, chaque cavalier a son couloir, du dépar
 - **Carottes** au sol, souvent en file : il faut passer dessus, à la bonne profondeur. Certaines flottent au-dessus d'un tronc.
 - Le parcours est tiré de la graine (`public/js/coursegame.js`, décor et obstacles dans `public/js/coursewild.js`) : des motifs de plus en plus serrés (rocher, cactus, passage entre deux grands obstacles, champ de cactus en quinconce, tronc, buissons, terriers, virevoltants, ruisseau, file de carottes). Les bots regardent devant eux, contournent les grands obstacles par le passage libre le plus proche, prennent souvent le gué et vont chercher les carottes quand la voie est libre. De temps en temps, ils ne voient pas un rocher venir.
 
-### Conquête de l'Ouest (mini-RTS, 10 min, chacun pour soi)
+### Conquête de l'Ouest (mini-RTS, sans limite de temps, alliances et trahisons)
 
 Chaque joueur tient un **fort** sur une grande carte (768 × 432 px, l'écran en montre une partie). Le **décor** est tiré au hasard à chaque partie, ainsi que la place des forts (face à face ou en diagonale à deux joueurs) ; l'ambiance (heure, météo) est choisie pour aller avec le décor :
 
@@ -352,11 +363,11 @@ Chaque joueur tient un **fort** sur une grande carte (768 × 432 px, l'écran en
 
 Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près de chaque fort, un filon de minerai un peu plus loin, et les plus riches au milieu, là où l'on se bat. Les forts sont toujours reliés (au besoin, un pont ou un défilé est taillé).
 
-- **Écran** : en haut, tes ressources avec leurs icônes et leurs revenus (or, vivres, population, PV du fort) et ton chantier ou l'ordre de ton armée. En bas, le panneau de commandes suit la sélection : sans sélection, les bâtiments et les recrues ; avec des unités, leurs fiches (nombre, galons, PV et expérience d'une unité seule) et leurs ordres ; avec un bâtiment, sa fiche, son amélioration, ses recrues et ses entraînements. À droite, toujours : **Tous** (choisir toute l'armée), **Défendre**, les boutons d'attaque et la **mini-carte**. Chaque bouton a sa bulle d'aide. Le survol d'une unité, d'un bâtiment ou d'un terrain particulier affiche ce qu'il est.
+- **Écran** : en haut, tes ressources avec leurs icônes et leurs revenus (or, vivres, population, PV du fort), le bouton **Pactes** et ton chantier ou l'ordre de ton armée (ou, si l'on vient de te trahir, le temps de malus qui reste). L'horloge du bandeau compte le temps de jeu. En bas, le panneau de commandes suit la sélection : sans sélection, les bâtiments et les recrues ; avec des unités, leurs fiches (nombre, galons, PV et expérience d'une unité seule) et leurs ordres ; avec un bâtiment, sa fiche, son amélioration, ses recrues et ses entraînements. À droite, toujours : **Tous** (choisir toute l'armée), **Défendre**, les boutons d'attaque et la **mini-carte**. Chaque bouton a sa bulle d'aide. Le survol d'une unité, d'un bâtiment ou d'un terrain particulier affiche ce qu'il est.
 - **Caméra** : **glisser** sur la carte (clic gauche ou bouton du milieu maintenu) pour la déplacer, flèches, bords de l'écran (après un court arrêt), mini-carte (clic ou glissé) ; **molette** : zoomer et dézoomer vers le pointeur (5 crans, de × 0,5, presque toute la carte, à × 2), aussi avec **+** / **=** et **)** / **_** (ou Page préc. / Page suiv.) ; Maj + molette : de côté ; **H** : retour au fort (et le choisit) ; **Espace** : là où l'on t'attaque. Au doigt : on glisse sur la carte, on pince à deux doigts pour zoomer.
 - **Choisir ses unités** : clic sur une unité, ou **Maj + glisser** (ou Ctrl + glisser) pour tirer un cadre ; Maj + clic : ajouter ou retirer ; double-clic : toutes celles de ce type à l'écran ; **T** : toute l'armée ; **Échap** : plus rien. Au doigt : toucher ses unités (deux fois : toutes celles de ce type), ou **Tous**.
 - **Ordres à la sélection** : clic droit sur la carte, elles y vont sans s'arrêter (pour se replier ou contourner), puis gardent la place ; clic droit sur un ennemi (unité ou bâtiment), elles s'acharnent sur lui ; sur ton fort, elles rentrent. **Charger** (**C** puis clic, ou Maj + clic droit) : elles y vont en tirant sur tout ce qu'elles croisent. **Tenir** (**S**) : elles ne bougent plus et tirent à portée. **Halte** (**X**) : elles s'arrêtent et gardent la place (en poursuivant un peu les ennemis qui approchent). Défendre et Attaquer valent alors pour la sélection seulement. Au doigt : toucher la carte ou un ennemi. Les unités se rangent en formation, et la portée d'une unité seule s'affiche.
-- **Ordres à toute l'armée** (sans sélection) : clic droit sur la carte, elle s'y rend en combattant ; sur un ennemi ou bouton à ses couleurs, elle attaque son fort ; **Défendre** (**D**), elle rentre. Ces ordres annulent les ordres particuliers. Les nouvelles recrues suivent l'ordre général.
+- **Ordres à toute l'armée** (sans sélection) : clic droit sur la carte, elle s'y rend en combattant ; sur un ennemi ou bouton à ses couleurs, elle attaque son fort ; **Défendre** (**D**), elle rentre. Ces ordres annulent les ordres particuliers. Les nouvelles recrues suivent l'ordre général. Les unités et bâtiments d'un allié ne sont pas des cibles : un clic droit dessus y envoie simplement les troupes.
 - **Construire** : clic sur un bâtiment du panneau (ou **1** à **6**, ou la rangée du haut en AZERTY), puis sur la carte. On bâtit dans son territoire (pointillés) : autour du fort, et autour des mines et des tours, qui l'étendent vers les filons lointains. Clic droit ou **Échap** : annuler.
 - **Pas de spam** : un seul chantier à la fois (construction ou amélioration), chaque bâtiment de plus du même type coûte plus cher, leur nombre est limité, et bâtir ne rapporte pas de points.
 
@@ -402,19 +413,36 @@ Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près 
 
 - **Expérience** : les unités gagnent des points en infligeant des dégâts et en abattant des ennemis, et prennent du galon : **vétéran** (6 points), **élite** (15), **légende** (30). Chaque galon : +12 % de PV (et un peu de soin), +15 % de dégâts, un peu plus de vitesse. Les galons s'affichent en carrés dorés au-dessus de la tête ; une élite porte une étoile sur la poitrine, une légende aussi une bande dorée au chapeau ; une unité seule choisie montre sa barre d'expérience.
 - Forts et tours se défendent seuls, et les bâtiments se réparent après 8 s sans dégâts (le fort plus vite).
-- Un fort rasé élimine son joueur (ses bâtiments et ses unités disparaissent). Le dernier fort debout gagne ; au bout de 10 min, le meilleur score l'emporte (ennemi abattu +10, bâtiment rasé +40, fort rasé +300, plus 1 point par 10 or produits).
-- En solo, contre 3 bots qui suivent les mêmes règles : ils développent leur économie, s'étendent avec des tours vers les filons, améliorent leur fort et leurs mines, entraînent leurs unités les plus nombreuses et n'attaquent pas avant 2 min 30.
+- **Diplomatie** : le bouton **Pactes** (en haut, ou **P**) remplace le panneau de commandes par une ligne par joueur : son nom (et des carrés aux couleurs de ses alliés), où vous en êtes (ennemi, allié, proposition, trahi), et ses boutons (`public/js/rtsgame.js`, `DIPLO`) :
+  - **Alliance** : la proposition tombe sans réponse au bout de 25 s ; l'autre répond **Oui** ou **Non** (le bouton Pactes clignote quand on te propose une alliance). Alliés, vos unités, forts et tours ne se tirent plus dessus et les ordres d'attaque entre vous sont refusés. Il faut au moins 3 joueurs en lice pour s'allier (à deux, un seul fort doit rester debout), et une alliance ne peut pas allier tout le monde : il faut un ennemi commun.
+  - **Trahir** (deux appuis, pour éviter les accidents) : l'alliance est rompue sur-le-champ et le joueur trahi est **affaibli pendant 1 min** : ses unités font 30 % de dégâts en moins et en prennent 30 % de plus, ses bâtiments prennent 60 % de dégâts en plus. Un cœur brisé violet clignote au-dessus de ses bâtiments, une petite flèche au-dessus de ses unités.
+  - **Dons** : 50 or ou 30 vivres, à un allié comme à un ennemi qu'on veut amadouer.
+  - **Mot** : des messages tout faits (au doigt, pas besoin de clavier) : « Au secours ! » (ton fort clignote sur sa mini-carte, Espace y mène), « Attaquons ensemble ! » (nomme le fort que ton armée attaque), « J'arrive ! », « Merci, l'ami ! », « Faisons la paix », « Tu vas le payer ! ». Le chat (Entrée) reste ouvert à côté.
+- **Pas de limite de temps** : un fort rasé élimine son joueur (ses bâtiments et ses unités disparaissent) ; la partie dure jusqu'à ce qu'il ne reste qu'un fort debout : **un seul gagnant**, jamais de victoire en alliance. Quand l'ennemi commun tombe et qu'il ne reste que des alliés, un compte à rebours de 30 s s'affiche en haut, puis leurs alliances se rompent d'elles-mêmes (sans malus) : chacun pour soi. D'ici là, trahir permet de frapper le premier, et les bots ne s'en privent pas. Le score (ennemi abattu +10, bâtiment rasé +40, fort rasé +300, plus 1 point par 10 or produits) départage le classement.
+- En solo, contre 3 bots qui suivent les mêmes règles : ils développent leur économie, s'étendent avec des tours vers les filons, améliorent leur fort et leurs mines, entraînent leurs unités les plus nombreuses et n'attaquent pas avant 2 min 30. Ils font aussi de la diplomatie : un seul allié à la fois, ils refusent souvent le joueur le plus fort et toujours celui qui les a trahis, proposent parfois une alliance, remercient d'un don, répondent à « Au secours ! » et « Attaquons ensemble ! » d'un allié, se vengent d'une trahison, et trahissent parfois un allié affaibli ou bien plus faible qu'eux.
 - Ici l'hôte simule toute la partie (`public/js/rtsgame.js` : décors, carte, chemins, combats, expérience, bots) et envoie 2 instantanés par seconde ; chaque navigateur recalcule la carte depuis la graine et lisse les déplacements (`public/js/rts.js`).
 
 ### Règlement de comptes (FPS, 4 min, chacun pour soi)
 
 Un FPS à l'ancienne, façon Doom, dans une ville western en fausse 3D (lancer de rayons, décor en pixel art). Chacun pour soi : on se tire dessus entre joueurs, pendant que des bandits rôdent en ville et attaquent tout le monde.
 
-**La carte** est tirée de la graine (`public/js/fpsgame.js`) et reprend tous les décors du jeu :
+**La carte** est tirée de la graine, comme son plan : **la ville** (ci-dessous) ou l'une des autres cartes (voir **Les autres cartes**). Pour en essayer une en solo : `fps-test.html?fpsmap=fort` (ou `canyon`, `pueblo`, `town`).
+
+**La ville** (`townWorld` dans `public/js/fpsgame.js`) reprend tous les décors du jeu :
 
 - **La gare**, au nord : le train à quai (locomotive, voitures de voyageurs, wagons de marchandises), le quai, la salle d'attente et son guichet, le château d'eau.
 - **La grand-rue**, au milieu : des façades à fausse devanture et leurs enseignes, des ruelles, des chevaux à l'attache, des abreuvoirs et des caisses pour se cacher. Quatre bâtiments s'ouvrent : **le saloon** (comptoir, bouteilles, pianola, tables), **la cantina**, **le bureau du shérif** (avis de recherche, cellules) et **la banque** (guichet, coffre).
 - **Quatre quartiers** autour, placés au hasard à chaque partie : **Boot Hill** (chapelle de pierre, mausolée, tombes et croix, muret), **le ranch** (grange et son foin, enclos avec chevaux et vaches, éolienne, poules), **la mine** (falaise percée de galeries, boucle de rails, bureau des essais, caisses de TNT) et **le fort** (palissade et ses portes, blockhaus).
+
+**Les autres cartes** (une chance sur quatre chacune, la ville comprise ; plan et décor varient avec la graine) :
+
+| Carte | Ce qu'on y trouve | Canons |
+|---|---|---|
+| **Fort Défiance** (`fort`) | Fort de cavalerie dans la prairie : palissade et quatre portes (enseigne « FORT DEFIANCE » au-dessus de la grande), blockhaus d'angle, place d'armes et son drapeau, casernes, état-major (coffre du payeur), poudrière pleine de barils, vivres, corps de garde, hôpital, écuries, cantinier (comptoir), forge ; dehors, camp de toile et parc d'artillerie, cimetière, corral. Une fois sur deux, le plan est retourné d'est en ouest. | 6 : deux bastions à parapet de sacs de sable, la place d'armes, la grande porte, le parc d'artillerie |
+| **Canyon du Diable** (`canyon`) | Canyon de roche rouge : mine et ses galeries, boucle du wagonnet, campement des prospecteurs (tente-cantine, feu de camp), redoute de l'armée, lit de ruisseau à sec, canal sur tréteaux au-dessus des sluices, mesa percée de tunnels, et, sous l'arche, le hameau de Bonanza (saloon, bureau des essais, poudrière). | 2, à la redoute : vers le fond du canyon et vers les sluices |
+| **San Miguel** (`pueblo`) | Village mexicain : calle real et plaza pavée (fontaine, lauriers, papel picado), mission et son clocher (nef, retable), campo santo et champ d'agaves, hacienda à arcades (puits, zaguán), cantina, maisons d'adobe (tienda, botica), mercado sous ses auvents rayés, corral, potier et son four. | 2 : sur le parvis de la mission et devant l'hacienda |
+
+Chaque carte a son générateur dans `public/js/fpsmaps/` et ses dessins dans `public/js/fpsart<Carte>.js` (murs, sols et objets enregistrés dans les registres de `fpsart.js`). La boîte à outils commune et ce qu'un générateur rend (nom, centre, quartiers, noms de lieux, allée de la cinématique, couleurs du radar…) sont décrits dans `public/js/fpskit.js`. Pour en ajouter une : un générateur, ses dessins, une ligne dans `public/js/fpsmaps/index.js` et l'import des dessins en tête de `fps.js`. Options utiles : `upBack` (une enseigne qui ne se lit que d'un côté, comme celle de la porte du fort), `bare` (linteaux sans embrasure de bois : arcades, auvents), `winIn` de `building()` (la fenêtre vue du dedans), `TX_TALL` (murs intérieurs étirés du sol au plafond au lieu de répéter leur bas sous le plafond). Sur la carte, plus de trois linteaux d'affilée (canal, arcades) sont dessinés comme une poutre et non comme des portes. Les rochers du canyon volent en éclats sous la dynamite et les boulets. Pour des captures qu'on peut refaire : `fps-test.html?fpsmap=fort&seed=7` (`x`, `y`, `a` : la caméra ; `big` : la grande carte ; `gun=0` : au premier canon).
 
 Les murs ont des hauteurs différentes : on tire par-dessus les comptoirs, les barrières, le foin et les murets, pas à travers les façades. L'ambiance (heure, météo) est tirée au hasard comme dans les autres mini-jeux.
 
@@ -442,13 +470,32 @@ Plus de balles : l'autre arme à feu prend le relais, puis l'arme blanche.
 - **À cheval** : deux fois plus vite, on voit de plus haut, et lancé au galop on renverse ce qu'on croise. Le cheval encaisse une partie des balles ; abattu, il désarçonne son cavalier, et un autre revient à l'écurie 20 s plus tard. On n'entre pas à cheval dans les bâtiments. Des chevaux attendent devant le saloon, devant le bureau du shérif et dans l'enclos du ranch.
 - **En wagonnet** : sur la boucle de rails de la mine (avancer / freiner), jusqu'à 8,5 cases par seconde, et la caisse de fer arrête la moitié des balles.
 
+**Le décor s'en mêle** (`PROPS` dans `public/js/fpsgame.js` ; l'hôte arbitre, tout le monde voit la même chose) :
+
+| Décor | Ce qui se passe |
+|---|---|
+| Baril de poudre, caisse de TNT | Une balle (ou une explosion, ou les flammes) le fait sauter : explosion plus grosse que la dynamite, et les barils voisins sautent à leur tour, en chaîne. On en trouve dans la grand-rue (parfois même comme abri au milieu de la rue), sur le quai de la gare, à la mine et au fort. Les bots tirent dedans quand un rival passe à côté |
+| Lanterne suspendue | Elle tombe et l'huile prend feu au sol |
+| Réverbère | La vitre éclate, la lampe s'éteint et l'huile flambe à son pied |
+| Lustre (saloon, banque) | Il se décroche et écrase ceux qui sont dessous, puis les bougies mettent le feu |
+| Foin (bottes, meules) | Il s'embrase aux explosions et au contact des flammes, brûle 8 s, puis il n'en reste rien |
+| Piles de caisses | Soufflées par les explosions : l'abri disparaît |
+| Tonneau | Il vole en éclats sous les balles, avec parfois une caisse de ravitaillement dedans |
+| Bouteilles | En mille morceaux |
+| Coffre de la banque | La dynamite (ou un baril) l'éventre : trois caisses s'en échappent, dont une arme de caisse ou l'étoile |
+| Crachoir, vaches, poules | Ils répondent d'un « ding », d'un meuglement ou d'un caquètement |
+
+Le feu brûle ceux qui restent dedans (le point est marqué sur la carte), et une mort par le décor compte pour celui qui l'a déclenché (baril, lustre, feu). Le décor détruit revient au bout de 45 s, quand personne n'est dessus.
+
+**E** sert aussi à pied : près d'un **canon**, on se met à la pièce (vue de la culasse, à la place de l'arme). La souris (ou **Q**/**D**) la fait pivoter, **Z**/**S** ou la molette règlent la hausse, donc la portée (de 3 à 22 cases ; le boulet passe par-dessus les murs bas, pas à travers un mur plein), une mire rouge et le cercle du souffle marquent le point de chute au sol, le clic fait feu (un coup toutes les 8 s pour chaque canon, 90 dégâts au centre), **E** rend la main. Les bots s'y postent aussi de temps en temps (`public/js/fpscannon.js` pour la vue, `use` et `cannonReach` dans `public/js/fpsgame.js`). Au **comptoir du saloon ou de la cantina**, le patron sert un whisky (+25 PV, un toutes les 25 s).
+
 **Les bandits** arrivent par les bords de la carte : bandit (+100), tireur à la Winchester qui garde ses distances (+150), dynamiteur (+150) et gros bras au fusil de chasse (+200). Ils visent un instant avant de tirer, et ratent plus souvent ceux qui courent ou galopent. Rival abattu +250, mort −50 (le score ne descend pas sous zéro). Au retour, on apparaît loin des autres, avec 1,5 s d'invulnérabilité.
 
 **Retournements de situation** (`public/js/fpsevents.js`, tirés de la graine : 4 à 6 par partie) : prime doublée, avis de recherche (le premier au score est mis à prix et marqué d'une étoile visible à travers les murs : +300 pour qui l'abat), la bande attaque la ville, les dynamiteurs, midi sonne (dégâts doublés), bagarre générale (armes blanches seulement), le train entre en gare (sur les rails, c'est la mort), la diligence a versé (sacs d'or à ramasser, +50), le ravitaillement du fort (caisses pleines d'armes), la tournée du patron (soins), la tornade (tout le monde est emporté ailleurs), la tempête de sable, l'orage, la nuit qui tombe, et **El Diablo** en personne (600 PV, +1000 pour celui qui l'abat ; il repart s'il survit).
 
-- Clavier : **Z Q S D** (ou **W A S D** sur un clavier QWERTY, ou les flèches) pour avancer, la souris pour viser (clic dans l'image pour capturer la souris, Échap pour la libérer), clic pour tirer (maintenu pour la Gatling et les armes blanches), **1** à **5** ou la molette pour changer d'arme, **R** recharger, **Maj** courir, **E** monter, **G** dynamite, **Tab** le tableau des scores, **M** la grande carte.
+- Clavier : **Z Q S D** (ou **W A S D** sur un clavier QWERTY, ou les flèches) pour avancer, la souris pour viser (clic dans l'image pour capturer la souris, Échap pour la libérer), clic pour tirer (maintenu pour la Gatling et les armes blanches), **1** à **5** ou la molette pour changer d'arme, **R** recharger, **Maj** courir, **E** monter (ou servir un canon, boire au comptoir), **G** dynamite, **Tab** le tableau des scores, **M** la grande carte.
 - Au doigt : un stick à gauche (poussé à fond vers l'avant, on court), glisser à droite pour tourner la tête, **double tap** à droite pour tirer (doigt gardé posé : on continue de tirer en visant). Boutons ronds à icône sous le pouce droit, en arc autour du gros bouton de tir : arme suivante, recharger, viser, dynamite, et monter / descendre quand c'est possible.
-- **La carte** (`public/js/fpsmap.js`) : un radar rond en haut à gauche, centré sur toi (nord en haut, ta flèche tourne avec ta vue), et la grande carte de la ville avec le nom des lieux (**M**, ou au doigt en touchant le radar). Elle est dessinée à 4 pixels par case et copiée pixel pour pixel, sans flou : sols et planchers, rails et traverses, murs, comptoirs et barrières, portes, tombes, cactus, tonneaux, foin, réverbères. On y voit les caisses, les sacs d'or, les chevaux et les wagonnets libres, la dynamite qui vole, El Diablo et les bandits en vue (à moins de 12 cases) ou qui viennent de tirer. Les autres joueurs n'y apparaissent jamais.
+- **La carte** (`public/js/fpsmap.js`) : un radar rond en haut à gauche, centré sur toi (nord en haut, ta flèche tourne avec ta vue), et la grande carte avec le nom des lieux (**M**, ou au doigt en touchant le radar). Elle est dessinée à 4 pixels par case et copiée pixel pour pixel, sans flou : sols et planchers, rails et traverses, murs, comptoirs et barrières, portes, tombes, cactus, tonneaux, foin, réverbères. On y voit les caisses, les sacs d'or, les chevaux et les wagonnets libres, la dynamite qui vole, El Diablo et les bandits en vue (à moins de 12 cases) ou qui viennent de tirer. Les autres joueurs n'y apparaissent jamais.
 - La résolution interne s'adapte à la machine (pleine, trois quarts ou moitié) pour rester fluide sur téléphone (`public/js/fpsperf.js`).
 - **La cinématique d'ouverture** (11 s, un clic la passe) est tournée dans le moteur du jeu, sur la carte de la partie (`public/js/fpscut.js`) : travelling sur le quai de la gare (la locomotive fume), la caméra s'élève au-dessus de la grand-rue, la bande s'avance au ras du sol et dégaine, chaque joueur est présenté en arrêt sur image sépia avec un surnom à la Leone (« Le Bon », « La Brute »…), puis tout le monde se fait face au milieu de la rue pendant que la cloche sonne et que le titre tombe. Les plans cherchent un passage dégagé sur la carte tirée de la graine.
 - Ici, chaque navigateur simule son propre cow-boy et annonce ce qu'il touche ; l'hôte vérifie que c'est plausible (portée, dégâts de l'arme), fait vivre les bandits, les caisses, la dynamite, les chevaux et les bots, et diffuse la position des bandits dix fois par seconde. Rendu dans `public/js/fps.js`, graphismes dans `public/js/fpsart.js`, HUD dans `public/js/fpshud.js`, commandes dans `public/js/fpsinput.js`.

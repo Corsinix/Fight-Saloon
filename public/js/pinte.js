@@ -7,32 +7,71 @@ import { canvasText } from './scene.js';
 import { MiniScene, pixelSprite } from './miniscene.js';
 import { Room } from './room.js';
 import { W } from './worlds.js';
-import { PINTE, Slide, gapCm, BEERS, beerOf, modName, modLabel, MODS } from './pintegame.js';
+import { PINTE, Slide, gapCm, BEERS, beerOf, modName, modLabel, MODS, onMat, COUNTERS, counterOf, speedFor } from './pintegame.js';
 
 const P = PINTE;
 const OUT = S.OUT;
 const X0 = 30, TOP = 122; // bout gauche du comptoir et bord arrière, à l'écran
-const EDGE = X0 + P.L, FRONT = TOP + P.D, FLOOR = 206;
+const EDGE = X0 + P.L, FLOOR = 206;
 const sx = (x) => Math.round(X0 + x), sy = (y) => Math.round(TOP + y);
-const SAFE = Math.atan((P.D / 2) / (P.L - P.START)); // au-delà, la chope finit par tomber sur le côté
 const GRAV = 0.0009; // chute (px/ms²)
 const pingpong = (el, period) => { const k = ((el / period) * 2) % 2; return k < 1 ? k : 2 - k; };
-const dirAt = (el) => P.MAXA * (2 * pingpong(el + P.dirMs / 4, P.dirMs) - 1); // l'aiguille part du milieu
+// l'aiguille part du milieu ; sur les comptoirs à ricochets elle balaie plus large, et plus lentement
+const dirMsOf = (g) => P.dirMs * Math.max(1, (g.maxa / P.MAXA) * 0.8);
+const dirAt = (el, g) => g.maxa * (2 * pingpong(el + dirMsOf(g) / 4, dirMsOf(g)) - 1);
 const powAt = (el) => pingpong(el, P.powMs);
 
+// Directions « sûres » (zone verte) : lancée à fond dans cette direction, la chope ne tombe pas sur le côté.
+// Calculé une fois par comptoir, par la même glissade que le jeu.
+const safes = new Map();
+function isSafe(g, a) {
+  let t = safes.get(g.id);
+  if (!t) {
+    const mods = { lay: g.id }, v = speedFor(1, mods);
+    t = [];
+    for (let k = 0; k <= 100; k++) {
+      const an = g.maxa * (k / 50 - 1);
+      const q = new Slide([{ id: 0, b: 'blonde', x: P.START, y: P.D / 2, vx: v * Math.cos(an), vy: v * Math.sin(an) }], mods).run().p[0];
+      t.push(!q.out || q.out === 'end');
+    }
+    safes.set(g.id, t);
+  }
+  return t[clampI(Math.round((a / g.maxa + 1) * 50), 0, 100)];
+}
+const clampI = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// contour du dessus du comptoir, à l'écran (pour y limiter flaque, sciure, givre…)
+function surfacePath(ctx, g) {
+  ctx.beginPath();
+  ctx.moveTo(0, sy(g.backAt(0)));
+  for (const [x, y] of g.back) ctx.lineTo(sx(x), sy(y));
+  ctx.lineTo(EDGE, sy(g.backAt(P.L)));
+  ctx.lineTo(EDGE, sy(g.frontAt(P.L)));
+  for (const [x, y] of [...g.front].reverse()) ctx.lineTo(sx(x), sy(y));
+  ctx.lineTo(0, sy(g.frontAt(0)));
+  ctx.closePath();
+}
+// haut et bas du comptoir à l'écran
+const spanOf = (g) => ({ top: sy(Math.min(...g.back.map((q) => q[1]))), bot: sy(Math.max(...g.front.map((q) => q[1]))) });
+
 // ------------------------------------------------------------ décor
-let counterArt = null;
-function counter() {
-  if (counterArt) return counterArt;
-  const c = S.makeCanvas(W, 216);
-  const ctx = c.getContext('2d');
-  const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); };
-  let s = 7;
-  const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
+// Le comptoir est dessiné colonne par colonne d'après sa forme (bords, rambardes) : un dessin par comptoir.
+// Les rambardes avant passent devant les chopes : elles ont leur propre calque (front).
+const counterArts = new Map();
+function counter(g) {
+  let art = counterArts.get(g.id);
+  if (art) return art;
+  const c = S.makeCanvas(W, 216), fc = S.makeCanvas(W, 216);
+  const ctx = c.getContext('2d'), fx = fc.getContext('2d');
+  const R = (x, y, w, h, col, k = ctx) => { k.fillStyle = col; k.fillRect(x, y, w, h); };
+  let sd = 7;
+  const rnd = () => ((sd = (sd * 9301 + 49297) % 233280) / 233280);
+  const bAt = (X) => sy(g.backAt(Math.max(0, X - X0))), fAt = (X) => sy(g.frontAt(Math.max(0, X - X0)));
   // au-delà du bout : lambris, puis le plancher où s'écrasent les chopes (et un crachoir)
-  R(EDGE, TOP - 8, W - EDGE, FLOOR - 26 - TOP + 8, '#4a2c18');
-  R(EDGE, TOP - 8, W - EDGE, 2, '#8a5a34'); R(EDGE, TOP - 6, W - EDGE, 1, '#3a2214');
-  R(EDGE + 10, TOP + 2, W - EDGE - 14, FLOOR - 38 - TOP, '#3e2414'); R(EDGE + 10, TOP + 2, W - EDGE - 14, 1, '#5a3a22');
+  const top = Math.min(TOP, bAt(EDGE - 1)) - 8;
+  R(EDGE, top, W - EDGE, FLOOR - 26 - top, '#4a2c18');
+  R(EDGE, top, W - EDGE, 2, '#8a5a34'); R(EDGE, top + 2, W - EDGE, 1, '#3a2214');
+  R(EDGE + 10, top + 10, W - EDGE - 14, FLOOR - 38 - top - 8, '#3e2414'); R(EDGE + 10, top + 10, W - EDGE - 14, 1, '#5a3a22');
   R(EDGE, FLOOR - 26, W - EDGE, 2, '#2a180c');
   for (let y = FLOOR - 24; y < FLOOR; y += 4) { R(EDGE, y, W - EDGE, 4, y % 8 ? '#5a3a22' : '#62402a'); R(EDGE, y, W - EDGE, 1, '#3a2212'); }
   const spx = W - 12, spy = FLOOR - 6;
@@ -44,40 +83,57 @@ function counter() {
     R(0, y, W, 1, '#3a2212');
     for (let x = Math.floor(rnd() * 60); x < W; x += 50 + Math.floor(rnd() * 40)) R(x, y, 1, 5, '#3a2212');
   }
-  // dessus en bois verni, rebord arrière
-  R(0, TOP - 4, EDGE + 4, 1, OUT);
-  R(0, TOP - 3, EDGE, 3, '#5a3018'); R(0, TOP - 3, EDGE, 1, '#7a4424');
-  R(0, TOP, EDGE, P.D, '#9a5a30');
-  for (let y = TOP; y < FRONT; y++) {
+  // colonne par colonne : rebord arrière, dessus en bois verni, rebord avant en laiton, façade à panneaux
+  for (let X = 0; X < EDGE; X++) {
+    const b = bAt(X), f = fAt(X), x = Math.max(0, X - X0);
+    R(X, b - 4, 1, 1, OUT); R(X, b - 3, 1, 3, '#5a3018'); R(X, b - 3, 1, 1, '#7a4424');
+    R(X, b, 1, f - b, '#9a5a30');
+    R(X, b + 5, 1, 1, 'rgba(255,220,170,0.18)');
+    R(X, f, 1, 2, '#c8a040'); R(X, f, 1, 1, '#f0d070'); R(X, f + 2, 1, 1, OUT);
+    R(X, f + 3, 1, FLOOR - f - 3, '#6a3a1e');
+    const px = (X - 4) % 46, pt = f + 9, pb = FLOOR - 16;
+    if (X >= 4 && X < EDGE - 30 && px < 40 && pb - pt > 4) {
+      R(X, pt, 1, pb - pt, '#4a2612');
+      if (px > 0 && px < 39) { R(X, pt + 1, 1, pb - pt - 2, '#74422a'); R(X, pt + 1, 1, 1, '#8a5434'); }
+      if (px === 1) R(X, pt + 1, 1, pb - pt - 2, '#8a5434');
+    }
+    R(X, FLOOR - 8, 1, 8, '#3a2010'); R(X, FLOOR - 8, 1, 1, '#5a3018');
+    if (X < EDGE - 6) { R(X, FLOOR - 13, 1, 2, '#c8a040'); R(X, FLOOR - 13, 1, 1, '#f0d070'); }
+    if (X % 64 >= 20 && X % 64 < 22 && X < EDGE - 10) R(X, FLOOR - 15, 1, 5, '#8a6a2a');
+    // rambardes en laiton : une barre sur des poteaux, un peu au-dessus du bord
+    if (g.railBack(x)) {
+      R(X, b - 8, 1, 2, '#c8a040'); R(X, b - 8, 1, 1, '#f0d070'); R(X, b - 9, 1, 1, OUT);
+      if (X % 14 === 0) R(X, b - 6, 1, 4, '#8a6a2a');
+    }
+    if (g.railFront(x)) {
+      R(X, f - 7, 1, 2, '#c8a040', fx); R(X, f - 7, 1, 1, '#f0d070', fx); R(X, f - 8, 1, 1, OUT, fx); R(X, f - 5, 1, 1, OUT, fx);
+      if (X % 14 === 0) R(X, f - 5, 1, 5, '#8a6a2a', fx);
+    }
+  }
+  // veines du bois, limitées au dessus du comptoir
+  ctx.save();
+  surfacePath(ctx, g);
+  ctx.clip();
+  const { top: st, bot: sb } = spanOf(g);
+  for (let y = st; y < sb; y++) {
     for (let x = Math.floor(rnd() * 20); x < EDGE; x += 12 + Math.floor(rnd() * 30)) {
       R(x, y, 4 + Math.floor(rnd() * 14), 1, rnd() < 0.5 ? '#8a4e28' : '#a8683a');
     }
   }
-  R(0, TOP + 5, EDGE, 1, 'rgba(255,220,170,0.18)');
+  ctx.restore();
   // repères à la craie : 10, 25, 50 et 100 cm du bout
   for (const cm of [10, 25, 50, 100]) {
-    const x = Math.round(EDGE - cm / P.CM);
-    R(x, TOP, 1, 3, 'rgba(240,235,220,0.6)'); R(x, FRONT - 3, 1, 3, 'rgba(240,235,220,0.6)');
+    const X = Math.round(EDGE - cm / P.CM);
+    R(X, bAt(X), 1, 3, 'rgba(240,235,220,0.6)'); R(X, fAt(X) - 3, 1, 3, 'rgba(240,235,220,0.6)');
   }
-  // rebord avant en laiton
-  R(0, FRONT, EDGE, 2, '#c8a040'); R(0, FRONT, EDGE, 1, '#f0d070'); R(0, FRONT + 2, EDGE, 1, OUT);
-  // façade à panneaux
-  R(0, FRONT + 3, EDGE, FLOOR - FRONT - 3, '#6a3a1e');
-  for (let x = 4; x < EDGE - 30; x += 46) {
-    R(x, FRONT + 9, 40, FLOOR - FRONT - 25, '#4a2612');
-    R(x + 1, FRONT + 10, 38, FLOOR - FRONT - 27, '#74422a');
-    R(x + 1, FRONT + 10, 38, 1, '#8a5434'); R(x + 1, FRONT + 10, 1, FLOOR - FRONT - 27, '#8a5434');
-  }
-  R(0, FLOOR - 8, EDGE, 8, '#3a2010'); R(0, FLOOR - 8, EDGE, 1, '#5a3018');
-  // barre de pied en laiton
-  for (let x = 20; x < EDGE - 10; x += 64) { R(x, FLOOR - 15, 2, 5, '#8a6a2a'); }
-  R(0, FLOOR - 13, EDGE - 6, 2, '#c8a040'); R(0, FLOOR - 13, EDGE - 6, 1, '#f0d070');
   // bout du comptoir (le vide commence ici)
-  R(EDGE, TOP - 4, 4, FLOOR - TOP + 4, '#4a2612'); R(EDGE + 1, TOP - 3, 2, FLOOR - TOP + 2, '#5a3018');
-  R(EDGE, FRONT, 4, 2, '#c8a040');
-  R(EDGE + 4, TOP - 4, 1, FLOOR - TOP + 4, OUT);
-  counterArt = c;
-  return c;
+  const eb = bAt(EDGE - 1), ef = fAt(EDGE - 1);
+  R(EDGE, eb - 4, 4, FLOOR - eb + 4, '#4a2612'); R(EDGE + 1, eb - 3, 2, FLOOR - eb + 2, '#5a3018');
+  R(EDGE, ef, 4, 2, '#c8a040');
+  R(EDGE + 4, eb - 4, 1, FLOOR - eb + 4, OUT);
+  art = { back: c, front: fc };
+  counterArts.set(g.id, art);
+  return art;
 }
 
 // Chope aux couleurs du joueur (pieds en 0,0), selon la bière servie
@@ -106,6 +162,21 @@ const BEER_ART = {
     R(-6, -21, 12, 5, '#fdf6e0'); R(-7, -20, 2, 3, '#fdf6e0'); R(2, -22, 4, 1, '#fdf6e0'); R(-3, -17, 7, 1, '#f0e4c8');
     R(-6, -1, 12, 1, '#b8c8d0');
   }),
+  // tord-boyaux : verre trouble, alcool verdâtre, trois croix sur l'étiquette
+  tord: () => pixelSprite(14, 16, 7, 14, (R) => {
+    R(-4, -11, 8, 11, '#c8d8c0');
+    R(-3, -9, 6, 8, '#7a8a2a'); R(-3, -9, 1, 8, '#9aaa40'); R(2, -9, 1, 8, '#5a6a1a');
+    R(-3, -10, 6, 1, '#b8c060');
+    R(-2, -7, 1, 1, '#2a180c'); R(0, -7, 1, 1, '#2a180c'); R(2, -7, 1, 1, '#2a180c');
+    R(-1, -12, 1, 1, '#d8e8b0'); R(1, -13, 1, 1, '#d8e8b0');
+    R(-4, -1, 8, 1, '#a8b8a0');
+  }),
+  // bière au piment : rousse, un piment rouge accroché au bord
+  piment: () => pixelSprite(18, 18, 8, 16, (R) => {
+    mugBody(R, '#c84a1a', '#e8702a', '#902a10', '#fde0c0', '#f0c8a0');
+    R(4, -15, 2, 1, '#3a8a2a'); R(5, -14, 2, 2, '#d02a1a'); R(6, -12, 2, 3, '#d02a1a'); R(7, -9, 1, 2, '#a01a10');
+    R(5, -14, 1, 1, '#f06a50');
+  }),
 };
 function mugBody(R, beer, hi, lo, foam, foamLo) {
   R(-7, -10, 3, 1, GLASS); R(-7, -10, 1, 6, GLASS); R(-7, -5, 3, 1, GLASS); // anse
@@ -115,9 +186,10 @@ function mugBody(R, beer, hi, lo, foam, foamLo) {
   R(-4, -1, 8, 1, '#b8c8d0');
 }
 // bande à la couleur du joueur, posée par-dessus le sprite de la bière
-const LABEL = { blonde: [-3, -5, 6, 2], brune: [-3, -5, 6, 2], mousse: [-3, -5, 6, 2], shot: [-2, -3, 4, 1], geante: [-5, -8, 10, 3] };
+const LABEL = { blonde: [-3, -5, 6, 2], brune: [-3, -5, 6, 2], mousse: [-3, -5, 6, 2], shot: [-2, -3, 4, 1], geante: [-5, -8, 10, 3], tord: [-3, -4, 6, 2], piment: [-3, -5, 6, 2] };
 const mugs = new Map();
-function mug(col, b = 'blonde') {
+function mug(col, beer = 'blonde') {
+  const b = BEERS[beer]?.art || beer; // les deux tord-boyaux ont le même verre
   const key = `${b}${col}`;
   let m = mugs.get(key);
   if (m) return m;
@@ -143,6 +215,60 @@ const bottle = () => (bottleArt ||= pixelSprite(10, 22, 5, 20, (R) => {
   R(-3, -7, 6, 3, '#e8d8a8'); R(-2, -6, 4, 1, '#8a3a24');
 }));
 
+// tireuse à bière en laiton (comptoir à rambardes)
+let tapArt = null;
+const tap = () => (tapArt ||= pixelSprite(16, 30, 8, 28, (R) => {
+  R(-6, -3, 12, 3, '#8a6a2a'); R(-6, -3, 12, 1, '#c8a040');
+  R(-2, -20, 4, 17, '#c8a040'); R(-2, -20, 1, 17, '#f0d070'); R(1, -20, 1, 17, '#8a6a2a');
+  R(-5, -22, 10, 3, '#c8a040'); R(-5, -22, 10, 1, '#f0d070');
+  R(-4, -27, 2, 5, '#2a180c'); R(-4, -28, 2, 1, '#d02a1a'); R(2, -27, 2, 5, '#2a180c'); R(2, -28, 2, 1, '#e8a830');
+  R(-5, -17, 3, 1, '#8a6a2a'); R(-5, -16, 1, 2, '#8a6a2a'); R(3, -17, 3, 1, '#8a6a2a'); R(5, -16, 1, 2, '#8a6a2a');
+}));
+
+// cloison en travers du comptoir : une planche coiffée de laiton
+function drawWall(ctx, w) {
+  const [x1, y1, x2, y2] = w;
+  const n = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+  for (let k = 0; k <= n; k++) {
+    const X = sx(x1 + ((x2 - x1) * k) / n), Y = sy(y1 + ((y2 - y1) * k) / n);
+    ctx.fillStyle = OUT; ctx.fillRect(X - 2, Y - 8, 5, 9);
+  }
+  for (let k = 0; k <= n; k++) {
+    const X = sx(x1 + ((x2 - x1) * k) / n), Y = sy(y1 + ((y2 - y1) * k) / n);
+    ctx.fillStyle = '#6a3a1e'; ctx.fillRect(X - 1, Y - 7, 3, 7);
+    ctx.fillStyle = '#c8a040'; ctx.fillRect(X - 1, Y - 7, 3, 1);
+  }
+  const X = sx(Math.max(x1, x2)), Y = sy(Math.max(y1, y2));
+  ctx.fillStyle = '#4a2612'; ctx.fillRect(X - 1, Y - 6, 3, 6);
+  ctx.fillStyle = '#f0d070'; ctx.fillRect(X - 1, Y - 7, 3, 1);
+}
+
+// le chat du saloon, roulé en boule (face : de quel côté dort sa tête)
+let catArt = null;
+const cat = () => (catArt ||= pixelSprite(20, 14, 10, 12, (R) => {
+  R(-8, -7, 14, 7, '#d8883a'); R(-7, -8, 12, 1, '#d8883a');
+  R(-6, -6, 3, 5, '#b86a24'); R(-1, -7, 2, 6, '#b86a24'); R(3, -6, 2, 5, '#b86a24'); // rayures
+  R(-8, -2, 14, 2, '#f0b070');
+  R(4, -10, 6, 6, '#d8883a'); R(4, -12, 2, 2, '#d8883a'); R(8, -12, 2, 2, '#d8883a'); // tête et oreilles
+  R(5, -11, 1, 1, '#f0a0a0'); R(9, -11, 1, 1, '#f0a0a0');
+  R(5, -8, 2, 1, '#2a180c'); R(8, -8, 2, 1, '#2a180c'); R(7, -6, 1, 1, '#f07070'); // yeux fermés, truffe
+  R(-9, -3, 2, 3, '#d8883a'); R(-9, -1, 8, 1, '#b86a24'); // queue enroulée
+}));
+
+// sous-bock en carton, posé à plat
+function drawMat(ctx, mt) {
+  const x = sx(mt.x), y = sy(mt.y), r = P.MAT_R;
+  for (let k = -r; k <= r; k++) {
+    const w = Math.round(Math.sqrt(r * r - k * k) * 1.6);
+    ctx.fillStyle = Math.abs(k) === r ? OUT : '#e87858';
+    ctx.fillRect(x - w, y + Math.round(k * 0.7), 2 * w + 1, 1);
+  }
+  ctx.fillStyle = '#fdf6e0';
+  ctx.fillRect(x - 5, y - 1, 11, 1); ctx.fillRect(x - 3, y + 1, 7, 1);
+  ctx.fillStyle = OUT;
+  ctx.fillRect(x - Math.round(r * 1.6) - 1, y, 1, 1); ctx.fillRect(x + Math.round(r * 1.6) + 1, y, 1, 1);
+}
+
 function drawMug(ctx, x, y, col, rot = 0, b = 'blonde') {
   const m = mug(col, b);
   if (!rot) return ctx.drawImage(m, Math.round(x) - m.ox, Math.round(y) - m.oy);
@@ -156,41 +282,47 @@ function drawMug(ctx, x, y, col, rot = 0, b = 'blonde') {
 const hash = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
 
 // Décor des modificateurs posé sur le comptoir (sciure, vent, cire, gel, virage)
-function drawMods(ctx, m, now, env) {
+function drawMods(ctx, m, now, env, g) {
   if (!m) return;
   const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
+  const { top: TOP, bot: FRONT } = spanOf(g), D = FRONT - TOP;
   if (m.slick) {
     // gel : givre bleuté ; cire : le comptoir brille et un reflet passe
     if (m.slick < 0.7) {
-      R(0, TOP, EDGE, P.D, 'rgba(200,230,255,0.28)');
-      for (let k = 0; k < 90; k++) R(hash(k) * EDGE, TOP + hash(k + 50) * P.D, 1, 1, 'rgba(255,255,255,0.75)');
+      R(0, TOP, EDGE, D, 'rgba(200,230,255,0.28)');
+      for (let k = 0; k < 90; k++) R(hash(k) * EDGE, TOP + hash(k + 50) * D, 1, 1, 'rgba(255,255,255,0.75)');
       for (let x = 0; x < EDGE; x += 3) R(x, TOP, 2, 1 + Math.floor(hash(x) * 3), 'rgba(240,250,255,0.6)');
-    } else R(0, TOP, EDGE, P.D, 'rgba(255,240,210,0.1)');
+    } else R(0, TOP, EDGE, D, 'rgba(255,240,210,0.1)');
     const gx = ((now * 0.12) % (EDGE + 160)) - 80;
     for (let y = TOP; y < FRONT; y++) R(gx + (y - TOP) * 0.6, y, 5, 1, 'rgba(255,255,255,0.22)');
   }
   if (m.saw) {
-    const x0 = sx(m.saw.a);
-    R(x0, TOP + 1, m.saw.w, P.D - 2, 'rgba(216,192,136,0.22)');
-    for (let k = 0; k < m.saw.w * 2.2; k++) {
+    const x0 = sx(m.saw.a), w = m.saw.w;
+    R(x0, TOP + 1, w, D - 2, 'rgba(216,192,136,0.4)');
+    // bords irréguliers : la sciure déborde un peu de sa zone
+    for (let y = TOP + 1; y < FRONT - 1; y += 2) {
+      const l = Math.round(hash(y + m.saw.a) * 3), r = Math.round(hash(y * 1.7 + w) * 3);
+      R(x0 - l, y, l, 2, 'rgba(216,192,136,0.4)'); R(x0 + w, y, r, 2, 'rgba(216,192,136,0.4)');
+    }
+    for (let k = 0; k < w * 5; k++) {
       const h = hash(k + m.saw.a);
-      R(x0 + h * m.saw.w, TOP + 1 + hash(k * 3.1 + 7) * (P.D - 2), 1 + (h > 0.8), 1, h < 0.5 ? '#e0c890' : '#b8925a');
+      R(x0 + h * w, TOP + 1 + hash(k * 3.1 + 7) * (D - 2), 1 + (h > 0.75), 1, h < 0.4 ? '#f0dca0' : h < 0.75 ? '#d0aa6a' : '#9a7444');
     }
   }
   // courant d'air (zone) ou vent qui traverse toute la salle : poussière, neige ou pluie qui file
   const speck = env === 'neige' ? 'rgba(255,255,255,0.85)' : env === 'poussiere' ? 'rgba(200,150,90,0.8)' : env === 'orage' ? 'rgba(170,190,230,0.7)' : 'rgba(225,235,250,0.6)';
   if (m.wind) {
-    const x0 = sx(m.wind.a), dir = Math.sign(m.wind.fy), span = P.D + 40;
+    const x0 = sx(m.wind.a), dir = Math.sign(m.wind.fy), span = D + 40;
     for (let k = 0; k < Math.round(m.wind.w / 3); k++) {
       const ph = ((now * 0.07 + hash(k) * span) % span);
       const y = dir > 0 ? TOP - 20 + ph : FRONT + 20 - ph;
       R(x0 + hash(k + 9) * m.wind.w, y, 1, 3, speck);
     }
     // chevrons à la craie sur le rebord : sens de la poussée
-    const cx = Math.round(x0 + m.wind.w / 2), y0 = dir > 0 ? FRONT - 5 : TOP + 4;
+    const cx = Math.round(x0 + m.wind.w / 2), y0 = dir > 0 ? sy(g.frontAt(m.wind.a + m.wind.w / 2)) - 5 : sy(g.backAt(m.wind.a + m.wind.w / 2)) + 4;
     if (Math.floor(now / 300) % 2) for (let k = 0; k < 3; k++) R(cx - 2 + k, y0 + dir * k, 5 - 2 * k, 1, 'rgba(240,235,220,0.8)');
   }
-  if (m.push) {
+  if (m.push && g.clip === false) {
     const dir = Math.sign(m.push);
     for (let k = 0; k < 26; k++) {
       const ph = (now * 0.16 + hash(k) * (W + 40)) % (W + 40);
@@ -199,8 +331,9 @@ function drawMods(ctx, m, now, env) {
   }
   if (m.tilt) {
     // le comptoir penche : des flèches à la craie montrent de quel côté
-    const dir = Math.sign(m.tilt), y0 = dir > 0 ? FRONT - 4 : TOP + 3;
+    const dir = Math.sign(m.tilt);
     for (let x = 40; x < EDGE - 20; x += 60) {
+      const y0 = dir > 0 ? sy(g.frontAt(x - X0)) - 4 : sy(g.backAt(x - X0)) + 3;
       const off = Math.floor(now / 250) % 2;
       for (let k = 0; k < 3; k++) R(x - 2 + k, y0 + dir * (off + (k === 1 ? 1 : 0)), 1, 1, 'rgba(240,235,220,0.7)');
     }
@@ -232,9 +365,10 @@ function drawCoin(ctx, c, now) {
   if (Math.floor(now / 120) % 9 === 0) { R(x + 2, y - 5, 1, 3, '#fff8d0'); R(x + 1, y - 4, 3, 1, '#fff8d0'); }
 }
 
-function drawPuddle(ctx, pd, now) {
+function drawPuddle(ctx, pd, now, g) {
   if (!pd) return;
   const x0 = sx(pd.a), w = Math.round(pd.w);
+  const { top: TOP, bot: FRONT } = spanOf(g);
   for (let y = TOP + 2; y < FRONT - 1; y++) {
     const k = y - TOP;
     const l = Math.round(Math.sin(k * 0.9 + pd.a) * 2 + Math.sin(k * 0.4) * 2);
@@ -245,7 +379,7 @@ function drawPuddle(ctx, pd, now) {
   ctx.fillStyle = 'rgba(255,240,200,0.7)';
   for (let k = 0; k < 4; k++) {
     const gx = x0 + 5 + ((k * 17 + Math.floor(now / 90)) % Math.max(1, w - 10));
-    ctx.fillRect(gx, TOP + 4 + ((k * 7) % (P.D - 8)), 2, 1);
+    ctx.fillRect(gx, sy(g.mid(gx - X0)) - 8 + ((k * 7) % 16), 2, 1);
   }
 }
 
@@ -302,6 +436,7 @@ export class PinteScene extends MiniScene {
 
   popup(...args) { if (this.cur?.phase !== 'score') super.popup(...args); }
 
+  get g() { return counterOf(this.cur?.mods); }
   get thrower() { const c = this.cur; return c && c.phase === 'aim' ? c.order[c.turn] : null; }
   get myTurn() { return this.thrower === this.me && this.t >= this.cur.turnAt && this.playing; }
 
@@ -313,7 +448,7 @@ export class PinteScene extends MiniScene {
     const a = this.aim, c = this.cur, t = this.t;
     if (!a || !this.myTurn) return;
     if (a.stage === 'dir') {
-      a.a = dirAt(t - a.t0);
+      a.a = dirAt(t - a.t0, this.g);
       a.stage = 'pow';
       a.t0 = t;
       sfx('tick');
@@ -377,12 +512,28 @@ export class PinteScene extends MiniScene {
       const el = t - sl.at;
       while (!sl.sim.done && sl.sim.t <= el) sl.sim.step();
       for (; sl.seen < sl.sim.log.length; sl.seen++) this.slideEvent(sl.sim.log[sl.seen], sl);
+      const saw = sl.sim.m.saw;
+      if (saw) {
+        for (const q of sl.sim.p) {
+          const v = Math.hypot(q.vx, q.vy);
+          if (q.out || v < 0.01 || q.x < saw.a || q.x > saw.a + saw.w || Math.random() > v * 4 * dt / 16) continue;
+          this.parts.push({
+            x: sx(q.x) - q.r + Math.random() * 2 * q.r, y: sy(q.y) - 1, vx: -q.vx * (0.2 + Math.random() * 0.3) + (Math.random() - 0.5) * 0.04,
+            vy: -0.03 - Math.random() * 0.05, g: 0.00025, t: 0, max: 300 + Math.random() * 300, col: Math.random() < 0.5 ? '#f0dca0' : '#c8a060', r: 1,
+          });
+          if (!sl.sawAt || this.now - sl.sawAt > 260) { sl.sawAt = this.now; sfx('sand'); }
+        }
+      }
       if (sl.sim.done && el >= sl.sim.t) {
         const q = sl.sim.p.find((x) => x.id === sl.id);
         if (q && !q.out) {
           const cm = gapCm(q);
           this.popup(sx(q.x), sy(q.y) - 22, cm === 0 ? 'AU RAS !' : `${cm} CM`, this.color(q.o), cm <= 5);
           if (cm <= 5) sfx('good');
+          if (onMat(sl.sim.m, q)) {
+            this.popup(sx(q.x), sy(q.y) - 34, `SOUS-BOCK : +${P.MAT}`, MODS.sousbock.col, true);
+            sfx('coin');
+          }
         }
         this.slide = null;
       }
@@ -417,6 +568,27 @@ export class PinteScene extends MiniScene {
         sl.tchin = sl.sim.t;
         this.popup(sx(q.x), sy(q.y) - 20, 'TCHIN !', '#fdf6e0');
       }
+    } else if (e.type === 'spicy') {
+      sfx('puff');
+      sfx('dry', 0.02);
+      if (q && e.v > 0.02 && sl.sim.t - (sl.tchin ?? -1e9) > 400) {
+        sl.tchin = sl.sim.t;
+        this.popup(sx(q.x), sy(q.y) - 20, 'CARAMBA !', '#f0705a', e.v > 0.08);
+        this.spark(sx(q.x), sy(q.y) - 6, ['#f0705a', '#f8d070', '#d02a1a']);
+      }
+    } else if (e.type === 'meow') {
+      if (e.v > 0.01) sfx('meow');
+      if (q && e.v > 0.02) this.popup(sx(sl.sim.m.cat.x), sy(sl.sim.m.cat.y) - 20, 'MIAOU !', '#f0b070', e.v > 0.1);
+      sl.catAt = this.now;
+    } else if (e.type === 'rail') {
+      sfx('clank', 0.02);
+      // la chope lancée : RICOCHET, puis DOUBLE, TRIPLE… (une seule fois par choc franc)
+      if (q && q.id === sl.id && e.v > 0.025 && sl.sim.t - (sl.railAt ?? -1e9) > 200) {
+        sl.railAt = sl.sim.t;
+        sl.rico = (sl.rico || 0) + 1;
+        const txt = ['RICOCHET !', 'DOUBLE !', 'TRIPLE !'][sl.rico - 1] || `${sl.rico} BANDES !`;
+        this.popup(sx(q.x), sy(q.y) - 20, txt, '#f0d070', sl.rico > 1);
+      }
     } else if (e.type === 'bonk') {
       sfx('clank', 0.05);
       if (q && e.v > 0.03) this.popup(sx(q.x), sy(q.y) - 20, 'BONK !', '#b8e070');
@@ -428,7 +600,7 @@ export class PinteScene extends MiniScene {
     } else if (e.type === 'fall' && q) {
       this.falls.push({
         x: q.x, y: q.y, vx: q.vx, vy: q.vy, o: q.o, b: q.b, edge: e.edge, at: sl.at + e.t,
-        floor: e.edge === 'back' ? FRONT + 6 : e.edge === 'front' ? FLOOR + 6 : FLOOR + 3,
+        floor: e.edge === 'back' ? sy(this.g.backAt(q.x)) + 32 : e.edge === 'front' ? FLOOR + 6 : FLOOR + 3,
       });
       const mine = q.o === this.me;
       const by = sl.who !== q.o ? (sl.who === this.me ? 'DANS LE VIDE !' : 'POUSSÉE !') : 'TOMBÉE !';
@@ -442,6 +614,13 @@ export class PinteScene extends MiniScene {
     const x = sx(f.x + f.vx * slow * 0.7) + (f.edge === 'end' ? Math.round(el * 0.02) : 0);
     const y = sy(f.y + f.vy * slow * 0.7) + 0.5 * GRAV * el * el;
     return { x, y, rot: (el / 140) * (f.edge === 'back' ? -1 : 1) };
+  }
+
+  spark(x, y, cols) {
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      this.parts.push({ x, y, vx: Math.cos(a) * 0.09, vy: Math.sin(a) * 0.07 - 0.04, g: 0.0003, t: 0, max: 450, col: cols[i % cols.length], r: 1 + (i % 3 === 0) });
+    }
   }
 
   sparkle(x, y) {
@@ -471,9 +650,16 @@ export class PinteScene extends MiniScene {
     if (m?.wind && t >= 0) drawShutters(ctx, this.room, now);
     for (const f of this.falls) if (f.edge === 'back') this.drawFall(ctx, f, t);
     this.drawThrower(ctx);
-    ctx.drawImage(counter(), 0, 0);
-    drawPuddle(ctx, m?.puddle, now);
-    drawMods(ctx, m, now, this.env?.id);
+    const g = this.g, art = counter(g);
+    ctx.drawImage(art.back, 0, 0);
+    ctx.save();
+    surfacePath(ctx, g);
+    ctx.clip();
+    drawPuddle(ctx, m?.puddle, now, g);
+    drawMods(ctx, m, now, this.env?.id, { ...g, clip: true });
+    ctx.restore();
+    if (m?.push) drawMods(ctx, { push: m.push }, now, this.env?.id, { ...g, clip: false });
+    if (m?.mat) drawMat(ctx, m.mat);
     this.drawGuide(ctx);
     // pièce d'or : encore là tant que personne ne l'a empochée (pendant une glissade, jusqu'au passage de la chope)
     const sl = this.slide;
@@ -483,13 +669,19 @@ export class PinteScene extends MiniScene {
     const pints = sl ? sl.sim.p.filter((q) => !q.out) : (c?.pints || []).slice();
     if (c && c.phase === 'aim' && t >= c.turnAt - 300) pints.push({ x: P.START, y: P.D / 2, o: c.order[c.turn], b: c.beers?.[c.turn] });
     const items = [...pints, ...(m?.bottles || []).map((o) => ({ ...o, bottle: true }))];
+    if (m?.cat) items.push({ ...m.cat, cat: true });
+    for (const o of g.taps) items.push({ ...o, tap: true });
+    for (const w of g.walls || []) items.push({ y: Math.max(w[1], w[3]), x: w[0], wall: w });
     items.sort((a, b) => a.y - b.y);
     for (const q of items) {
-      const r = q.bottle ? P.BOTTLE_R : beerOf(q).r;
+      if (q.wall) { drawWall(ctx, q.wall); continue; }
+      const r = q.bottle ? P.BOTTLE_R : q.cat ? P.CAT_R : q.tap ? P.TAP_R : beerOf(q).r;
       ctx.fillStyle = 'rgba(40,20,10,0.35)';
       ctx.fillRect(sx(q.x) - r, sy(q.y) - 1, 2 * r + 1, 2);
-      if (q.bottle) { const bt = bottle(); ctx.drawImage(bt, sx(q.x) - bt.ox, sy(q.y) - bt.oy); } else drawMug(ctx, sx(q.x), sy(q.y), this.color(q.o), 0, q.b);
+      if (q.tap) { const tp = tap(); ctx.drawImage(tp, sx(q.x) - tp.ox, sy(q.y) - tp.oy); } else if (q.bottle) { const bt = bottle(); ctx.drawImage(bt, sx(q.x) - bt.ox, sy(q.y) - bt.oy); } else if (q.cat) this.drawCat(ctx, q, now);
+      else drawMug(ctx, sx(q.x), sy(q.y), this.color(q.o), 0, q.b);
     }
+    ctx.drawImage(art.front, 0, 0);
     for (const f of this.falls) if (f.edge !== 'back') this.drawFall(ctx, f, t);
     for (const p of this.parts) {
       ctx.globalAlpha = Math.min(1, 2 * (1 - p.t / p.max));
@@ -502,6 +694,25 @@ export class PinteScene extends MiniScene {
     if (c.phase === 'score') this.drawScore(ctx, c);
     else { this.drawGauges(ctx); this.drawLegend(ctx, c); }
     this.drawBanner(ctx, c, t);
+  }
+
+  // le chat dort (il respire, des Z montent) ; heurté, il sursaute un instant
+  drawCat(ctx, ct, now) {
+    const sl = this.slide, jolt = sl?.catAt && now - sl.catAt < 300 ? -2 : 0;
+    const spr = cat(), x = sx(ct.x), y = sy(ct.y) + jolt - (Math.floor(now / 700) % 2);
+    if (ct.face < 0) {
+      ctx.save();
+      ctx.translate(x, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(spr, -spr.ox, y - spr.oy);
+      ctx.restore();
+    } else ctx.drawImage(spr, x - spr.ox, y - spr.oy);
+    if (!jolt) {
+      const ph = (now % 2100) / 2100;
+      ctx.globalAlpha = 1 - ph;
+      canvasText(ctx, 'z', x + ct.face * 8 + Math.round(ph * 4) * ct.face, y - 16 - Math.round(ph * 10), { color: '#fdf6e0' });
+      ctx.globalAlpha = 1;
+    }
   }
 
   drawFall(ctx, f, t) {
@@ -525,22 +736,29 @@ export class PinteScene extends MiniScene {
     if (!c || c.phase !== 'aim') return null;
     if (this.myTurn && this.aim) {
       const a = this.aim;
-      if (a.stage === 'dir') return { a: dirAt(t - a.t0), p: null, mine: true };
+      if (a.stage === 'dir') return { a: dirAt(t - a.t0, this.g), p: null, mine: true };
       if (a.stage === 'pow') return { a: a.a, p: powAt(t - a.t0), mine: true };
       return { a: a.a, p: a.p, mine: true };
     }
     const d = this.remoteAim;
     if (!d) return null;
-    return d.s === 'dir' ? { a: dirAt(t - d.t), p: null } : { a: d.a, p: powAt(t - d.t) };
+    return d.s === 'dir' ? { a: dirAt(t - d.t, this.g), p: null } : { a: d.a, p: powAt(t - d.t) };
   }
 
-  // trajectoire visée : quelques points à la craie sur le comptoir
+  // trajectoire visée : des points à la craie sur le comptoir, qui suivent les ricochets sur les rambardes
   drawGuide(ctx) {
-    const g = this.aimNow();
-    if (!g) return;
-    ctx.fillStyle = Math.abs(g.a) > SAFE ? 'rgba(240,112,90,0.8)' : 'rgba(253,246,224,0.7)';
-    for (let k = 14; k < 120; k += 7) {
-      ctx.fillRect(sx(P.START + k * Math.cos(g.a)), sy(P.D / 2 + k * Math.sin(g.a)), 2, 1);
+    const aim = this.aimNow();
+    if (!aim) return;
+    const g = this.g, mods = { lay: g.id }, v = speedFor(1, mods);
+    ctx.fillStyle = isSafe(g, aim.a) ? 'rgba(253,246,224,0.7)' : 'rgba(240,112,90,0.8)';
+    const sim = new Slide([{ id: 0, b: 'blonde', x: P.START, y: P.D / 2, vx: v * Math.cos(aim.a), vy: v * Math.sin(aim.a) }], mods);
+    const q = sim.p[0], len = g.rails ? 200 : 120;
+    let run = 0, next = 14, px = q.x, py = q.y;
+    while (run < len && !sim.done && !q.out) {
+      sim.step();
+      run += Math.hypot(q.x - px, q.y - py);
+      px = q.x; py = q.y;
+      if (run >= next) { next += 7; ctx.fillRect(sx(q.x), sy(q.y), 2, 1); }
     }
   }
 
@@ -549,12 +767,12 @@ export class PinteScene extends MiniScene {
     if (!g) return;
     const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
     // direction : cadran, zone verte = la chope reste sur le comptoir jusqu'au bout
-    const cx = 64, cy = 192, r = 20, k = 7;
+    const G = this.g, cx = 64, cy = 192, r = 20, k = (G.rails ? 1.3 : 0.7) / G.maxa;
     R(cx - r - 4, cy - r - 4, 2 * r + 9, r + 6, 'rgba(26,15,10,0.7)');
     for (let s = -1; s <= 1; s += 0.02) {
-      const ang = s * P.MAXA;
+      const ang = s * G.maxa;
       const v = -Math.PI / 2 + ang * k;
-      R(cx + Math.cos(v) * r, cy + Math.sin(v) * r, 2, 2, Math.abs(ang) > SAFE ? '#f0705a' : '#b8e070');
+      R(cx + Math.cos(v) * r, cy + Math.sin(v) * r, 2, 2, isSafe(G, ang) ? '#b8e070' : '#f0705a');
     }
     const v = -Math.PI / 2 + g.a * k;
     for (let d = 0; d < r - 2; d++) R(cx + Math.cos(v) * d, cy + Math.sin(v) * d, 1, 1, '#fdf6e0');
@@ -578,14 +796,15 @@ export class PinteScene extends MiniScene {
   }
 
   drawBanner(ctx, c, t) {
-    const list = c.mods?.list || [];
     if (t < c.turnAt && c.turn === 0 && c.phase === 'aim') {
-      // annonce de la manche et de ses surprises, une ligne après l'autre
+      // annonce de la manche, de son comptoir et de ses surprises, une ligne après l'autre
+      const lay = c.mods?.lay && c.mods.lay !== 'droit' ? COUNTERS[c.mods.lay] : null;
+      const lines = [...(lay ? [[lay.name, lay.col]] : []), ...(c.mods?.list || []).map((id) => [modName(id, c.mods), MODS[id].col])];
       ctx.fillStyle = 'rgba(26,15,10,0.78)';
-      ctx.fillRect(0, 50, W, 32 + (list.length ? 6 + list.length * 12 : 0));
+      ctx.fillRect(0, 50, W, 32 + (lines.length ? 6 + lines.length * 12 : 0));
       canvasText(ctx, `MANCHE ${c.n} / ${c.rounds}`, W / 2, 56, { size: 16, color: '#f8d070' });
-      const shown = Math.floor((t - (c.turnAt - P.INTRO - 900 * list.length)) / 700) + 1;
-      list.slice(0, Math.max(1, shown)).forEach((id, k) => canvasText(ctx, modName(id, c.mods), W / 2, 82 + k * 12, { color: MODS[id].col }));
+      const shown = Math.floor((t - (c.turnAt - P.INTRO - 900 * lines.length)) / 700) + 1;
+      lines.slice(0, Math.max(1, shown)).forEach(([txt, col], k) => canvasText(ctx, txt, W / 2, 82 + k * 12, { color: col }));
       return;
     }
     const who = this.thrower;
@@ -606,9 +825,10 @@ export class PinteScene extends MiniScene {
 
   // rappel des surprises de la manche, en haut à droite
   drawLegend(ctx, c) {
-    const list = c.mods?.list || [];
-    if (!list.length || this.t < c.turnAt) return;
-    list.forEach((id, k) => canvasText(ctx, modLabel(id, c.mods), W - 4, 4 + k * 10, { align: 'right', color: MODS[id].col }));
+    const lay = c.mods?.lay && c.mods.lay !== 'droit' ? COUNTERS[c.mods.lay] : null;
+    const lines = [...(lay ? [[lay.label, lay.col]] : []), ...(c.mods?.list || []).map((id) => [modLabel(id, c.mods), MODS[id].col])];
+    if (!lines.length || this.t < c.turnAt) return;
+    lines.forEach(([txt, col], k) => canvasText(ctx, txt, W - 4, 4 + k * 10, { align: 'right', color: col }));
   }
 
   // fin de manche : écart de chaque chope, et la tournée pour la plus proche
@@ -620,6 +840,10 @@ export class PinteScene extends MiniScene {
       const bob = Math.round(Math.sin(this.now / 150) * 2);
       ctx.fillStyle = '#f8d070';
       for (let k = 0; k < 4; k++) ctx.fillRect(sx(q.x) - 3 + k, sy(q.y) - 26 + k + bob, 7 - 2 * k, 1);
+    }
+    for (const r of c.res) {
+      const q = r.mat && c.pints.find((x) => x.id === r.id);
+      if (q) canvasText(ctx, `+${P.MAT}`, sx(q.x), sy(q.y) - 30, { color: MODS.sousbock.col });
     }
     const mult = c.mods?.mult || 1;
     ctx.fillStyle = 'rgba(26,15,10,0.75)';

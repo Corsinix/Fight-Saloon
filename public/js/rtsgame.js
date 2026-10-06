@@ -1,7 +1,8 @@
 // Mini-jeu « Conquête de l'Ouest » : un petit jeu de stratégie en temps réel. Chaque joueur tient un fort,
 // bâtit des mines (sur les filons), des ranchs et des plantations pour gagner de l'or et des vivres, recrute
 // des unités (il faut les ressources, et elles mettent du temps à sortir) et les envoie prendre les forts
-// adverses. Le dernier fort debout gagne ; au bout du temps, c'est le meilleur score.
+// adverses. Pas de limite de temps : le dernier fort debout gagne, seul (les alliances finissent par tomber).
+// Diplomatie : on s'allie, on se trahit (le trahi est affaibli 1 min), on s'envoie de l'or, des vivres et des messages.
 // Pas de spam de bâtiments : chaque bâtiment de plus du même type coûte plus cher, leur nombre est limité,
 // bâtir ne rapporte pas de points, un seul chantier à la fois (construction ou amélioration), et seuls le fort,
 // les mines et les tours étendent le territoire. La population maximale dépend des ranchs.
@@ -122,6 +123,31 @@ export function uStats(kind, tech = 0, rank = 0) {
 }
 
 export const RTS_PTS = { kill: 10, raze: 40, fort: 300, minePer: 0.1 }; // bâtir ne rapporte rien : pas de spam
+
+// Diplomatie : alliances (on ne se tire plus dessus), trahisons, dons et messages.
+// Le joueur trahi est affaibli pendant 1 min : ses unités font moins de dégâts et en prennent plus,
+// ses bâtiments sont plus fragiles. Un seul joueur gagne : une alliance demande au moins 3 joueurs en lice et
+// ne peut pas allier tout le monde (il faut un ennemi commun) ; quand il ne reste que des alliés (l'ennemi est tombé),
+// les alliances se rompent d'elles-mêmes au bout de 30 s, sans malus. Trahir avant, c'est frapper le premier.
+export const DIPLO = {
+  betray: 60000, // durée du malus du joueur trahi
+  weak: { dps: 0.7, hurt: 1.3, bld: 1.6 }, // ses unités : -30 % de dégâts, +30 % de dégâts reçus ; ses bâtiments : +60 %
+  offerMs: 25000, // une proposition d'alliance sans réponse tombe
+  gift: { gold: 50, food: 30 },
+  sayMs: 1500, // un message à la fois
+  lastStand: 30000, // plus que des alliés : délai avant la fin des alliances
+};
+// Messages tout faits (au doigt, pas de clavier) ; help : montre son fort, join : nomme le fort que son armée attaque
+export const WORDS = [
+  { id: 'help', text: 'AU SECOURS !' },
+  { id: 'join', text: 'ATTAQUONS ENSEMBLE !' },
+  { id: 'ok', text: "J'ARRIVE !" },
+  { id: 'thanks', text: "MERCI, L'AMI !" },
+  { id: 'peace', text: 'FAISONS LA PAIX' },
+  { id: 'threat', text: 'TU VAS LE PAYER !' },
+];
+export const WORD_IDS = WORDS.map((w) => w.id);
+export const pairKey = (a, b) => (a < b ? `${a}${b}` : `${b}${a}`); // alliance entre deux joueurs (index à un chiffre)
 
 // Nombre de bâtiments d'un type (chantiers compris) et prix du suivant
 export const countOf = (blds, owner, kind) => blds.reduce((n, b) => n + (b.owner === owner && b.kind === kind ? 1 : 0), 0);
@@ -444,8 +470,13 @@ export class RtsGame {
       gold: RTS.start.gold, food: RTS.start.food, order: { mode: 'defend' },
       tech: Object.fromEntries(UNIT_IDS.map((k) => [k, 0])),
       stats: { throws: 0, catches: 0, hits: 0, hurt: 0 },
-      ai: pl.bot ? { next: 1500 + i * 400, wave: 6 + Math.floor(Math.random() * 4) } : null,
+      weakUntil: -1, saidAt: -1e9, // fin du malus de trahison ; dernier message
+      ai: pl.bot ? { next: 1500 + i * 400, wave: 6 + Math.floor(Math.random() * 4), pactAt: 60000 + Math.random() * 60000, grudge: new Set(), inbox: [] } : null,
     }));
+    this.pacts = new Set(); // alliances (pairKey)
+    this.pactAt = new Map(); // alliance -> moment où elle a été conclue
+    this.offers = new Map(); // 'i>j' (i propose à j) -> fin de la proposition
+    this.endPact = null; // plus que des alliés : moment où leurs alliances tombent
     this.nextId = 1;
     this.blds = this.world.forts.map(([fx, fy], i) => ({
       id: this.nextId++, owner: i, kind: 'fort', x: fx - 1, y: fy - 1, w: 3, lv: 1, up: 0, hp: FORT.hp, maxHp: FORT.hp, build: 0, queue: [], prog: 0, cd: 0,
@@ -492,6 +523,11 @@ export class RtsGame {
 
   fortOf(i) { return this.blds.find((b) => b.kind === 'fort' && b.owner === i); }
   statsOf(u) { return uStats(u.kind, this.p[u.owner].tech[u.kind], u.rank); }
+  allied(a, b) { return a !== b && this.pacts.has(pairKey(a, b)); }
+  foe(a, b) { return a !== b && !this.pacts.has(pairKey(a, b)); }
+  weak(i) { return this.t < (this.p[i]?.weakUntil ?? -1); } // trahi depuis moins d'une minute
+  inPlay(j) { return !!this.p[j]?.alive && !this.p[j].left; }
+  aliveIdx() { return this.p.map((_, j) => j).filter((j) => this.inPlay(j)); }
 
   // ---------------------------------------------------------- commandes des joueurs
   act(i, a) {
@@ -508,6 +544,9 @@ export class RtsGame {
     else if (a.kind === 'upgrade') err = this.upgrade(i, a.bid);
     else if (a.kind === 'order') err = this.order(i, a);
     else if (a.kind === 'cmd') err = this.command(i, a);
+    else if (a.kind === 'diplo') err = this.diplo(i, a);
+    else if (a.kind === 'gift') err = this.gift(i, a);
+    else if (a.kind === 'say') err = this.say(i, a);
     else err = 'Action inconnue.';
     if (err) return { error: err };
     return { events: this.flush() };
@@ -589,6 +628,7 @@ export class RtsGame {
   order(i, a) {
     const p = this.p[i];
     if (a.mode === 'defend') p.order = { mode: 'defend' };
+    else if (a.mode === 'attack' && this.allied(i, a.target)) return "Vous êtes alliés : romps d'abord l'alliance (Pactes).";
     else if (a.mode === 'attack' && Number.isInteger(a.target) && this.p[a.target]?.alive && a.target !== i) p.order = { mode: 'attack', target: a.target };
     else if (a.mode === 'rally' && Number.isFinite(a.x) && Number.isFinite(a.y)) {
       const g = passableNear(this.world, clamp(a.x, 4, RTS.mapW - 4), clamp(a.y, 4, RTS.mapH - 4));
@@ -626,12 +666,118 @@ export class RtsGame {
       const tu = this.units.find((u) => u.id === a.target && u.owner !== i);
       const tb = !tu && this.blds.find((b) => b.id === a.target && b.owner !== i);
       if (!tu && !tb) return null;
+      if (this.allied(i, (tu || tb).owner)) return "Vous êtes alliés : romps d'abord l'alliance (Pactes).";
       mine.forEach((u) => { u.cmd = { mode: 'attack', id: a.target }; });
     } else if (m === 'home') mine.forEach((u) => { u.cmd = { mode: 'home' }; });
     else if (m === 'fort') {
       if (!Number.isInteger(a.target) || a.target === i || !this.p[a.target]?.alive) return 'Ordre invalide.';
+      if (this.allied(i, a.target)) return "Vous êtes alliés : romps d'abord l'alliance (Pactes).";
       mine.forEach((u) => { u.cmd = { mode: 'fort', target: a.target }; });
     } else return 'Ordre invalide.';
+    return null;
+  }
+
+  // ---------------------------------------------------------- diplomatie
+  // op : offer (proposer une alliance), accept, refuse, betray (rompre l'alliance : le trahi est affaibli 1 min)
+  diplo(i, a) {
+    const j = a.to;
+    if (!Number.isInteger(j) || j === i || !this.inPlay(j)) return 'Ce joueur n\'est plus là.';
+    const k = pairKey(i, j), q = this.p[j];
+    if (a.op === 'offer' || a.op === 'accept') {
+      if (this.pacts.has(k)) return 'Vous êtes déjà alliés.';
+      if (this.aliveIdx().length < 3) return 'Vous n\'êtes plus que deux : un seul fort restera debout.';
+      if (this.allAllied([k])) return 'Vous seriez tous alliés : il faut un ennemi commun, un seul fort gagnera.';
+      const theirs = this.offers.has(`${j}>${i}`);
+      if (a.op === 'accept' && !theirs) return 'Sa proposition est tombée.';
+      if (a.op === 'offer' && !theirs) {
+        if (this.offers.has(`${i}>${j}`)) return 'Proposition déjà envoyée : attends sa réponse.';
+        this.offers.set(`${i}>${j}`, this.t + DIPLO.offerMs);
+        this.push({ type: 'diplo', op: 'offer', by: i, to: j });
+        return null;
+      }
+      // on accepte (ou chacun l'a proposée à l'autre) : cessez-le-feu entre les deux
+      this.offers.delete(`${i}>${j}`);
+      this.offers.delete(`${j}>${i}`);
+      this.pacts.add(k);
+      this.pactAt.set(k, this.t);
+      this.calm(i, j);
+      this.calm(j, i);
+      this.push({ type: 'diplo', op: 'ally', by: i, to: j });
+    } else if (a.op === 'refuse') {
+      if (!this.offers.delete(`${j}>${i}`)) return null;
+      this.push({ type: 'diplo', op: 'refuse', by: i, to: j });
+    } else if (a.op === 'betray') {
+      if (!this.pacts.has(k)) return 'Vous n\'êtes pas alliés.';
+      this.pacts.delete(k);
+      q.weakUntil = this.t + DIPLO.betray;
+      this.push({ type: 'diplo', op: 'betray', by: i, to: j });
+      if (q.ai) { q.ai.grudge.add(i); q.ai.inbox.push({ at: this.t + rnd(1200, 2500), from: i, w: 'betrayed' }); }
+    } else return 'Ordre invalide.';
+    return null;
+  }
+
+  // tous les joueurs en lice seraient-ils alliés entre eux (avec, en plus, ces alliances) ?
+  allAllied(extra = []) {
+    const alive = this.aliveIdx(), has = (k) => this.pacts.has(k) || extra.includes(k);
+    return alive.length > 1 && alive.every((a) => alive.every((b) => a === b || has(pairKey(a, b))));
+  }
+
+  // plus que des alliés en lice (leur ennemi commun est tombé) : un seul doit gagner, les alliances
+  // tombent d'elles-mêmes au bout de 30 s (sans malus) ; d'ici là, chacun peut trahir pour frapper le premier
+  lastStand(t, alive) {
+    if (!this.allAllied()) { this.endPact = null; return; }
+    if (this.endPact == null) {
+      this.endPact = t + DIPLO.lastStand;
+      this.offers.clear();
+      this.push({ type: 'diplo', op: 'lastStand', ms: DIPLO.lastStand });
+      return;
+    }
+    if (t < this.endPact) return;
+    this.endPact = null;
+    for (const a of alive) for (const b of alive) if (a < b) this.pacts.delete(pairKey(a, b));
+    this.push({ type: 'diplo', op: 'dissolve' });
+  }
+
+  // alliance conclue : i cesse d'attaquer j (ordre général et ordres particuliers)
+  calm(i, j) {
+    const p = this.p[i];
+    if (p.order.mode === 'attack' && p.order.target === j) p.order = { mode: 'defend' };
+    for (const u of this.units) {
+      const c = u.cmd;
+      if (u.owner !== i || !c) continue;
+      if (c.mode === 'fort' && c.target === j) u.cmd = null;
+      else if (c.mode === 'attack' && (this.units.find((v) => v.id === c.id) || this.blds.find((b) => b.id === c.id))?.owner === j) u.cmd = { mode: 'guard', x: u.x, y: u.y };
+    }
+  }
+
+  // un peu d'or ou de vivres pour un autre joueur (allié, ou ennemi qu'on veut amadouer)
+  gift(i, a) {
+    const j = a.to;
+    if (!Number.isInteger(j) || j === i || !this.inPlay(j)) return 'Ce joueur n\'est plus là.';
+    const p = this.p[i], q = this.p[j];
+    const gold = a.res === 'food' ? 0 : DIPLO.gift.gold, food = a.res === 'food' ? DIPLO.gift.food : 0;
+    if (p.gold < gold) return `Il te faut ${gold} or.`;
+    if (p.food < food) return `Il te faut ${food} vivres.`;
+    p.gold -= gold; p.food -= food;
+    q.gold += gold; q.food += food;
+    this.push({ type: 'gift', by: i, to: j, gold, food });
+    if (q.ai) q.ai.inbox.push({ at: this.t + rnd(1000, 2500), from: i, w: 'gift' });
+    return null;
+  }
+
+  // message tout fait à un joueur (WORDS)
+  say(i, a) {
+    const j = a.to, w = WORDS[a.w];
+    if (!Number.isInteger(j) || j === i || !this.p[j] || this.p[j].left) return 'Ce joueur n\'est plus là.';
+    if (!w) return 'Message inconnu.';
+    const p = this.p[i];
+    if (this.t - p.saidAt < DIPLO.sayMs) return 'Pas si vite, cowboy.';
+    p.saidAt = this.t;
+    const ev = { type: 'say', by: i, to: j, w: a.w };
+    if (w.id === 'help') Object.assign(ev, bCenter(this.fortOf(i)));
+    if (w.id === 'join' && p.order.mode === 'attack') ev.on = p.order.target;
+    this.push(ev);
+    if (this.p[j].ai) this.p[j].ai.inbox.push({ at: this.t + rnd(1200, 2600), from: i, w: w.id, on: ev.on });
     return null;
   }
 
@@ -659,10 +805,10 @@ export class RtsGame {
     if (c) {
       if (c.mode === 'amove' || c.mode === 'guard') return { x: c.x, y: c.y };
       if (c.mode === 'home') return this.homeSpot(u);
-      if (c.mode === 'fort' && this.p[c.target]?.alive) { const f = bCenter(this.fortOf(c.target)); return { x: f.x, y: f.y }; }
+      if (c.mode === 'fort' && this.p[c.target]?.alive && this.foe(u.owner, c.target)) { const f = bCenter(this.fortOf(c.target)); return { x: f.x, y: f.y }; }
     }
     const o = this.p[u.owner].order;
-    if (o.mode === 'attack' && this.p[o.target]?.alive) { const f = bCenter(this.fortOf(o.target)); return { x: f.x, y: f.y }; }
+    if (o.mode === 'attack' && this.p[o.target]?.alive && this.foe(u.owner, o.target)) { const f = bCenter(this.fortOf(o.target)); return { x: f.x, y: f.y }; }
     if (o.mode === 'rally') return { x: o.x, y: o.y };
     return this.homeSpot(u);
   }
@@ -700,15 +846,17 @@ export class RtsGame {
     if (t < 0) return this.flush();
     const dt = Math.min(0.25, Math.max(0, (t - this.lastT) / 1000));
     this.lastT = t;
+    for (const [k, until] of this.offers) if (t > until) this.offers.delete(k);
     this.economy(dt);
     this.production(dt * 1000);
     this.combat(dt, t);
     this.repair(dt, t);
     this.p.forEach((p, i) => { if (p.ai && p.alive && !p.left && t >= p.ai.next) this.botThink(i, t); });
     if (t - this.lastSnap >= RTS.snapMs) { this.lastSnap = t; this.push(this.snap()); this.shots = []; }
-    const alive = this.p.filter((p) => p.alive && !p.left);
-    if (alive.length <= 1 && this.p.length > 1) this.finish();
-    else if (t >= this.duration + 400) this.finish();
+    // pas de limite de temps : la partie s'arrête quand il ne reste qu'un fort debout (un seul gagnant)
+    const alive = this.aliveIdx();
+    if (this.p.length > 1 && alive.length <= 1) this.finish();
+    else this.lastStand(t, alive);
     return this.flush();
   }
 
@@ -782,7 +930,7 @@ export class RtsGame {
     let best = null, bd = look;
     if (!preferBld) {
       for (const v of this.units) {
-        if (v.owner === u.owner) continue;
+        if (!this.foe(v.owner, u.owner)) continue;
         const d = Math.hypot(v.x - u.x, v.y - u.y);
         if (d < bd) { bd = d; best = v; }
       }
@@ -790,7 +938,7 @@ export class RtsGame {
     }
     bd = look + 10;
     for (const b of this.blds) {
-      if (b.owner === u.owner || !this.p[b.owner].alive) continue;
+      if (!this.foe(b.owner, u.owner) || !this.p[b.owner].alive) continue;
       const c = bCenter(b);
       const d = Math.hypot(c.x - u.x, c.y - u.y) - b.w * 4;
       if (d < bd) { bd = d; best = b; }
@@ -813,7 +961,7 @@ export class RtsGame {
     if (d > reach) { if (!still) this.step(u, fc.x, fc.y, dt, st.speed); return; }
     u.face = fc.x < u.x ? -1 : 1;
     const amt = isB ? st.siege : st.dps * (UNITS[u.kind].strong === foe.kind ? RTS.counter : 1) * (terrainPx(this.world, foe.x, foe.y).cover || 1);
-    this.damage(foe, amt * dt, u.owner, isB, u);
+    this.damage(foe, amt * dt * (this.weak(u.owner) ? DIPLO.weak.dps : 1), u.owner, isB, u);
     if (t - u.shotAt > (u.kind === 'dyn' && isB ? 900 : 550)) { u.shotAt = t; this.shots.push([Math.round(u.x), Math.round(u.y), Math.round(fc.x), Math.round(fc.y), UNIT_IDS.indexOf(u.kind)]); }
   }
 
@@ -830,10 +978,10 @@ export class RtsGame {
     }
     if (c?.mode === 'attack') {
       const tg = this.units.find((v) => v.id === c.id) || this.blds.find((b) => b.id === c.id && this.p[b.owner].alive);
-      if (tg) { this.engage(u, tg, st, dt, t); return; }
+      if (tg && this.foe(u.owner, tg.owner)) { this.engage(u, tg, st, dt, t); return; }
       u.cmd = { mode: 'guard', x: u.x, y: u.y };
     }
-    if (c?.mode === 'fort' && !this.p[c.target]?.alive) u.cmd = null;
+    if (c?.mode === 'fort' && (!this.p[c.target]?.alive || this.allied(u.owner, c.target))) u.cmd = null;
     const reach = this.reachOf(u, st);
     if (c?.mode === 'hold') {
       const foe = this.nearestFoe(u, reach + 2, u.kind === 'dyn');
@@ -862,7 +1010,7 @@ export class RtsGame {
       const g = guardOf(b.kind, b.lv);
       const range = g.range + (terrainPx(this.world, c.x, c.y).range || 0);
       let best = null, bd = range;
-      for (const v of this.units) { if (v.owner === b.owner) continue; const d = Math.hypot(v.x - c.x, v.y - c.y); if (d < bd) { bd = d; best = v; } }
+      for (const v of this.units) { if (!this.foe(v.owner, b.owner)) continue; const d = Math.hypot(v.x - c.x, v.y - c.y); if (d < bd) { bd = d; best = v; } }
       if (best) {
         this.damage(best, g.dps * (terrainPx(this.world, best.x, best.y).cover || 1) * dt, b.owner, false);
         if (t - b.cd > 650) { b.cd = t; this.shots.push([Math.round(c.x), Math.round(c.y - b.w * 4), Math.round(best.x), Math.round(best.y), 4]); }
@@ -894,6 +1042,7 @@ export class RtsGame {
 
   // src : l'unité qui tire (elle gagne de l'expérience, et du galon)
   damage(target, amount, by, isB, src = null) {
+    if (this.weak(target.owner)) amount *= isB ? DIPLO.weak.bld : DIPLO.weak.hurt; // trahi : il encaisse plus
     const was = target.hp;
     target.hp -= amount;
     target.hitAt = this.t;
@@ -932,6 +1081,7 @@ export class RtsGame {
     for (const [v, id] of [...this.veinsTaken]) if (!this.blds.some((x) => x.id === id)) this.veinsTaken.delete(v);
     this.units = this.units.filter((u) => u.owner !== b.owner);
     for (const q of this.p) if (q.order.mode === 'attack' && q.order.target === b.owner) q.order = { mode: 'defend' };
+    this.dropOffers(b.owner);
     this.push({ type: 'fortDown', who: b.owner, by: b.razedBy ?? -1 });
   }
 
@@ -940,11 +1090,14 @@ export class RtsGame {
     return {
       type: 'snap', t: Math.round(this.t),
       P: this.p.map((p, i) => [Math.floor(p.gold), Math.floor(p.food), p.alive ? 1 : 0, this.units.filter((u) => u.owner === i).length,
-        p.order.mode === 'attack' ? p.order.target : p.order.mode === 'rally' ? -2 : -1, UNIT_IDS.map((k) => p.tech[k]).join('')]),
+        p.order.mode === 'attack' ? p.order.target : p.order.mode === 'rally' ? -2 : -1, UNIT_IDS.map((k) => p.tech[k]).join(''),
+        p.weakUntil > this.t ? Math.ceil((p.weakUntil - this.t) / 1000) : 0]), // secondes de malus (trahi)
       B: this.blds.map((b) => [b.id, b.owner, KIND_IDS.indexOf(b.kind), b.x, b.y, Math.max(0, Math.round(b.hp)), b.maxHp, b.build > 0 ? Math.round(b.build) : 0,
         b.queue.map(qChar).join(''), b.queue.length ? Math.round((b.prog / this.qTime(b, b.queue[0])) * 100) : 0, b.lv, b.up > 0 ? Math.round(b.up) : 0]),
       U: this.units.map((u) => [u.id, u.owner, UNIT_IDS.indexOf(u.kind), Math.round(u.x * 2), Math.round(u.y * 2), Math.max(0, Math.round(u.hp)), u.face, u.rank, Math.floor(u.xp)]),
       S: this.shots.slice(-32),
+      A: [...this.pacts], O: [...this.offers.keys()], // alliances ('01') et propositions ('0>1' : 0 propose à 1)
+      E: this.endPact != null ? Math.max(0, Math.ceil((this.endPact - this.t) / 1000)) : 0, // secondes avant la fin des alliances
     };
   }
 
@@ -966,11 +1119,14 @@ export class RtsGame {
     this.push({ type: 'matchEnd', winner: this.winner, ranking: order, tie });
   }
 
+  dropOffers(i) { for (const k of [...this.offers.keys()]) if (k.split('>').includes(String(i))) this.offers.delete(k); }
+
   leave(i) {
     if (this.phase !== 'playing' || !this.p[i]) return [];
     this.p[i].left = true;
     this.p[i].order = { mode: 'defend' };
     for (const u of this.units) if (u.owner === i) u.cmd = null;
+    this.dropOffers(i);
     this.push({ type: 'left', who: i });
     return this.flush();
   }
@@ -1077,7 +1233,8 @@ export class RtsGame {
     b.next = t + rnd(1100, 1800);
     const fc = bCenter(this.fortOf(i));
     const need = this.botBuild(i, t);
-    const threat = this.units.some((u) => u.owner !== i && Math.hypot(u.x - fc.x, u.y - fc.y) < 100);
+    const threat = this.units.some((u) => this.foe(u.owner, i) && Math.hypot(u.x - fc.x, u.y - fc.y) < 100);
+    if (this.botDiplo(i, t, threat)) return; // il vient de trahir (et d'attaquer) ou de voler au secours d'un allié
     // recruter (selon la place dans l'armée), en mélangeant les unités pour profiter des contres
     const army = this.units.filter((u) => u.owner === i);
     const queued = this.blds.reduce((n, x) => n + (x.owner === i ? x.queue.length : 0), 0);
@@ -1104,7 +1261,7 @@ export class RtsGame {
     // ordres : défendre si le fort est menacé, attaquer quand l'armée est prête
     if (threat) p.order = { mode: 'defend' };
     else if (army.length >= b.wave && t > 150000) { // 2 min 30 de répit pour s'installer
-      const foes = this.p.map((q, j) => j).filter((j) => j !== i && this.p[j].alive);
+      const foes = this.p.map((q, j) => j).filter((j) => this.foe(i, j) && this.p[j].alive);
       if (foes.length) {
         // le fort le plus proche, ou un fort déjà bien entamé (pas tous sur le même joueur)
         const cost = (j) => { const f = bCenter(this.fortOf(j)); return Math.hypot(f.x - fc.x, f.y - fc.y) + this.fortOf(j).hp * 0.15 + Math.random() * 60; };
@@ -1112,6 +1269,71 @@ export class RtsGame {
         if (p.order.mode !== 'attack') { p.order = { mode: 'attack', target }; b.wave = 8 + Math.floor(Math.random() * 5) + Math.floor(t / 90000); }
       }
     } else if (p.order.mode === 'attack' && army.length < 3) p.order = { mode: 'defend' };
+  }
+
+  // Diplomatie d'un bot : il répond aux propositions (pas au plus fort, ni à qui l'a trahi ; un seul allié),
+  // en propose de temps en temps, remercie des dons, vient en aide à un allié, se venge d'une trahison,
+  // et trahit parfois un allié affaibli ou bien plus faible que lui. Renvoie true s'il vient de lancer son armée.
+  botDiplo(i, t, threat) {
+    const p = this.p[i], ai = p.ai;
+    const others = this.aliveIdx().filter((j) => j !== i);
+    const army = (j) => this.units.reduce((n, u) => n + (u.owner === j ? 1 : 0), 0);
+    const power = (j) => army(j) * 12 + this.fortOf(j).hp * 0.05 + this.p[j].score * 0.05;
+    const leader = others.reduce((a, j) => (a < 0 || power(j) > power(a) ? j : a), -1);
+    const allies = others.filter((j) => this.allied(i, j));
+    const mine = army(i);
+    const go = (target) => { p.order = { mode: 'attack', target }; ai.wave = 8 + Math.floor(Math.random() * 5) + Math.floor(t / 90000); };
+    const tell = (j, id) => this.say(i, { to: j, w: WORD_IDS.indexOf(id) });
+    // propositions reçues : il réfléchit un peu avant de répondre
+    for (const [k, until] of [...this.offers]) {
+      const [from, to] = k.split('>').map(Number);
+      if (to !== i || t < until - DIPLO.offerMs + 2500) continue;
+      const ok = !ai.grudge.has(from) && !allies.length && Math.random() < (from === leader ? 0.3 : 0.75);
+      this.diplo(i, { op: ok ? 'accept' : 'refuse', to: from });
+      if (!ok && ai.grudge.has(from)) tell(from, 'threat');
+    }
+    // messages, dons et trahisons reçus
+    let launched = false;
+    for (const m of ai.inbox.filter((x) => x.at <= t)) {
+      if (!this.inPlay(m.from)) continue;
+      if (m.w === 'gift') tell(m.from, 'thanks');
+      else if (m.w === 'betrayed') {
+        tell(m.from, 'threat');
+        if (mine >= 4 && !threat) { go(m.from); launched = true; }
+      } else if (m.w === 'peace' && !this.allied(i, m.from) && !ai.grudge.has(m.from) && !allies.length && Math.random() < 0.6) {
+        this.diplo(i, { op: 'offer', to: m.from });
+      } else if (this.allied(i, m.from) && mine >= 4 && !threat) {
+        // un allié appelle à l'aide (on file sur celui qui l'assiège) ou propose une attaque commune
+        let target = m.w === 'join' ? m.on : null;
+        if (m.w === 'help') {
+          const f = bCenter(this.fortOf(m.from)), near = new Map();
+          for (const u of this.units) if (this.foe(i, u.owner) && u.owner !== m.from && Math.hypot(u.x - f.x, u.y - f.y) < 110) near.set(u.owner, (near.get(u.owner) || 0) + 1);
+          target = [...near].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+        }
+        if (target != null && this.inPlay(target) && this.foe(i, target)) { go(target); tell(m.from, 'ok'); launched = true; }
+      }
+    }
+    ai.inbox = ai.inbox.filter((x) => x.at > t);
+    if (launched) return true;
+    // trahison : un allié depuis un moment, dont le fort est bien entamé ou l'armée bien plus maigre
+    for (const j of allies) {
+      const last = this.endPact != null; // les alliances vont tomber : autant frapper le premier
+      if (!last && (t - (this.pactAt.get(pairKey(i, j)) ?? t) < 90000 || threat)) continue;
+      const f = this.fortOf(j);
+      const tempting = last ? mine >= 4 : f.hp < f.maxHp * 0.45 || (mine >= 10 && mine > army(j) * 2);
+      if (tempting && Math.random() < (last ? 0.12 : 0.05)) {
+        this.diplo(i, { op: 'betray', to: j });
+        go(j); // il frappe pendant que l'autre est affaibli
+        return true;
+      }
+    }
+    // proposer une alliance, de temps en temps, à un joueur qui n'est pas le plus fort
+    if (!allies.length && t >= ai.pactAt && others.length >= 2) {
+      ai.pactAt = t + rnd(45000, 90000);
+      const cands = others.filter((j) => j !== leader && !ai.grudge.has(j) && !this.offers.has(`${i}>${j}`));
+      if (cands.length && Math.random() < 0.6) this.diplo(i, { op: 'offer', to: cands[Math.floor(Math.random() * cands.length)] });
+    }
+    return false;
   }
 }
 

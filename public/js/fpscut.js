@@ -21,7 +21,7 @@ const NUM = ['', 'UN', 'DEUX', 'TROIS', 'QUATRE'];
 const TOWNS = ['SILVER CREEK', 'RED ROCK', 'COYOTE SPRINGS', 'BUZZARD GULCH', 'SAN LORENZO', 'DRY BONES', 'TUMBLE FLATS', 'PIEDRA NEGRA'];
 const EPITHETS = ['LE BON', 'LA BRUTE', 'LE TRUAND', 'L\'ÉTRANGER', 'LE SANS-NOM', 'LA GÂCHETTE', 'LE CROQUE-MORT', 'LE PRÉDICATEUR',
   'LE JOUEUR', 'LE CHASSEUR DE PRIMES', 'LE PIED-TENDRE', 'LE HORS-LA-LOI'];
-const LANES = [23.5, 23, 24, 22.5, 24.5, 22, 25]; // couloirs de la grand-rue, du milieu vers les trottoirs
+const LANES0 = [23.5, 23, 24, 22.5, 24.5, 22, 25]; // couloirs de la grand-rue, du milieu vers les trottoirs
 // arrêt sur image des joueurs : la caméra avance jusqu'à DOLLY, le cow-boy dégaine, l'image se fige à FREEZE
 const DOLLY = 0.38, FREEZE = 0.48;
 
@@ -40,14 +40,21 @@ export class FpsCut {
     this.me = scene.me;
     this.names = players.map((p) => (p.name || '???').toUpperCase());
     this.colors = players.map((_, i) => scene.color(i));
-    this.town = TOWNS[Math.floor(R() * TOWNS.length)];
+    const town = TOWNS[Math.floor(R() * TOWNS.length)];
+    this.town = w.map === 'town' || !w.name ? town : w.name;
     const ep = [...EPITHETS];
     for (let k = ep.length - 1; k > 0; k--) { const j = Math.floor(R() * (k + 1)); [ep[k], ep[j]] = [ep[j], ep[k]]; }
     this.epithets = players.map((_, i) => ep[i]);
     this.cap1 = `${this.town} - ${scene.env.name || ''}`;
-    this.cap2 = `${NUM[this.n] || this.n} PISTOLEROS, UNE SEULE RUE.`;
+    this.cap2 = `${NUM[this.n] || this.n} PISTOLEROS, ${w.map === 'town' || !w.cut ? 'UNE SEULE RUE' : 'PAS DE QUARTIER'}.`;
 
     // ---------------------------------------------- repérages
+    // les plans sont réglés sur la grand-rue de la ville (y = 23,5, x de 14 à 46) ; une autre carte donne son allée
+    // (w.cut) et tout est décalé d'autant (ox, oy)
+    const cut = w.cut || { y: 23.5, x0: 14, x1: 46, open: 'station' };
+    const ox = Math.round((cut.x0 + cut.x1) / 2 - 30), oy = cut.y - 23.5;
+    this.oy = oy;
+    const LANES = LANES0.map((y) => y + oy);
     const C = w.cells;
     const solid = w.deco.filter((o) => o.solid);
     const free = (x, y, r = 0.3) => {
@@ -67,17 +74,19 @@ export class FpsCut {
     // s'il y a une locomotive (en tête, à l'ouest), on part de plus loin à l'est et on avance vers elle
     const loco = w.cars?.[0]?.kind === 'loco' ? w.cars[0] : null;
     let st = null;
-    const tries = [...(loco ? [[loco.x1 + 8, -3], [loco.x1 + 10, -3], [loco.x1 + 12, -3]] : []), ...[5, 8, 11, 14, 36, 42, 47].map((x) => [x, 3])];
+    const tries = cut.open !== 'station' ? [] : [...(loco ? [[loco.x1 + 8, -3], [loco.x1 + 10, -3], [loco.x1 + 12, -3]] : []), ...[5, 8, 11, 14, 36, 42, 47].map((x) => [x, 3])];
     for (const [x, dx] of tries) {
       const y = [5.55, 5.45, 5.7].find((yy) => clearX(x, x + dx, yy, 0.25));
       if (y != null) { st = { x, y, dx }; break; }
     }
+    // ailleurs que dans la ville : le travelling donné par la carte, ou le début de son allée
+    if (cut.open !== 'station') st = cut.open || { x: cut.x0 + 1, y: lane(cut.x0 + 1, cut.x0 + 4), dx: 3 };
     st ||= { x: 8, y: 5.5, dx: 3 };
     this.st = { ...st, loco: loco && st.dx < 0 ? loco.x0 + 1.2 : null };
     // la grand-rue : depuis l'entrée est de la ville, en regardant vers l'ouest
-    this.sr = { x: 46.5, y: lane(41.5, 47) };
+    this.sr = { x: 46.5 + ox, y: lane(41.5 + ox, 47 + ox) };
     // la bande arrive par l'ouest de la grand-rue : trois de front si la place le permet
-    const gx = 23;
+    const gx = 23 + ox;
     const gy = LANES.find((y) => [-0.85, 0, 0.85].every((dy) => clearX(gx - 11, gx - 4, y + dy, 0.2)) && clearX(gx - 4, gx + 0.6, y)) ?? lane(gx - 11, gx + 0.6);
     this.gg = { x: gx, y: gy };
     this.gang = [
@@ -89,12 +98,12 @@ export class FpsCut {
     this.per = (T.standoff - T.faces) / Math.max(1, this.n);
     this.spots = players.map((_, i) => {
       const dir = i % 2 ? 1 : -1; // sens du regard de la caméra (+1 : vers l'est)
-      for (const x of [20 + i * 6, 23 + i * 6, 17 + i * 6, 29, 35, 26, 32, 38]) {
+      for (const x of [20 + i * 6, 23 + i * 6, 17 + i * 6, 29, 35, 26, 32, 38].map((x) => x + ox)) {
         const camX = x - dir * 3.7;
         const y = LANES.find((yy) => free(x, yy) && clearX(x - dir * 0.6, camX, yy, 0.25));
         if (y != null) return { x, y, dir };
       }
-      return { x: 26 + i * 4, y: 23.5, dir };
+      return { x: 26 + i * 4 + ox, y: 23.5 + oy, dir };
     });
     // le face-à-face : un cercle dégagé au milieu de la rue, et l'arc de cercle que suit la caméra
     this.ring = this.n <= 2 ? 1.2 : 1.45;
@@ -112,12 +121,12 @@ export class FpsCut {
       return true;
     };
     let so = null;
-    for (const x of [30.5, 28.5, 32.5, 26.5, 34.5, 24.5, 36.5, 22.5, 38.5]) {
-      for (const y of [23.5, 23, 24]) if (!so && free(x, y, 0.7) && ringOk(x, y) && arc(x, y) && sight(x, y)) so = { x, y };
+    for (const x of [30.5, 28.5, 32.5, 26.5, 34.5, 24.5, 36.5, 22.5, 38.5].map((x) => x + ox)) {
+      for (const y of [23.5, 23, 24].map((y) => y + oy)) if (!so && free(x, y, 0.7) && ringOk(x, y) && arc(x, y) && sight(x, y)) so = { x, y };
     }
     // à défaut, le premier cercle où tout le monde tient
-    for (const x of [30.5, 28.5, 32.5, 26.5, 34.5]) for (const y of [23.5, 23, 24]) if (!so && ringOk(x, y) && arc(x, y)) so = { x, y };
-    this.so = so || { x: 30.5, y: 23.5 };
+    for (const x of [30.5, 28.5, 32.5, 26.5, 34.5].map((x) => x + ox)) for (const y of [23.5, 23, 24].map((y) => y + oy)) if (!so && ringOk(x, y) && arc(x, y)) so = { x, y };
+    this.so = so || { x: 30.5 + ox, y: 23.5 + oy };
 
     // ---------------------------------------------- sons
     const gangLen = T.faces - T.gang;
@@ -181,7 +190,7 @@ export class FpsCut {
   street(u, now) {
     const s = this.sr;
     const k = ease(u);
-    const tw = { x: s.x - 8.5 + u * 1.2, y: 21.3 + u * 4.4 };
+    const tw = { x: s.x - 8.5 + u * 1.2, y: 21.3 + this.oy + u * 4.4 };
     return {
       x: s.x - 4.5 * k, y: s.y, a: Math.PI + 0.05 * Math.sin(u * 2.2), eye: 0.28 + 0.9 * k, fov: 1.15,
       actors: [{ x: tw.x, y: tw.y, z: Math.abs(Math.sin(u * Math.PI * 4)) * 0.18, cv: A.decoSprite('tumbleweed', Math.floor(now / 90) % 4) }],

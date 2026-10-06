@@ -139,7 +139,7 @@ export class FpsInput {
   }
 
   // Boutons tactiles facultatifs, qui n'apparaissent que s'ils servent : use ('up' monter, 'down' descendre,
-  // false caché ; true vaut 'up') et throw (dynamite).
+  // 'use' canon ou comptoir, false caché ; true vaut 'up') et throw (dynamite).
   setButtons({ use, throw: th } = {}) {
     if (use != null) this.btnShow.use = use === true ? 'up' : use || false;
     if (th != null) this.btnShow.throw = !!th;
@@ -395,7 +395,7 @@ export class FpsInput {
     if (dir && use.dataset.dir !== dir) {
       use.dataset.dir = dir;
       use.innerHTML = icon(dir === 'down' ? 'down' : 'up');
-      const label = dir === 'down' ? 'Descendre' : 'Monter';
+      const label = { down: 'Descendre', up: 'Monter', use: 'Utiliser' }[dir] || 'Monter';
       use.setAttribute('aria-label', label);
       use.title = label;
     }

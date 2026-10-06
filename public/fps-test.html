@@ -7,7 +7,9 @@ import { FpsGame } from './js/fpsgame.js';
 window.onerror = (m, s, l, c, e) => { (window.errs ||= []).push(String(e?.stack || m)); };
 const players = [{ key: 'me', name: 'Moi', character: {} }, { key: 'b1', name: 'Bot1', bot: true, character: { hat: 'sombrero' } }, { key: 'b2', name: 'Bot2', bot: true, character: {} }, { key: 'b3', name: 'Bot3', bot: true, character: {} }];
 const dm = new URLSearchParams(location.search).has('dm');
-const g = new FpsGame(players, dm ? 'fpsdm' : 'fps');
+// &seed=123 : toujours la même carte (plan, décor, retournement), pour des captures qu'on peut refaire
+const seed = new URLSearchParams(location.search).get('seed');
+const g = new FpsGame(players, dm ? 'fpsdm' : 'fps', ...(seed != null ? [+seed] : []));
 const cv = document.getElementById('game');
 let scene;
 const deliver = (evs) => { for (const e of evs) { const { states, ...rest } = e; try { scene.event({ ...rest, state: states[0] }); } catch (err) { (window.errs ||= []).push(String(err.stack)); } } };
@@ -18,4 +20,27 @@ if (fast) { g.startAt = Date.now() + 300; ev[0].countdown = 300; }
 deliver(ev);
 setInterval(() => { try { deliver(g.tick()); for (const o of g.liveOut.splice(0)) scene.onLive(o.key, o.d); } catch (err) { (window.errs ||= []).push(String(err.stack)); } }, 100);
 window.g = g; window.scene = scene;
+// les erreurs, recopiées dans la page (chrome --headless --dump-dom les montre)
+const errBox = document.body.appendChild(document.createElement('pre'));
+errBox.id = 'errlog'; errBox.style.color = '#f66';
+setInterval(() => { errBox.textContent = [...(window.errs || []), ...(window.acterr || [])].join('\n'); }, 250);
+// ?x=30.5&y=23.5&a=0 : la caméra posée là (le joueur y est ramené sans cesse, sans bandits ni bots qui gênent) ;
+// &big : la grande carte ; &fpsmap=fort : la carte (voir fpsgame.js)
+const q = new URLSearchParams(location.search);
+if (q.has('x')) {
+  g.nextNpc = 1e12;
+  setInterval(() => {
+    if (scene.menu && !scene.menu.ready) scene.ready();
+    const m = scene.my;
+    if (!m) return;
+    // &gun=0 : au canon n° 0 de la carte (x, y ignorés), a : orientation, d : portée
+    const gu = q.has('gun') && scene.world.uses.filter((u) => u.kind === 'cannon')[+q.get('gun')];
+    if (gu && !m.gun) { m.gun = gu.key; m.gunD = +(q.get('d') || 12); m.x = gu.x - 0.8; m.y = gu.y; }
+    if (gu) m.a = +(q.get('a') || 0);
+    else { m.x = +q.get('x'); m.y = +q.get('y'); m.a = +(q.get('a') || 0); }
+    m.hp = 999;
+    g.p.forEach((p, i) => { if (i) { p.x = 1.5; p.y = 1.5; p.alive = false; } });
+    if (q.has('big') && scene.map && !scene.map.big) scene.map.big = true;
+  }, 30);
+}
 </script></body></html>

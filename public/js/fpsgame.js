@@ -7,6 +7,8 @@
 // angle a en radians (0 = +x). L'hôte fait vivre les bandits, les caisses, la dynamite et les bots ;
 // chaque joueur simule son propre déplacement et ses tirs, et annonce ce qu'il touche.
 import { MODES, HELP_MS, rng } from './worlds.js';
+import { mapKit, MW, MH } from './fpskit.js';
+import { EXTRA_MAPS } from './fpsmaps/index.js';
 import { fpsEvents, fpsMods, fpsStarted, fpsSpot, fpsSpots, FpsEventLedger, FPS_GOLD, FPS_DIABLO } from './fpsevents.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -28,6 +30,12 @@ export const FPS = {
   horse: { speed: 6.4, hp: 120, back: 20000, trample: 38, share: 0.55 },
   cart: { max: 8.5, accel: 4.5, brake: 7, share: 0.5 },
   dyn: { fuse: 1500, range: 6.5, radius: 2.7, dmg: 85, min: 20, self: 0.6 },
+  barrel: { radius: 3.0, dmg: 100, min: 25, self: 0.6 }, // baril de poudre (ou caisse de TNT) qui saute
+  // canon (E pour le servir) : un coup toutes les 8 s, portée réglée par la hausse de near à range cases
+  cannon: { radius: 2.4, dmg: 90, min: 20, self: 0.6, near: 3, range: 22, every: 8000 },
+  fire: { life: 6000, r: 0.8, dmg: 8, every: 450, hay: 8000, lamp: 3500 }, // flaques de feu : dégâts toutes les 450 ms
+  prop: { back: 45000, fall: 380, crush: 70, loot: 0.3 }, // décor détruit : il revient au bout de 45 s
+  bar: { hp: 25, every: 25000 }, // un whisky au comptoir du saloon ou de la cantina (E), toutes les 25 s
   npc: { base: 4, per: 2, every: [2200, 3600], first: 4000 },
 };
 
@@ -115,8 +123,43 @@ export const isDm = (kind) => kind === 'fpsdm';
 // événements qui n'ont pas de sens sans bandits (ou qui donnent des points sans frag)
 const npcEvent = (e) => !!(e.mods && (e.mods.npcRate || e.mods.npcMax || e.mods.npcKinds || e.mods.npcPts || e.mods.boss || e.mods.gold));
 
-// ================================================================ carte
-export const MW = 60, MH = 48;
+// ------------------------------------------------------------ décor interactif
+// Ce qui réagit aux balles, aux explosions et au feu : des objets du décor (clé `d<k>`, k = rang dans world.deco)
+// et des murs bas de la grille (clé `c<i>`, i = case). L'hôte tient leur état et l'annonce (événement 'prop') ;
+// chaque navigateur l'applique à sa copie de la carte (applyProp).
+// hp : points de vie face aux balles (sans hp, seuls les explosions et le feu l'atteignent) ; r : rayon touché par
+// une balle ; pass : la balle continue (objet suspendu ou fin) ; blast : portée d'une explosion qui l'atteint.
+export const PROPS = {
+  tnt: { hp: 20, r: 0.3, blast: 3 }, // baril de poudre, caisse de TNT : saute (et fait sauter les voisins)
+  barrel: { hp: 60, r: 0.3, blast: 1.8 }, // tonneau : vole en éclats, parfois une caisse dedans
+  hay: { blast: 2.4 }, // foin : prend feu, brûle, puis il n'en reste rien
+  crates: { blast: 1.6 }, // pile de caisses : soufflée par les explosions
+  boulder: { blast: 1.5 }, // rocher (canyon) : la dynamite ou un boulet le fait voler en éclats
+  safe: { blast: 2.2 }, // coffre de la banque : la dynamite l'éventre, le butin s'en échappe
+  lantern: { hp: 1, r: 0.16, pass: true, blast: 2.4 }, // lanterne suspendue : tombe, l'huile prend feu
+  // lustre : s'écrase sur ceux qui sont dessous ; au milieu de la salle, il faut le viser (rayon serré, 3 balles de colt)
+  // pour qu'il ne tombe pas à chaque échange de tirs
+  chandelier: { hp: 70, r: 0.18, pass: true, blast: 2 },
+  lamp: { hp: 1, r: 0.12, pass: true, blast: 2 }, // réverbère : la vitre éclate, l'huile flambe au pied
+  bottle: { hp: 1, r: 0.1, pass: true, blast: 2.4 }, // bouteille : en mille morceaux
+};
+const PROP_DECO = { barrelTnt: 'tnt', barrel: 'barrel', hayBale: 'hay', safe: 'safe', lantern: 'lantern', chandelier: 'chandelier', lamp: 'lamp', bottle: 'bottle' };
+const PROP_CELL = { tnt: 'tnt', crates: 'crates', hay: 'hay', canyonBoulder: 'boulder' };
+
+// État d'un objet du décor : 'ok' (ou rien), 'gone' (détruit), 'burn' (en feu), 'broken' (réverbère sans vitre),
+// 'fallen' (lustre au sol), 'open' (coffre éventré). Un objet détruit n'arrête plus personne ; un mur bas détruit
+// laisse sa case vide (et praticable pour les bandits et les bots).
+export function applyProp(w, pr, st) {
+  pr.st = st;
+  if (pr.k != null) { w.deco[pr.k].gone = st === 'gone'; return; }
+  const C = w.cells, i = pr.i;
+  if (st === 'gone') { C.h[i] = 0; C.wall[i] = C.up[i] = C.inn[i] = 0; } else [C.h[i], C.wall[i], C.up[i], C.inn[i]] = pr.orig;
+  if (w.pass) w.pass[i] = st === 'gone' ? 1 : 0;
+}
+// ================================================================ cartes
+// Carte tirée de la graine (chaque navigateur recalcule la même) : la ville (townWorld, ci-dessous) ou une
+// des autres cartes (fpsmaps/*.js). Outils communs et description rendue par un générateur : fpskit.js.
+export { MW, MH };
 const ZONE_POOL = ['boothill', 'ranch', 'mine', 'fort'];
 // emplacements des quartiers autour de la ville (la gare est toujours au nord, la grand-rue au milieu)
 const SLOTS = [
@@ -127,136 +170,35 @@ const SLOTS = [
 ];
 export const STREET = { y0: 21, y1: 25 };
 
-// Une case : h (haut du mur, 0 = vide), b (bas : un linteau au-dessus d'une porte), wall (texture),
-// up (texture au-dessus de 1 : enseigne, étage), inn (texture vue de l'intérieur), floor, ceil (0 = ciel).
-export function fpsWorld(seed, n = 4, kind = 'fps') {
-  const R = rng((seed ^ 0x3b9ac9ff) >>> 0);
-  const between = (a, b) => a + R() * (b - a);
-  const ri = (a, b) => Math.floor(between(a, b + 1));
-  const rp = (list) => list[Math.floor(R() * list.length)];
-  const N = MW * MH;
-  const C = {
-    h: new Float32Array(N), b: new Float32Array(N),
-    wall: new Uint16Array(N), up: new Uint16Array(N), inn: new Uint16Array(N),
-    floor: new Uint8Array(N), ceil: new Uint8Array(N), zone: new Uint8Array(N),
-  };
-  const texList = [null], texIdx = new Map();
-  const tex = (id, v = 0) => {
-    const k = `${id}:${v}`;
-    if (!texIdx.has(k)) { texIdx.set(k, texList.length); texList.push([id, v]); }
-    return texIdx.get(k);
-  };
-  const flatList = [null], flatIdx = new Map();
-  const flat = (id) => {
-    if (!flatIdx.has(id)) { flatIdx.set(id, flatList.length); flatList.push(id); }
-    return flatIdx.get(id);
-  };
+// Les cartes : id -> générateur (seed) => { kit, spec } (voir MAP_SPEC dans fpskit.js)
+export const FPS_MAPS = { town: townWorld, ...EXTRA_MAPS };
+export const MAP_IDS = Object.keys(FPS_MAPS);
+// la carte d'une partie : tirée de la graine (hachée : indépendante des tirages du générateur)
+export const mapOf = (seed) => MAP_IDS[(Math.imul((seed ^ 0x7f4a7c15) >>> 0, 0x2c1b3c6d) >>> 0) % MAP_IDS.length];
+
+// ?fpsmap=fort dans l'adresse : impose la carte (pour l'essayer en solo ; en ligne, chacun doit avoir la même adresse)
+const FORCED_MAP = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('fpsmap') : null;
+
+export function fpsWorld(seed, n = 4, kind = 'fps', map = FORCED_MAP || mapOf(seed)) {
+  const id = FPS_MAPS[map] ? map : 'town';
+  const { kit, spec } = FPS_MAPS[id](seed);
+  return finishWorld(kit, spec, seed, n, kind, id);
+}
+
+// ---------------------------------------------------------------- la ville
+function townWorld(seed) {
   const zoneIds = ['street', 'station', 'saloon', 'cantina', 'sheriff', 'bank', ...ZONE_POOL];
-  const ZN = Object.fromEntries(zoneIds.map((z, i) => [z, i]));
-  const at = (x, y) => (x >= 0 && y >= 0 && x < MW && y < MH ? y * MW + x : -1);
-  const deco = [];
-  const horses = [];
-  const lamps = [];
-  const innOf = new Uint16Array(N); // mur intérieur nu de la pièce, case par case (pour murer les recoins inaccessibles)
-  const wallAt = (x, y, h, wall, o = {}) => {
-    const i = at(x, y);
-    if (i < 0) return;
-    C.h[i] = h; C.b[i] = o.b || 0;
-    C.wall[i] = typeof wall === 'number' ? wall : tex(...[].concat(wall));
-    C.up[i] = o.up ? (typeof o.up === 'number' ? o.up : tex(...[].concat(o.up))) : 0;
-    C.inn[i] = o.inn ? (typeof o.inn === 'number' ? o.inn : tex(...[].concat(o.inn))) : 0;
-  };
-  const clear = (x, y) => { const i = at(x, y); if (i >= 0) { C.h[i] = 0; C.b[i] = 0; C.wall[i] = C.up[i] = C.inn[i] = 0; } };
-  const floorAt = (x, y, f) => { const i = at(x, y); if (i >= 0) C.floor[i] = flat(f); };
-  const roofAt = (x, y, f) => { const i = at(x, y); if (i >= 0) C.ceil[i] = f ? flat(f) : 0; };
-  const zoneAt = (x, y, z) => { const i = at(x, y); if (i >= 0) C.zone[i] = ZN[z]; };
-  const fill = (x0, y0, x1, y1, fn) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) fn(x, y); };
-  const isWall = (x, y) => { const i = at(x, y); return i < 0 || C.h[i] > 0; };
-  const put = (id, x, y, o = {}) => deco.push({ id, x, y, ...o });
-  // près d'une porte (linteau) : on n'y pose rien qui bloquerait le passage
-  const nearDoor = (x, y) => {
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const i = at(x + dx, y + dy); if (i >= 0 && C.b[i] > 0) return true; }
-    return false;
-  };
+  const kit = mapKit(seed, zoneIds);
+  const { R, between, ri, rp, C, texList, tex, flatList, at, deco, horses, rails, carts, wallAt, clear, floorAt, roofAt, zoneAt, fill, isWall, put,
+    nearDoor, taken, railCell, spot, hashXY, poster, pickSpread, building } = kit;
   const freeFor = (x, y) => !isWall(x, y) && !nearDoor(x, y) && (y < STREET.y0 || y > STREET.y1);
-  // case libre (ni mur, ni porte, ni autre objet posé) la plus proche de (x, y) : rend [x, y] décalé d'un nombre entier de cases
-  const taken = (x, y) => deco.some((o) => !o.hang && Math.abs(o.x - x - 0.5) < 0.9 && Math.abs(o.y - y - 0.5) < 0.9) || horses.some((h) => Math.abs(h.x - x - 0.5) < 0.9 && Math.abs(h.y - y - 0.5) < 0.9);
-  // case de rails (boucle du wagonnet, voie de la gare) : rien n'y est posé, le wagonnet passerait au travers
-  const railCell = (x, y) => { const i = at(x, y); return i >= 0 && /^rails/.test(flatList[C.floor[i]] || ''); };
-  const spot = (x, y) => {
-    for (let d = 0; d <= 4; d++) for (let dy = -d; dy <= d; dy++) for (let dx = -d; dx <= d; dx++) {
-      const cx = Math.floor(x) + dx, cy = Math.floor(y) + dy;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) === d && !isWall(cx, cy) && !nearDoor(cx, cy) && !taken(cx, cy) && !railCell(cx, cy) && !C.ceil[at(cx, cy)]) return [x + dx, y + dy]; // dehors (pas sous un toit)
-    }
-    return [x, y];
-  };
-  // Affiches « WANTED » : texture ['wantedP/<mur>/<variante>', place] ; fps.js y colle le portrait du joueur à cette
-  // place (ou d'un hors-la-loi s'il n'y a personne). Cases choisies par hachage de (x, y) : aucun tirage R() en plus.
-  const hashXY = (x, y) => { let k = Math.imul((x * 73856093) ^ (y * 19349663) ^ seed, 0x9e3779b1); k = Math.imul(k ^ (k >>> 15), 0x85ebca6b); return ((k ^ (k >>> 13)) >>> 0) / 4294967296; };
-  let posters = 0;
   const jails = []; // murs du bureau du shérif où coller une affiche (posées à la fin)
-  const poster = (base) => tex(`wantedP/${base[0]}/${base[1]}`, posters++);
-  // jusqu'à n cases parmi cells, espacées d'au moins gap (distance de Manhattan)
-  const pickSpread = (cells, n, gap) => {
-    const out = [];
-    for (const c of cells.sort((a, b) => hashXY(...a) - hashXY(...b))) if (out.length < n && out.every((o) => Math.abs(o[0] - c[0]) + Math.abs(o[1] - c[1]) >= gap)) out.push(c);
-    return out;
-  };
 
   // ---------------------------------------------------------- sol et bords
   fill(0, 0, MW - 1, MH - 1, (x, y) => { floorAt(x, y, 'sand'); zoneAt(x, y, 'street'); });
   const border = (x, y) => wallAt(x, y, 2.4, ['rock', 0]);
   for (let x = 0; x < MW; x++) { border(x, 0); border(x, MH - 1); }
   for (let y = 0; y < MH; y++) { border(0, y); border(MW - 1, y); }
-
-  // Un bâtiment : murs extérieurs (façade côté rue), intérieur couvert s'il est ouvert, portes avec linteau.
-  // face : côté de la façade ('n' ou 's'). doors : liste de [x, y] dans le mur.
-  const building = (x0, y0, x1, y1, o) => {
-    const hgt = o.h ?? between(1.6, 2.2);
-    const v = o.v ?? ri(0, 3);
-    // une seule enseigne : la case de façade la plus proche du milieu, hors coins et hors portes
-    // (la case du milieu porte la porte, vraie ou condamnée) ; ailleurs, fausse façade en planches peintes
-    // de la couleur du fond de l'enseigne (SIGN_PAINT = TX_SIGNS[..][3] de fpsart.js), ou mur nu si o.upper sans enseigne
-    // (en planches : plankUp, la fausse façade sous sa corniche)
-    const SIGN_PAINT = [1, 3, 0, 1, 3, 0, 2, 2];
-    const plain = o.sign != null ? ['plank', SIGN_PAINT[o.sign] ?? 0] : [o.wall === 'plank' ? 'plankUp' : o.wall, v];
-    let signX = -1;
-    if (o.sign != null) {
-      const fy = o.face === 's' ? y1 : y0, mid = Math.floor((x0 + x1) / 2), c = (x0 + x1) / 2;
-      for (let x = x0 + 1; x < x1; x++) if (x !== mid && !(o.doors || []).some(([dx, dy]) => dx === x && dy === fy) && (signX < 0 || Math.abs(x - c) < Math.abs(signX - c))) signX = x;
-      if (signX < 0) signX = mid;
-    }
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-      const edge = x === x0 || x === x1 || y === y0 || y === y1;
-      zoneAt(x, y, o.zone || 'street');
-      if (!o.open || edge) {
-        const front = (o.face === 's' && y === y1) || (o.face === 'n' && y === y0);
-        const win = front && (x - x0) % 2 === 1 && o.win !== false;
-        const w = front ? [win ? o.winTex || `${o.wall}Window` : o.wall, v] : [o.sideWall || o.wall, v];
-        const up = front && (o.sign != null || o.upper) ? (x === signX ? ['sign', o.sign] : plain) : null;
-        // vue du dedans, une fenêtre reste une fenêtre : '<mur intérieur>Win' (même variante ; fps.js la compose en attendant le dessin)
-        const inn = o.open && o.inn ? (win ? [`${[].concat(o.inn)[0]}Win`, [].concat(o.inn)[1] || 0] : o.inn) : null;
-        wallAt(x, y, hgt, o.wallTex ? o.wallTex(x, y, front, win) : w, { up, inn });
-      } else {
-        if (o.inn) innOf[at(x, y)] = tex(...[].concat(o.inn));
-        clear(x, y);
-        floorAt(x, y, o.floor || 'boardwalk');
-        roofAt(x, y, o.ceil || 'woodCeil');
-      }
-    }
-    for (const [dx, dy] of o.doors || []) {
-      const i = at(dx, dy);
-      C.b[i] = 1.02; // linteau : le mur ne commence qu'au-dessus de la porte
-      // le linteau est en mur nu (ni porte ni fenêtre, fps.js n'en montre que le haut) ; fps.js encadre l'embrasure de bois
-      const front = (o.face === 's' && dy === y1) || (o.face === 'n' && dy === y0);
-      C.wall[i] = tex(front ? o.wall : o.sideWall || o.wall, v);
-      if (o.open && o.inn) C.inn[i] = tex(...[].concat(o.inn)); // dedans aussi, le linteau est en mur nu (pas une fenêtre)
-      floorAt(dx, dy, o.floor || 'boardwalk');
-      roofAt(dx, dy, o.ceil || 'woodCeil');
-    }
-    return { x0, y0, x1, y1, h: hgt, v };
-  };
-
   // ---------------------------------------------------------- la gare (nord)
   fill(1, 1, MW - 2, 12, (x, y) => zoneAt(x, y, 'station'));
   fill(1, 3, MW - 2, 4, (x, y) => floorAt(x, y, 'railsX'));
@@ -309,7 +251,7 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
   for (let k = 0; k < 4; k++) {
     const x = ri(2, MW - 4);
     if (x >= sx0 - 1 && x <= sx1 + 1) continue;
-    wallAt(x, 6, 0.85, ['crates', 0]);
+    wallAt(x, 6, 0.85, [hashXY(x, 6) < 0.35 ? 'tnt' : 'crates', 0]); // parfois une caisse de TNT (sans tirage R() en plus)
   }
   for (let x = 4; x < MW - 4; x += ri(6, 9)) if (x < sx0 - 1 || x > sx1 + 1) put('lamp', x + 0.5, 5.2, { solid: 0.12, lamp: true });
   const ca = ri(2, 10), wh = ri(30, 50), cb = ri(40, 56); // la roue ne se plante pas dans le second cactus
@@ -484,7 +426,7 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
   south.forEach((b) => facade(b, 's'));
   // ruelles entre les bâtiments
   // dans la rue : abreuvoirs, tonneaux, chariots, poteaux d'attache et chevaux, réverbères
-  const streetDeco = ['barrel', 'trough', 'hayBale', 'barrel', 'wagonWreck'];
+  const streetDeco = ['barrel', 'trough', 'hayBale', 'barrel', 'wagonWreck', 'barrelTnt', 'barrelTnt'];
   // une porte (vraie, ou condamnée : mur plein peint d'une porte) en (x, y)
   const doorCell = (x, y) => { const i = at(x, y); return i >= 0 && (C.b[i] > 0 || /Door$/.test(texList[C.wall[i]]?.[0] || '')); };
   const nearAnyDoor = (x, y) => [-1, 0, 1].some((dy) => [-1, 0, 1].some((dx) => doorCell(x + dx, y + dy)));
@@ -494,7 +436,7 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
     // pas en plein devant une porte : décalé d'une ou deux cases (sans tirage R() en plus)
     const fy = y < STREET.y0 + 1 ? STREET.y0 - 2 : STREET.y1 + 2;
     const d = [0, 1, -1, 2, -2].find((d) => !doorCell(x + d, fy) && !taken(x + d, Math.floor(y))) ?? 0;
-    put(id, x + d + 0.5, y, { solid: id === 'wagonWreck' ? 0.6 : 0.3 });
+    put(id, x + d + 0.5, y, { solid: id === 'wagonWreck' ? 0.6 : 0.3, ...(id === 'barrelTnt' && { tnt: true }) });
   }
   // réverbères : décalés sur le côté s'ils tombent devant une porte, même condamnée (sans tirage R() en plus)
   const lampAt = (x, y) => { const d = [0, 1, -1, 2, -2, 3, -3].find((d) => !nearAnyDoor(Math.floor(x) + d, Math.floor(y))) ?? 0; put('lamp', x + d, y, { solid: 0.12, lamp: true }); };
@@ -502,7 +444,7 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
   // couverts au milieu de la rue (caisses, charrette renversée) : de quoi se cacher
   for (let k = 0; k < 4; k++) {
     const x = ri(16, 43), y = ri(STREET.y0 + 1, STREET.y1 - 1);
-    if (!nearDoor(x, y)) wallAt(x, y, rp([0.6, 0.85]), rp([['crates', 0], ['hay', 0]]));
+    if (!nearDoor(x, y)) wallAt(x, y, rp([0.6, 0.85]), rp([['crates', 0], ['hay', 0], ['crates', 0], ['tnt', 0]])); // la TNT : un abri qui peut sauter
   }
   // chevaux à l'attache devant le saloon et le bureau du shérif
   const hitchFor = (b, side) => {
@@ -519,8 +461,6 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
   // ---------------------------------------------------------- les quartiers autour
   const order = [...ZONE_POOL];
   for (let k = order.length - 1; k > 0; k--) { const j = Math.floor(R() * (k + 1)); [order[k], order[j]] = [order[j], order[k]]; }
-  const rails = [];
-  const carts = [];
   const districts = SLOTS.map((s, k) => ({ ...s, zone: order[k] }));
   for (const d of districts) {
     fill(d.x0, d.y0, d.x1, d.y1, (x, y) => zoneAt(x, y, d.zone));
@@ -743,14 +683,56 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
   }
   // entre la ville et les quartiers du sud : une rangée de barrières percée de passages
   for (let x = 1; x < MW - 1; x++) if (x % 8 >= 2 && x % 8 <= 5 && !isWall(x, 34) && !nearDoor(x, 34)) wallAt(x, 34, 0.5, ['fence', hashXY(x, 34) < 0.25 ? 1 : 0]); // fence v1 : usée (1 sur 4)
+  // affiches « WANTED » : après les recoins murés (qui recopient le mur voisin), une fois les cases accessibles connues
+  const after = (reach) => {
+    // ---------------------------------------------------------- affiches « WANTED » (après les recoins murés, qui recopient le mur voisin)
+    // bureau du shérif : trois affiches seulement (deux portraits, un tableau), face à une case où l'on peut aller
+    for (const spots of jails) {
+      const ok = spots.filter(([, , ix, iy]) => reach[at(ix, iy)] && !C.h[at(ix, iy)]);
+      pickSpread(ok, 3, 2).forEach(([x, y], n) => { C.inn[at(x, y)] = n === 2 ? tex('wanted', 0) : poster(['plank', 1]); });
+    }
+    // le râtelier (gunrack) : sur un mur de côté du bureau resté nu (sans affiche), choisi par hachage de (x, y)
+    for (const spots of jails) {
+      const g = spots.filter(([x, y, ix, iy]) => ix !== x && reach[at(ix, iy)] && !C.h[at(ix, iy)] && texList[C.inn[at(x, y)]]?.[0] === 'plank').sort((a, b) => hashXY(a[0], a[1]) - hashXY(b[0], b[1]))[0];
+      if (g) C.inn[at(g[0], g[1])] = tex('gunrack', 0);
+    }
+    // quelques-unes sur les façades, côté rue : murs pleins seulement (ni porte, ni fenêtre, ni coin)
+    const fronts = [];
+    for (const [fy, dy] of [[STREET.y0 - 2, 1], [STREET.y1 + 2, -1]]) for (let x = 14; x <= 45; x++) {
+      const i = at(x, fy), t = texList[C.wall[i]];
+      if (C.h[i] > 0 && !C.b[i] && t && ['plank', 'brick', 'adobe'].includes(t[0]) && isWall(x - 1, fy) && isWall(x + 1, fy) && !isWall(x, fy + dy)) fronts.push([x, fy]);
+    }
+    for (const [x, y] of pickSpread(fronts, 4, 6)) {
+      const i = at(x, y);
+      if (!C.up[i]) C.up[i] = C.wall[i]; // au-dessus de 1, le mur nu (sinon l'affiche se répète)
+      C.wall[i] = poster(texList[C.wall[i]]);
+    }
+  };
+  return {
+    kit,
+    spec: {
+      name: 'LA VILLE', center: [30, 23], zones: ['street', 'station', ...insides.filter((k) => rooms.some((r) => r.kind === k)), ...ZONE_POOL],
+      districts, rooms, cars,
+      labels: [{ text: 'GARE', x: 12, y: 9.5 }],
+      noSpawn: (x, y) => y >= 3 && y <= 4, // pas sur la voie ferrée
+      edge: (c) => c.x < 4 || c.x > MW - 4 || c.y < 7 || c.y > MH - 4, // les bandits arrivent par les bords de la carte (et par le quai)
+      cut: { y: 23.5, x0: 14, x1: 46, open: 'station' },
+      after,
+    },
+  };
+}
 
+// Termine le monde d'une carte : cases accessibles (les recoins fermés sont murés), points d'apparition, caisses,
+// bandits, décor interactif, ce qu'on actionne avec E, calendrier des événements.
+function finishWorld(kit, spec, seed, n, kind, map) {
+  const { W: MW, H: MH, N, R, C, tex, texList, at, deco, horses, carts, rails, lamps, innOf, isWall, zoneIds } = kit;
   // ---------------------------------------------------------- cases accessibles, points d'apparition
   const pass = new Uint8Array(N);
   const solidDeco = deco.filter((o) => o.solid);
   for (let i = 0; i < N; i++) pass[i] = C.h[i] === 0 || C.b[i] >= 0.9 ? 1 : 0;
   for (const o of solidDeco) if (o.solid >= 0.35) pass[at(Math.floor(o.x), Math.floor(o.y))] = 0;
   const reach = new Uint8Array(N);
-  const start = at(30, 23);
+  const start = at(...spec.center);
   const q = [start];
   reach[start] = 1;
   while (q.length) {
@@ -777,28 +759,7 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
     }
     C.h[i] = FPS.ceil + 0.05; C.wall[i] = C.inn[i] = t || tex('rock', 0);
   }
-  // ---------------------------------------------------------- affiches « WANTED » (après les recoins murés, qui recopient le mur voisin)
-  // bureau du shérif : trois affiches seulement (deux portraits, un tableau), face à une case où l'on peut aller
-  for (const spots of jails) {
-    const ok = spots.filter(([, , ix, iy]) => reach[at(ix, iy)] && !C.h[at(ix, iy)]);
-    pickSpread(ok, 3, 2).forEach(([x, y], n) => { C.inn[at(x, y)] = n === 2 ? tex('wanted', 0) : poster(['plank', 1]); });
-  }
-  // le râtelier (gunrack) : sur un mur de côté du bureau resté nu (sans affiche), choisi par hachage de (x, y)
-  for (const spots of jails) {
-    const g = spots.filter(([x, y, ix, iy]) => ix !== x && reach[at(ix, iy)] && !C.h[at(ix, iy)] && texList[C.inn[at(x, y)]]?.[0] === 'plank').sort((a, b) => hashXY(a[0], a[1]) - hashXY(b[0], b[1]))[0];
-    if (g) C.inn[at(g[0], g[1])] = tex('gunrack', 0);
-  }
-  // quelques-unes sur les façades, côté rue : murs pleins seulement (ni porte, ni fenêtre, ni coin)
-  const fronts = [];
-  for (const [fy, dy] of [[STREET.y0 - 2, 1], [STREET.y1 + 2, -1]]) for (let x = 14; x <= 45; x++) {
-    const i = at(x, fy), t = texList[C.wall[i]];
-    if (C.h[i] > 0 && !C.b[i] && t && ['plank', 'brick', 'adobe'].includes(t[0]) && isWall(x - 1, fy) && isWall(x + 1, fy) && !isWall(x, fy + dy)) fronts.push([x, fy]);
-  }
-  for (const [x, y] of pickSpread(fronts, 4, 6)) {
-    const i = at(x, y);
-    if (!C.up[i]) C.up[i] = C.wall[i]; // au-dessus de 1, le mur nu (sinon l'affiche se répète)
-    C.wall[i] = poster(texList[C.wall[i]]);
-  }
+  spec.after?.(reach);
   const ZONES = zoneIds;
   const freeCells = [];
   for (let i = 0; i < N; i++) {
@@ -806,7 +767,7 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
     const x = i % MW, y = (i / MW) | 0;
     if (deco.some((o) => o.solid && Math.abs(o.x - x - 0.5) < 0.9 && Math.abs(o.y - y - 0.5) < 0.9)) continue;
     if (rails.some((r) => Math.floor(r.x) === x && Math.floor(r.y) === y)) continue;
-    if (y >= 3 && y <= 4) continue; // pas sur la voie ferrée
+    if (spec.noSpawn?.(x, y)) continue;
     let open = 0;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (!isWall(x + dx, y + dy)) open++;
     if (open >= 3) freeCells.push({ x: x + 0.5, y: y + 0.5, zone: ZONES[C.zone[i]] });
@@ -821,19 +782,36 @@ export function fpsWorld(seed, n = 4, kind = 'fps') {
     }
     return out;
   };
-  const spawns = spread(freeCells, 22, 6).map((c) => ({ ...c, a: Math.atan2(23 - c.y, 30 - c.x) }));
+  const [cx, cy] = spec.center;
+  const spawns = spread(freeCells, 22, 6).map((c) => ({ ...c, a: Math.atan2(cy - c.y, cx - c.x) }));
   const crateSpots = spread(freeCells, 34, 4);
-  // les bandits arrivent par les bords de la carte (et par le quai)
-  const edge = freeCells.filter((c) => c.x < 4 || c.x > MW - 4 || c.y < 7 || c.y > MH - 4);
+  // les bandits arrivent par les bords de la carte (ou par où la carte le dit)
+  const edge = freeCells.filter(spec.edge || ((c) => c.x < 4 || c.x > MW - 4 || c.y < 4 || c.y > MH - 4));
   const npcSpots = spread(edge.length >= 6 ? edge : freeCells, 12, 7);
   horses.forEach((h, k) => { h.id = k; h.hx = h.x; h.hy = h.y; h.ha = h.a; });
   carts.forEach((c, k) => { c.id = k; });
-  const zones = ['street', 'station', ...insides.filter((k) => rooms.some((r) => r.kind === k)), ...ZONE_POOL];
+  const zones = spec.zones || [zoneIds[0]];
   const world = {
-    seed, w: MW, h: MH, cells: C, tex: texList, flats: flatList, zoneNames: ZONES,
-    deco: deco.map((o, k) => ({ ...o, k })), horses, carts, rails, lamps, rooms, districts, cars,
+    seed, map, name: spec.name || '', center: [cx + 0.5, cy + 0.5], w: MW, h: MH, cells: C, tex: texList, flats: kit.flatList, zoneNames: ZONES,
+    deco: deco.map((o, k) => ({ ...o, k })), horses, carts, rails, lamps, rooms: spec.rooms || [], districts: spec.districts || [], cars: spec.cars || [],
+    labels: spec.labels || [], cut: spec.cut || null, radar: spec.radar || null, upBack: spec.upBack || null, bare: spec.bare || null,
     spawns, crateSpots, npcSpots, zones, pass, reach,
   };
+  // décor interactif (voir PROPS) : objets du décor, puis murs bas (caisses, TNT, foin) ; orig : la case intacte
+  const props = [];
+  for (const o of world.deco) if (PROP_DECO[o.id] && !o.pk) props.push(o.pr = { key: `d${o.k}`, kind: PROP_DECO[o.id], x: o.x, y: o.y, k: o.k });
+  for (let i = 0; i < N; i++) {
+    const kind = C.h[i] > 0 && C.h[i] < 1 && !C.b[i] && PROP_CELL[texList[C.wall[i]]?.[0]];
+    if (kind) props.push({ key: `c${i}`, kind, x: (i % MW) + 0.5, y: Math.floor(i / MW) + 0.5, i, orig: [C.h[i], C.wall[i], C.up[i], C.inn[i]] });
+  }
+  world.props = props;
+  world.propOf = new Map(props.map((p) => [p.key, p]));
+  // ce qu'on actionne avec E : le canon du fort, le comptoir du saloon et de la cantina (bar v0 et v1)
+  world.uses = [
+    ...world.deco.filter((o) => o.id === 'cannon').map((o) => ({ key: `d${o.k}`, kind: 'cannon', x: o.x, y: o.y })),
+    ...[...C.wall.keys()].filter((i) => C.h[i] > 0 && texList[C.wall[i]]?.[0] === 'bar' && texList[C.wall[i]][1] <= 1)
+      .map((i) => ({ key: `c${i}`, kind: 'bar', x: (i % MW) + 0.5, y: Math.floor(i / MW) + 0.5 })),
+  ];
   world.events = fpsEvents(seed, MODES[kind].duration, n, zones);
   if (isDm(kind)) world.events = world.events.filter((e) => !npcEvent(e));
   return world;
@@ -877,6 +855,7 @@ export function move(w, x, y, dx, dy, r = FPS.radius, tall = false) {
   if (!free(nx, ny)) ny = y;
   // objets massifs : on est repoussé hors de leur cercle
   for (const o of w.solids || (w.solids = w.deco.filter((d) => d.solid))) {
+    if (o.gone) continue; // détruit (baril, tonneau)
     const ddx = nx - o.x, ddy = ny - o.y;
     const min = o.solid + r;
     const d2 = ddx * ddx + ddy * ddy;
@@ -889,8 +868,18 @@ export function move(w, x, y, dx, dy, r = FPS.radius, tall = false) {
   return { x: nx, y: ny };
 }
 
+// Point de chute d'un boulet tiré de la pièce en (x, y) vers a, à la portée voulue (la hausse) : il passe par-dessus
+// les murs bas, pas au travers d'un mur plein. Le même calcul chez l'hôte (le tir) et chez le servant (la mire).
+export function cannonReach(w, x, y, a, want = FPS.cannon.range) {
+  const { near, range } = FPS.cannon;
+  return Math.max(1.5, Math.min(clamp(want, near, range), rayWall(w, x, y, a, range + 1, 0.95) - 0.35));
+}
+
 // Lancer de rayon sur la grille : distance jusqu'au premier mur qui arrête une balle (à hauteur z).
+// RAY.i : la case de ce mur (-1 si aucun), pour savoir si la balle a fini dans une caisse de TNT.
+export const RAY = { i: -1 };
 export function rayWall(w, x, y, a, max = 60, z = 0.5) {
+  RAY.i = -1;
   const dx = Math.cos(a), dy = Math.sin(a);
   let cx = Math.floor(x), cy = Math.floor(y);
   const sx = dx < 0 ? -1 : 1, sy = dy < 0 ? -1 : 1;
@@ -900,7 +889,7 @@ export function rayWall(w, x, y, a, max = 60, z = 0.5) {
   while (d < max) {
     if (tx < ty) { d = tx; tx += ddx; cx += sx; } else { d = ty; ty += ddy; cy += sy; }
     if (cx < 0 || cy < 0 || cx >= w.w || cy >= w.h) return d;
-    if (stopsBullet(w, cy * w.w + cx, z)) return d;
+    if (stopsBullet(w, cy * w.w + cx, z)) { RAY.i = cy * w.w + cx; return d; }
   }
   return max;
 }
@@ -969,10 +958,11 @@ export function liveOf(p) {
 
 // ================================================================ l'arbitre (chez l'hôte)
 export class FpsGame {
-  constructor(players, kind = 'fps') {
+  // seed : imposée (essais : fps-test.html?seed=), sinon tirée au hasard
+  constructor(players, kind = 'fps', seed = Math.floor(Math.random() * 2 ** 31)) {
     this.kind = kind;
     this.dm = isDm(kind); // « Mort ou vif » : pas de bandits, seuls les frags comptent
-    this.seed = Math.floor(Math.random() * 2 ** 31);
+    this.seed = seed >>> 0;
     this.duration = MODES[kind].duration;
     this.world = fpsWorld(this.seed, players.length, kind);
     this.p = players.map((pl, i) => ({
@@ -992,6 +982,9 @@ export class FpsGame {
     this.horses = this.world.horses.map((h) => ({ id: h.id, x: h.x, y: h.y, a: h.a, hp: FPS.horse.hp, rider: -1, deadAt: 0 }));
     this.carts = this.world.carts.map((c) => ({ id: c.id, s: c.s, rider: -1 }));
     this.gold = []; // sacs d'or des événements
+    this.fires = []; // flaques de feu (lanterne, réverbère, foin, lustre)
+    this.fireId = 0;
+    this.later = []; // ce qui arrive un instant plus tard : barils voisins qui sautent en chaîne, lustre qui touche le sol
     this.ledger = new FpsEventLedger();
     this.lastTick = 0;
     this.nextNpc = FPS.npc.first;
@@ -1036,6 +1029,8 @@ export class FpsGame {
       carts: this.carts.map((c) => ({ id: c.id, s: c.s, rider: c.rider })),
       gold: this.gold.filter((g) => !g.taken).map((g) => ({ id: g.id, x: g.x, y: g.y })),
       pos: this.p.map((q) => ({ x: q.x, y: q.y, a: q.a, alive: q.alive, m: q.m })),
+      props: this.world.props.filter((pr) => pr.st && pr.st !== 'ok').map((pr) => [pr.key, pr.st]),
+      fires: this.fires.map((f) => ({ id: f.id, x: f.x, y: f.y, r: f.r, t1: f.t1 })),
       mine: { hp: p.hp, armor: p.armor, alive: p.alive, x: p.x, y: p.y, a: p.a },
     };
   }
@@ -1051,7 +1046,7 @@ export class FpsGame {
     const i = this.p.findIndex((p) => p.key === key);
     const p = this.p[i];
     if (!p || p.bot || !d || !p.alive) return;
-    if (Number.isFinite(d.x) && Number.isFinite(d.y)) { p.x = clamp(d.x / 100, 0, MW); p.y = clamp(d.y / 100, 0, MH); }
+    if (Number.isFinite(d.x) && Number.isFinite(d.y)) { p.x = clamp(d.x / 100, 0, this.world.w); p.y = clamp(d.y / 100, 0, this.world.h); }
     if (Number.isFinite(d.a)) p.a = d.a / 100;
     p.v = Number.isFinite(d.v) ? d.v / 10 : 0;
     if (p.m) {
@@ -1083,6 +1078,8 @@ export class FpsGame {
     else if (a.kind === 'mount' && typeof a.m === 'string') this.mount(i, a.m);
     else if (a.kind === 'dismount') this.dismount(i);
     else if (a.kind === 'throw' && num('x', 'y', 'a')) this.throwDyn(i, a, t);
+    else if (a.kind === 'prop' && typeof a.key === 'string' && num('dmg')) this.playerProp(i, a, t);
+    else if (a.kind === 'use' && typeof a.key === 'string') this.use(i, a, t);
     else if (a.kind === 'shot') p.stats.throws++; // simple compteur (statistiques)
     else return { error: 'Action inconnue.' };
     return { events: this.flush() };
@@ -1106,7 +1103,7 @@ export class FpsGame {
       const score = d + Math.random() * 4;
       if (score > bestD) { bestD = score; best = s; }
     }
-    return best || { x: 30.5, y: 23.5, a: 0 };
+    return best || { x: this.world.center[0], y: this.world.center[1], a: 0 };
   }
 
   // Le joueur annonce ce qu'il a touché ; l'hôte vérifie que c'est plausible et applique les dégâts.
@@ -1194,7 +1191,7 @@ export class FpsGame {
     const c = this.crates[k];
     if (Math.hypot(c.x - p.x, c.y - p.y) > 1.6) return;
     this.crates.splice(k, 1);
-    const loot = rollLoot(this.mods(t).crateLoot);
+    const loot = rollLoot(c.set || this.mods(t).crateLoot); // set : butin du coffre de la banque
     const L = LOOT[loot];
     if (L.hp) p.hp = Math.min(FPS.hp, p.hp + L.hp);
     if (L.armor) p.armor = Math.min(FPS.maxArmor, p.armor + L.armor);
@@ -1289,35 +1286,209 @@ export class FpsGame {
     p.stats.throws++;
   }
 
+  // d.ball : boulet de canon (vole d.fuse ms, sans mèche)
   addDyn(d) {
     d.id = this.dynId++;
-    d.boomAt = d.at + FPS.dyn.fuse;
+    d.boomAt = d.at + (d.fuse || FPS.dyn.fuse);
     this.dyns.push(d);
-    this.push({ type: 'dyn', id: d.id, by: d.by, npc: d.npc ?? -1, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1, at: d.at, boomAt: d.boomAt });
+    this.push({ type: 'dyn', id: d.id, by: d.by, npc: d.npc ?? -1, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1, at: d.at, boomAt: d.boomAt, ball: d.ball || undefined });
   }
 
   explode(d, t) {
-    const { radius, dmg, min, self } = FPS.dyn;
+    this.blast(d.x1, d.y1, { by: d.by, npc: d.npc, id: d.id, w: d.ball ? 'cannon' : 'dynamite', power: d.ball ? FPS.cannon : FPS.dyn }, t);
+  }
+
+  // Une explosion (dynamite, boulet, baril) : dégâts dégressifs à ceux qu'elle voit, puis le décor alentour.
+  blast(x, y, o, t) {
+    const { radius, dmg, min, self } = o.power;
     const fall = (dist) => (dist > radius ? 0 : min + (dmg - min) * (1 - dist / radius));
     const dmgM = this.mods(t).dmgMult;
-    this.push({ type: 'boom', id: d.id, x: d.x1, y: d.y1 });
+    const by = o.by ?? -1;
+    this.push({ type: 'boom', id: o.id, x, y, big: o.w === 'barrel' || undefined });
     this.p.forEach((q, j) => {
       if (!q.alive) return;
-      const dist = Math.hypot(q.x - d.x1, q.y - d.y1);
+      const dist = Math.hypot(q.x - x, q.y - y);
       let v = fall(dist) * dmgM;
-      if (!v || !los(this.world, d.x1, d.y1, q.x, q.y, 0.3)) return;
-      if (j === d.by) v *= self;
-      this.damage(j, v, { by: d.by >= 0 ? d.by : undefined, npc: d.npc, w: 'dynamite', dyn: true, fx: d.x1, fy: d.y1 });
+      if (!v || !los(this.world, x, y, q.x, q.y, 0.3)) return;
+      if (j === by) v *= self;
+      this.damage(j, v, { by: by >= 0 ? by : undefined, npc: o.npc, w: o.w, dyn: true, fx: x, fy: y });
     });
     for (const n of this.npcs) {
       if (!n.alive) continue;
-      const dist = Math.hypot(n.x - d.x1, n.y - d.y1);
+      const dist = Math.hypot(n.x - x, n.y - y);
       const v = fall(dist) * dmgM;
-      if (v && los(this.world, d.x1, d.y1, n.x, n.y, 0.3)) this.npcDamage(n, v, d.by, 'dynamite', t);
+      if (v && los(this.world, x, y, n.x, n.y, 0.3)) this.npcDamage(n, v, by, o.w, t);
     }
     for (const h of this.horses) {
       if (h.deadAt || h.rider >= 0) continue;
-      if (Math.hypot(h.x - d.x1, h.y - d.y1) < radius * 0.6) this.horseDown(h, t);
+      if (Math.hypot(h.x - x, h.y - y) < radius * 0.6) this.horseDown(h, t);
+    }
+    // le décor : les barils voisins sautent à leur tour (un instant après : la réaction en chaîne se voit),
+    // les caisses volent, le foin s'embrase, lanternes et bouteilles éclatent, le coffre s'ouvre
+    const src = { by, npc: o.npc };
+    for (const pr of this.world.props) {
+      if ((pr.st && pr.st !== 'ok') || pr.armed) continue;
+      if (Math.hypot(pr.x - x, pr.y - y) >= Math.min(radius + 0.3, PROPS[pr.kind].blast)) continue;
+      if (pr.kind === 'tnt') this.arm(pr, src, t, rnd(140, 320));
+      else this.propBreak(pr, src, t);
+    }
+  }
+
+  // ---------------------------------------------------------- décor interactif
+  // Le joueur annonce une balle dans le décor : l'hôte vérifie la portée, comme pour un tir sur quelqu'un.
+  playerProp(i, a, t) {
+    const p = this.p[i];
+    const pr = this.world.propOf.get(a.key);
+    const max = maxShot(a.w);
+    if (!pr || !max || (this.mods(t).melee && !WEAPONS[a.w]?.melee)) return;
+    if (Math.hypot(pr.x - p.x, pr.y - p.y) > (WEAPONS[a.w]?.range || 2) * 2 + 4) return;
+    this.propHit(pr, clamp(a.dmg, 0, max), { by: i }, t);
+  }
+
+  propHit(pr, dmg, src, t) {
+    const P = PROPS[pr.kind];
+    if (!P.hp || (pr.st && pr.st !== 'ok') || pr.armed) return;
+    pr.hp = (pr.hp ?? P.hp) - dmg;
+    if (pr.hp > 0) return;
+    if (pr.kind === 'tnt') this.arm(pr, src, t, 0);
+    else this.propBreak(pr, src, t);
+  }
+
+  // un baril qui va sauter (tout de suite, ou après un délai : chaîne, flammes)
+  arm(pr, src, t, delay) {
+    pr.armed = true;
+    this.later.push({ at: t + delay, fn: (t2) => { pr.armed = false; this.propBreak(pr, src, t2); } });
+  }
+
+  setProp(pr, st, t, extra = {}) {
+    applyProp(this.world, pr, st);
+    pr.hp = undefined;
+    pr.back = st === 'ok' || st === 'burn' ? 0 : t + FPS.prop.back;
+    if (pr.i != null) this.flow.clear(); // une case s'ouvre ou se referme : les chemins changent
+    this.push({ type: 'prop', key: pr.key, st, x: pr.x, y: pr.y, ...extra });
+  }
+
+  propBreak(pr, src, t) {
+    if (pr.st && pr.st !== 'ok') return;
+    const by = src.by ?? -1;
+    switch (pr.kind) {
+      case 'tnt':
+        this.setProp(pr, 'gone', t, { by });
+        this.blast(pr.x, pr.y, { by, npc: src.npc, w: 'barrel', power: FPS.barrel }, t);
+        break;
+      case 'barrel':
+        this.setProp(pr, 'gone', t, { by });
+        if (Math.random() < FPS.prop.loot) this.dropCrate(pr.x, pr.y, t);
+        break;
+      case 'hay':
+        this.setProp(pr, 'burn', t);
+        pr.burnOut = t + FPS.fire.hay;
+        this.addFire(pr.x, pr.y, src, t, FPS.fire.hay, 0.9);
+        break;
+      case 'lantern':
+        this.setProp(pr, 'gone', t, { by });
+        this.addFire(pr.x, pr.y, src, t);
+        break;
+      case 'lamp':
+        this.setProp(pr, 'broken', t, { by });
+        this.addFire(pr.x, pr.y, src, t, FPS.fire.lamp, 0.6);
+        break;
+      case 'chandelier':
+        this.setProp(pr, 'fallen', t, { by });
+        this.later.push({ at: t + FPS.prop.fall, fn: (t2) => this.crush(pr, src, t2) });
+        break;
+      case 'safe': {
+        this.setProp(pr, 'open', t, { by });
+        // le butin s'échappe : une arme de caisse (ou l'étoile), puis des munitions et des soins
+        ['power', 'heal', 'ammo'].forEach((set, k) => this.dropCrate(pr.x, pr.y, t, set, k));
+        break;
+      }
+      default: this.setProp(pr, 'gone', t, { by }); // caisses, rochers, bouteilles
+    }
+  }
+
+  // le lustre touche le sol : ceux qui sont dessous sont écrasés, les bougies mettent le feu
+  crush(pr, src, t) {
+    const by = src.by ?? -1;
+    const v = FPS.prop.crush * this.mods(t).dmgMult;
+    this.p.forEach((q, j) => {
+      if (q.alive && Math.hypot(q.x - pr.x, q.y - pr.y) < 0.9) this.damage(j, j === by ? v * 0.5 : v, { by: by >= 0 ? by : undefined, w: 'crush', fx: pr.x, fy: pr.y });
+    });
+    for (const n of this.npcs) if (n.alive && Math.hypot(n.x - pr.x, n.y - pr.y) < 0.9) this.npcDamage(n, v * 1.5, by, 'crush', t);
+    this.addFire(pr.x, pr.y, src, t, 3000, 0.7);
+  }
+
+  // une caisse qui tombe du décor (tonneau, coffre) : à côté, sur une case libre ; set : butin imposé
+  dropCrate(x, y, t, set = null, k = 0) {
+    const w = this.world;
+    const spots = [[0, 0], [0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8], [0.8, 0.8], [-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8]];
+    const s = spots.slice(k ? 1 : 0).map(([dx, dy]) => ({ x: x + dx, y: y + dy }))
+      .find((q) => !blocks(w, cellAt(w, q.x, q.y)) && !this.crates.some((c) => Math.hypot(c.x - q.x, c.y - q.y) < 0.6));
+    if (!s) return;
+    const c = { id: this.crateId++, x: s.x, y: s.y, t1: t + FPS.crateLife, set };
+    this.crates.push(c);
+    this.push({ type: 'crate', id: c.id, x: c.x, y: c.y, drop: true });
+  }
+
+  addFire(x, y, src, t, life = FPS.fire.life, r = FPS.fire.r) {
+    const f = { id: this.fireId++, x, y, r, t1: t + life, by: src.by ?? -1, npc: src.npc ?? -1, next: t + 250 };
+    this.fires.push(f);
+    this.push({ type: 'fire', id: f.id, x, y, r, t1: f.t1 });
+  }
+
+  // Le feu brûle ceux qui y restent, et gagne le foin et les barils tout proches.
+  fireTick(t) {
+    this.fires = this.fires.filter((f) => t < f.t1);
+    const dmgM = this.mods(t).dmgMult;
+    for (const f of this.fires) {
+      if (t < f.next) continue;
+      f.next = t + FPS.fire.every;
+      const src = { by: f.by >= 0 ? f.by : undefined, npc: f.npc >= 0 ? f.npc : undefined, w: 'fire', fx: f.x, fy: f.y };
+      this.p.forEach((q, j) => {
+        if (q.alive && Math.hypot(q.x - f.x, q.y - f.y) < f.r + FPS.radius) this.damage(j, FPS.fire.dmg * dmgM * (j === f.by ? 0.5 : 1), src);
+      });
+      for (const n of this.npcs) if (n.alive && Math.hypot(n.x - f.x, n.y - f.y) < f.r + 0.3) this.npcDamage(n, FPS.fire.dmg * 1.5 * dmgM, f.by, 'fire', t);
+      for (const pr of this.world.props) {
+        if ((pr.st && pr.st !== 'ok') || pr.armed) continue;
+        const d = Math.hypot(pr.x - f.x, pr.y - f.y);
+        if (pr.kind === 'hay' && d < f.r + 0.8) this.propBreak(pr, f, t);
+        else if (pr.kind === 'tnt' && d < f.r + 0.45) this.arm(pr, f, t, 700); // la mèche grésille un instant
+      }
+    }
+  }
+
+  // Le décor détruit revient (personne dessus), le foin qui a brûlé disparaît.
+  propTick(t) {
+    for (const pr of this.world.props) {
+      if (!pr.st || pr.st === 'ok') continue;
+      if (pr.st === 'burn') { if (t >= pr.burnOut) this.setProp(pr, 'gone', t); continue; }
+      if (t < pr.back) continue;
+      const o = pr.k != null ? this.world.deco[pr.k] : null;
+      const room = pr.i != null ? 0.75 : (o?.solid || 0) + 0.35;
+      const busy = [...this.p.filter((q) => q.alive), ...this.npcs.filter((n) => n.alive), ...this.horses.filter((h) => !h.deadAt)]
+        .some((q) => Math.hypot(q.x - pr.x, q.y - pr.y) < room + 0.25);
+      if (busy) pr.back = t + 2000;
+      else this.setProp(pr, 'ok', t);
+    }
+  }
+
+  // E : le canon (vers où regarde le servant, à la hausse choisie : a.d cases) ou le comptoir
+  use(i, a, t) {
+    const p = this.p[i];
+    const u = this.world.uses.find((q) => q.key === a.key);
+    if (!u || p.m || Math.hypot(u.x - p.x, u.y - p.y) > 2) return;
+    if (u.kind === 'cannon') {
+      if (t < (u.readyAt || 0) || this.mods(t).melee || !Number.isFinite(a.a)) return;
+      u.readyAt = t + FPS.cannon.every;
+      const d = cannonReach(this.world, u.x, u.y, a.a, Number.isFinite(a.d) ? a.d : FPS.cannon.range);
+      const x1 = u.x + Math.cos(a.a) * d, y1 = u.y + Math.sin(a.a) * d;
+      this.push({ type: 'cannon', key: u.key, by: i, ready: u.readyAt });
+      this.addDyn({ by: i, x0: u.x, y0: u.y, x1, y1, at: t, ball: true, fuse: 180 + d * 35 });
+    } else if (u.kind === 'bar') {
+      if (t < (p.drinkAt || 0)) return;
+      p.drinkAt = t + FPS.bar.every;
+      p.hp = Math.min(FPS.hp, p.hp + FPS.bar.hp);
+      this.push({ type: 'drink', who: i, hp: p.hp, next: p.drinkAt });
     }
   }
 
@@ -1532,6 +1703,14 @@ export class FpsGame {
         this.dyns.splice(this.dyns.indexOf(d), 1);
         this.explode(d, t);
       }
+      // décor interactif : réactions en chaîne, feu, décor qui revient
+      if (this.later.length) {
+        const due = this.later.filter((l) => t >= l.at);
+        this.later = this.later.filter((l) => t < l.at);
+        for (const l of due) l.fn(t);
+      }
+      this.fireTick(t);
+      this.propTick(t);
       // chevaux abattus : un autre revient à l'écurie
       for (const h of this.horses) if (h.deadAt && t - h.deadAt > FPS.horse.back) {
         const w = this.world.horses[h.id];
@@ -1631,6 +1810,15 @@ export class FpsGame {
     return { next: 0, goal: null, think: 0, w: null, lastShot: 0, strafe: i % 2 ? 1 : -1, react: rnd(250, 500), seenAt: 0, seenId: null, dyn: 0 };
   }
 
+  // un baril de poudre du décor près de la cible, que le bot voit, à portée, et assez loin de lui
+  kegNear(p, tgt, W8) {
+    return this.world.props.find((pr) => {
+      if (pr.kind !== 'tnt' || pr.k == null || (pr.st && pr.st !== 'ok') || pr.armed) return false;
+      const d = Math.hypot(pr.x - p.x, pr.y - p.y);
+      return Math.hypot(pr.x - tgt.x, pr.y - tgt.y) < 1.8 && d > 4.5 && d < W8.range && los(this.world, p.x, p.y, pr.x, pr.y, 0.3);
+    }) || null;
+  }
+
   botThink(i, t, dt) {
     const p = this.p[i];
     const b = p.ai;
@@ -1675,7 +1863,14 @@ export class FpsGame {
       // but de déplacement : une caisse proche, l'or, sinon un point au hasard
       const crate = this.crates.find((c) => Math.hypot(c.x - p.x, c.y - p.y) < 12);
       const gold = this.gold.find((g) => !g.taken && Math.hypot(g.x - p.x, g.y - p.y) < 14);
+      // de temps en temps, un canon prêt pas trop loin : le bot va s'y poster (sur une case libre à côté de la pièce)
+      const gun = !best && !gold && !b.camp && Math.random() < 0.15 && w.uses.find((u) => u.kind === 'cannon' && t >= (u.readyAt || 0) && Math.hypot(u.x - p.x, u.y - p.y) < 10);
+      const post = gun && [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({ x: Math.floor(gun.x) + dx + 0.5, y: Math.floor(gun.y) + dy + 0.5 }))
+        .find((c) => w.pass[cellAt(w, c.x, c.y)]);
+      if (b.camp && (t >= b.camp.until || gold)) b.camp = null;
       if (gold) b.goal = { x: gold.x, y: gold.y, gold: gold.id };
+      else if (b.camp) b.goal = null; // au canon : on y reste un moment, à guetter
+      else if (post) b.goal = { ...post, gun: gun.key };
       else if (crate) b.goal = { x: crate.x, y: crate.y, crate: crate.id };
       else if (!b.goal || Math.hypot(b.goal.x - p.x, b.goal.y - p.y) < 1.2 || Math.random() < 0.02) {
         // vers l'adversaire le plus proche de temps en temps, sinon au hasard
@@ -1699,8 +1894,17 @@ export class FpsGame {
       if (dist > want) { mx = Math.cos(aimA); my = Math.sin(aimA); } else if (dist < want * 0.5) { mx = -Math.cos(aimA) * 0.6; my = -Math.sin(aimA) * 0.6; }
       const side = aimA + (b.strafe * Math.PI) / 2 * (Math.floor(t / 1300 + i) % 2 ? 1 : -1);
       mx += Math.cos(side) * 0.6; my += Math.sin(side) * 0.6;
+      if (b.camp && dist > 4) mx = my = 0; // au canon : on ne quitte pas la pièce (sauf si on vient au contact)
       const r = move(w, p.x, p.y, mx * speed * 0.75 * dt, my * speed * 0.75 * dt);
       p.x = r.x; p.y = r.y;
+      // un canon prêt à portée de main et la cible assez loin : le bot le sert (hausse et pointage approximatifs)
+      const gun = !mods.melee && t - b.seenAt > b.react && w.uses.find((u) => u.kind === 'cannon' && t >= (u.readyAt || 0) && Math.hypot(u.x - p.x, u.y - p.y) < 1.6);
+      const gd = gun ? Math.hypot(tgt.x - gun.x, tgt.y - gun.y) : 0;
+      if (gun && gd > FPS.cannon.near + 1.5 && gd < FPS.cannon.range && Math.random() < 0.4) {
+        this.use(i, { key: gun.key, a: Math.atan2(tgt.y - gun.y, tgt.x - gun.x) + rnd(-0.05, 0.05), d: gd + rnd(-1.2, 1.2) }, t);
+        b.lastShot = t;
+        return;
+      }
       // tir, après un temps de réaction
       if (t - b.seenAt > b.react && t - b.lastShot >= W8.rate * rnd(1.05, 1.6)) {
         if (b.dyn > 0 && dist > 4 && dist < FPS.dyn.range && Math.random() < 0.08) {
@@ -1711,6 +1915,9 @@ export class FpsGame {
           b.lastShot = t;
           p.f = (p.f || 0) + 1;
           if (temp) b.temp.ammo -= W8.dual ? 2 : 1;
+          // un baril de poudre tout près de la cible : le bot tire dedans
+          const keg = !W8.melee && Math.random() < 0.6 ? this.kegNear(p, tgt, W8) : null;
+          if (keg) { this.propHit(keg, PROPS.tnt.hp, { by: i }, t); return; }
           const fall = dist > W8.range ? 0.5 : 1;
           const acc = W8.melee ? 0.8 : clamp(0.75 - dist * 0.025 - (W8.spread || 0) * 1.5, 0.25, 0.8);
           let dmg = 0;
@@ -1722,7 +1929,10 @@ export class FpsGame {
           }
         }
       }
+    } else if (b.camp) {
+      p.a = (p.a + dt * 0.9) % (Math.PI * 2); // posté au canon : on guette alentour
     } else if (b.goal) {
+      if (b.goal.gun && Math.hypot(b.goal.x - p.x, b.goal.y - p.y) < 0.7) { b.camp = { until: t + rnd(7000, 14000) }; b.goal = null; return; }
       const d = this.flowTo(b.goal.x, b.goal.y, t);
       if (!this.stepFlow(p, d, speed, dt)) b.goal = null;
       if (b.goal?.crate != null && Math.hypot(b.goal.x - p.x, b.goal.y - p.y) < 0.8) {

@@ -8937,10 +8937,44 @@ function prFlash(f) {
   }, { outlined: false });
 }
 
-const PR_FX = { dynFly: [4, prDynFly], boom: [5, prBoom], blood: [3, prBlood], dust: [3, prDust], smoke: [3, prSmoke], flash: [2, prFlash] };
+// Flammes 24x32 (base en bas) : langues qui ondulent d'une image à l'autre, cœur blanc-jaune, liseré rouge sombre,
+// escarbilles au-dessus (feu de lanterne, d'huile ou de foin)
+function prFlame(f) {
+  return sprite(24, 32, (p) => {
+    const r = rng(700 + f);
+    const sw = [0, 1.6, 0.6, -1.2][f];
+    const bl = [[0, -5, 7.5], [-5, -4, 5], [5, -4, 5], [sw * 0.6, -12, 6], [-3 + sw, -18, 3.8], [3 + sw * 0.5, -17, 3.2], [sw * 1.5, -24, 2.6], [-sw, -27, 1.6]];
+    prFill(p, 24, 32, bl, (v, x, y) => {
+      const n = v + (prN(x, y + f * 5, 50 + f) - 0.5) * 0.4;
+      if (n < 0.2) return null;
+      if (n < 0.3) return prBand(PR_EMBER, (n - 0.2) * 9, x, y);
+      return prBand(PR_FIRE.slice(1), clamp((n - 0.26) * 0.9 + (y > -8 ? 0.12 : 0), 0, 1), x, y);
+    });
+    for (let k = 0; k < 4; k++) p.P(Math.round((r() - 0.5) * 14), Math.round(-21 - r() * 10), k % 2 ? PR_FIRE[5] : PR_FIRE[4]);
+  }, { outlined: false });
+}
+
+// Boulet de canon 10x10 (centré) : fonte noire, reflet
+function prBall() {
+  return sprite(10, 10, (p) => {
+    p.disc(0, -4, 3.6, PR_IRON[0]); p.disc(-0.5, -4.5, 2.6, PR_IRON[1]); p.disc(-1, -5, 1.4, PR_IRON[2]);
+    p.P(-2, -6, PR_IRON[4]);
+  });
+}
+
+const PR_FX = { dynFly: [4, prDynFly], boom: [5, prBoom], blood: [3, prBlood], dust: [3, prDust], smoke: [3, prSmoke], flash: [2, prFlash], flame: [4, prFlame], ball: [1, prBall] };
 export function fxSprite(id, frame = 0) {
   const d = PR_FX[id];
   if (!d) return checker(16, 16);
   const f = (((frame | 0) % d[0]) + d[0]) % d[0];
   return memo(`fx:${id}:${f}`, () => d[1](f));
 }
+
+// ------------------------------------------------------------------ outils pour les dessins des autres cartes
+// fpsart<Carte>.js (une carte du FPS en plus de la ville) dessine ses murs, sols et objets avec ces outils et les
+// enregistre dans TX_WALLS / TX_VARS / TX_FLATS / PR_DECO : wallTex, flatTex et decoSprite les trouvent seuls.
+// On y retrouve aussi OUT, shade et mix (sprites.js).
+// Murs intérieurs dessinés pour toute la hauteur de la pièce (frise sous le plafond, soubassement au sol) : fps.js étire
+// la texture du sol au plafond au lieu de répéter ses lignes 43-63 au-dessus de 1. Les dessins des cartes y ajoutent leurs ids.
+const TX_TALL = {};
+export { TX_TALL, PR_AGAVE, PR_AMBER, PR_BAT, PR_BAYER, PR_BLOOD, PR_BRASS, PR_BURLAP, PR_CAST, PR_COLT_PAL, PR_CREAM, PR_DARKW, PR_DECO, PR_EMBER, PR_FIRE, PR_FLAG_R, PR_FLAG_W, PR_FX, PR_GOLD, PR_GREEN, PR_GREY, PR_GUN, PR_IRON, PR_LEATHER, PR_NICKEL, PR_ORE, PR_PEW, PR_PICKUPS, PR_RED, PR_SAFE, PR_SAND, PR_SMOKE, PR_SOOT, PR_STONE, PR_STOVE, PR_STRAW, PR_TEAL, PR_TERRA, PR_TIMBER, PR_TW_AXIS, PR_VEST, PR_WOOD, TW2_CAB, TW2_IRON, TW2_SEE, TW2_ST_PAINT, TX_ADOBE, TX_BARE, TX_BRICK, TX_DOOR, TX_FLATS, TX_GL, TX_GLN, TX_LOOK, TX_OCH, TX_PAINT, TX_SHUT, TX_SIGNS, TX_STONE, TX_STRATA, TX_TALAVERA, TX_TRIM, TX_VARS, TX_WALLS, canvas, checker, clamp, deaccent, finish, grain, hardAlpha, hash, memo, mirror, opaque, pen, prAkimbo, prAltarCross, prAmmo, prB, prBall, prBand, prBandage, prBarrel, prBarrelBody, prBarrelHW, prBarrelTnt, prBatLeaf, prBatwing, prBench, prBlit, prBlobBody, prBlood, prBoom, prBottle, prCactus, prCannon, prCapH, prCapV, prChair, prChandelier, prChicken, prCoffin, prColt, prCow, prCrate, prCross, prCyl, prDeadTree, prDust, prDynFly, prDynamite, prField, prFill, prFlag, prFlame, prFlash, prFrame, prGatling, prGlow, prGold, prGoldWin, prGrid, prHayBale, prHeadframe, prHitch, prLamp, prLantern, prLit, prN, prOrePile, prPew, prPick, prPlant, prRing, prRot, prSafe, prSheen, prSmoke, prSmokeCol, prSparks, prSpittoon, prSpokeWheel, prStar, prStove, prTable, prTombstone, prTrough, prTumbleweed, prTwigs, prTwinkle, prVest, prWagonWreck, prWaterTower, prWheel, prWhisky, prWindmill, rd, rng, sprite, text, textW, texture, tw2Barn, tw2BarnLoft, tw2CabWindow, tw2Chip, tw2Dim, tw2Fence, tw2FenceBroken, tw2FreightCarUp, tw2Grain, tw2IsSee, tw2LocoBase, tw2LocoBoiler, tw2LocoCab, tw2LocoFront, tw2LocoUp, tw2Logs, tw2LogsWindow, tw2Mine, tw2MineUp, tw2PlankUp, tw2SignAdobe, tw2SignBoard, tw2SignBrick, tw2Solid, tw2StationUp, tw2StationWall, tw2StoneLow, tw2Tomb, tw2TombCap, tw2TrainCarUp, tw2Wheel, txAdobeWall, txBackbarCantina, txBackbarGuitar, txBackbarRegister, txBackbarSaloon, txBarCantina, txBarDesk, txBarTeller, txBarTicket, txBevel, txBlocks, txBrickWall, txCellInside, txCellLight, txCellMap, txCrack, txCrate, txDaylight, txFace, txFbm, txField, txFloorBoards, txGW, txGlassShade, txGlint, txGrade, txGravel, txK, txLayer, txLerp, txMineRock, txMod, txNoise, txPick, txPoster, txRGB, txRevealWin, txRifle, txShutter, txSiding, txStencil, txStoneWall, txStrata, txTall, txText, txTextW, txTimber, txVBoards, txVigaEnds, txWP, txWindowFrame, txWindowPane, OUT, shade, mix };

@@ -42,7 +42,10 @@ const hash = (x, y) => { let k = Math.imul(x * 374761393 + y * 668265263, 0x27d4
 const pick = (rules, id) => rules.find(([re]) => re.test(id)) || null;
 
 // Fond de carte (4 px par case) : sols (plus sombres sous un toit), planches, rails, murs avec leur contour, portes.
+// w.radar : couleurs en plus pour les textures d'une autre carte que la ville (voir MAP_SPEC dans fpskit.js)
 function baseMap(w) {
+  const rd = w.radar || {};
+  const FL = { ...FLOOR, ...rd.floor }, WL = [...(rd.wall || []), ...WALL], LW = [...(rd.low || []), ...LOW], DC = { ...DECO, ...rd.deco };
   const C = w.cells;
   const W = w.w * K, H = w.h * K;
   const c = makeCanvas(W, H, true);
@@ -52,10 +55,14 @@ function baseMap(w) {
   const px = (x, y, col, k = 1) => { const o = (y * W + x) * 4; d[o] = col[0] * k; d[o + 1] = col[1] * k; d[o + 2] = col[2] * k; d[o + 3] = 255; };
   const wallOf = (i) => C.h[i] > 0 && C.b[i] < 0.9;
   const tall = (i) => i >= 0 && i < C.h.length && wallOf(i) && C.h[i] >= 0.9;
+  // linteaux : une porte (au plus 3 cases de suite), ou une poutre au-dessus du passage (canal sur tréteaux, arcades,
+  // auvents : plus de 3 cases d'affilée) qu'on dessine comme un trait sur le sol, dans le sens de la rangée
+  const lin = (x, y) => x >= 0 && y >= 0 && x < w.w && y < w.h && C.b[y * w.w + x] > 0;
+  const run = (x, y, dx, dy) => { let n = 1; for (let k = 1; lin(x + dx * k, y + dy * k); k++) n++; for (let k = 1; lin(x - dx * k, y - dy * k); k++) n++; return n; };
   for (let cy = 0; cy < w.h; cy++) for (let cx = 0; cx < w.w; cx++) {
     const i = cy * w.w + cx;
     const fl = w.flats[C.floor[i]];
-    const base = hex(FLOOR[fl] || '#b89070');
+    const base = hex(FL[fl] || '#b89070');
     const dim = C.ceil[i] ? 0.72 : 1;
     const tid = (w.tex[C.wall[i]] || [''])[0];
     for (let y = 0; y < K; y++) for (let x = 0; x < K; x++) {
@@ -72,7 +79,7 @@ function baseMap(w) {
       }
       if (tall(i)) {
         // mur plein : sa couleur, avec un contour sombre là où il touche le sol
-        const r = pick(WALL, tid);
+        const r = pick(WL, tid);
         col = hex(r ? r[1] : '#3a2416');
         k = 0.9 + hash(X, Y) * 0.12;
         const edge = (x === 0 && cx > 0 && !tall(i - 1)) || (x === K - 1 && cx < w.w - 1 && !tall(i + 1))
@@ -80,12 +87,15 @@ function baseMap(w) {
         if (edge) { col = [34, 20, 12]; k = 1; }
       } else if (wallOf(i)) {
         // mur bas (comptoir, barrière, foin, caisses) : on tire par-dessus
-        const r = pick(LOW, tid) || [null, '#7a5a3a'];
+        const r = pick(LW, tid) || [null, '#7a5a3a'];
         if (r[2] === 'dots') { if ((x + y) % 2 === 0) { col = hex(r[1]); k = 1; } }
         else if (x > 0 && y > 0 && x < K - 1 && y < K - 1) { col = hex(r[1]); k = 1; } else { col = [60, 40, 26]; k = 1; }
       } else if (C.b[i] > 0) {
-        // porte : un seuil clair au milieu de la case
-        if (x === 1 || x === 2 || y === 1 || y === 2) { col = [232, 200, 140]; k = 1; }
+        const rh = run(cx, cy, 1, 0), rv = run(cx, cy, 0, 1);
+        if (Math.max(rh, rv) > 3) {
+          // poutre au-dessus du passage
+          if ((rh >= rv ? y : x) === 1) { col = [74, 50, 30]; k = 1; }
+        } else if (x === 1 || x === 2 || y === 1 || y === 2) { col = [232, 200, 140]; k = 1; } // porte : un seuil clair au milieu de la case
       }
       px(X, Y, col, k);
     }
@@ -93,8 +103,8 @@ function baseMap(w) {
   ctx.putImageData(img, 0, 0);
   // le décor par-dessus
   for (const o of w.deco) {
-    const s = DECO[o.id];
-    if (!s || o.hang) continue;
+    const s = DC[o.id];
+    if (!s || o.hang || o.gone) continue;
     const x = Math.floor(o.x * K), y = Math.floor(o.y * K);
     ctx.fillStyle = s[0];
     if (s[1] === 'd') ctx.fillRect(x, y, 1, 1);
@@ -114,6 +124,9 @@ export class FpsMap {
   }
 
   toggle() { this.big = !this.big; }
+
+  // le décor a changé (caisses soufflées, barils sautés, décor revenu) : fond redessiné
+  refresh() { this.base = baseMap(this.w); }
 
   // Radar rond, nord en haut, copié pixel pour pixel autour du joueur.
   drawRadar(ctx, me, marks, now) {
@@ -156,7 +169,7 @@ export class FpsMap {
     ctx.fillRect(ox - 3, oy - 12, mw + 6, mh + 15);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.base, ox, oy);
-    canvasText(ctx, 'CARTE DE LA VILLE', W / 2, oy - 11, { color: '#f8d070' });
+    canvasText(ctx, w.map === 'town' || !w.name ? 'CARTE DE LA VILLE' : `CARTE : ${w.name}`, W / 2, oy - 11, { color: '#f8d070' });
     // étiquettes : si deux noms se chevauchent (bâtiments voisins), le second monte ou descend d'une ligne
     const placed = [];
     const label = (text, x, y, col = '#fdf6e0') => {
@@ -170,7 +183,7 @@ export class FpsMap {
       }
     };
     for (const d of w.districts || []) label(ZONE_LABEL[d.zone] || '', (d.x0 + d.x1 + 1) / 2, (d.y0 + d.y1 + 1) / 2, '#e2d2a6');
-    label('GARE', 12, 9.5, '#e2d2a6');
+    for (const l of w.labels || []) label(l.text, l.x, l.y, l.col || '#e2d2a6');
     for (const r of w.rooms || []) if (ROOM_LABEL[r.kind]) label(ROOM_LABEL[r.kind], (r.x0 + r.x1 + 1) / 2, (r.y0 + r.y1 + 1) / 2, '#f8d070');
     for (const m of marks) this.mark(ctx, ox + m.x * K, oy + m.y * K, m, now);
     this.arrow(ctx, ox + me.x * K, oy + me.y * K, me.a, true);

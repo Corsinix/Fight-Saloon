@@ -8,6 +8,8 @@
 // clic droit pour les envoyer (sur un ennemi : l'attaquer ; Maj : en chargeant). Sans sélection,
 // le clic droit commande toute l'armée. Au doigt : on touche ses unités, puis la carte.
 // Caméra : flèches, bord de l'écran, molette, bouton du milieu, mini-carte ; au doigt, on glisse.
+// Diplomatie : le bouton PACTES (en haut, ou P) ouvre une ligne par joueur : alliance (proposer, accepter,
+// refuser, trahir), dons d'or et de vivres, messages tout faits. Pas de limite de temps : l'horloge compte.
 // L'hôte simule la partie et envoie un instantané 2 fois par seconde : on lisse les déplacements entre deux.
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
@@ -18,7 +20,7 @@ import { ENVS, Ambience } from './env.js';
 import {
   RTS, T, TERRAIN, BIOMES, FORT, BUILDINGS, BUILD_IDS, UNITS, UNIT_IDS, KIND_IDS, VEINS, LV, TECH, RANKS,
   rtsWorld, canBuild, inTerritory, bCenter, tileAt, terrainPx, costOf, countOf, incomeOf, popOf, siteOf,
-  maxHpOf, upNext, guardOf, uStats, qOf,
+  maxHpOf, upNext, guardOf, uStats, qOf, DIPLO, WORDS, pairKey,
 } from './rtsgame.js';
 
 const TS = RTS.tile, MW = RTS.mapW, MH = RTS.mapH, COLS = RTS.cols, ROWS = RTS.rows;
@@ -65,6 +67,8 @@ const UNIT_KEYS = [['a', 'q'], ['z', 'w'], ['e'], ['r']];
 const ARROWS = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
 const ZOOMS = [0.5, 0.75, 1, 1.5, 2]; // crans de zoom (0,5 : presque toute la carte)
 const CMDS = { amove: ['CHARGER', 'c'], hold: ['TENIR', 's'], stop: ['HALTE', 'x'], clear: ['AUCUNE', 'échap'] };
+const WEAK_COL = '#c080f0'; // malus du joueur trahi
+const pct = (k) => Math.round(Math.abs(k - 1) * 100);
 
 // ------------------------------------------------------------ sprites des bâtiments
 // Vue de trois quarts : le bâtiment occupe sa base (w cases) et déborde vers le haut.
@@ -352,6 +356,12 @@ const ICONS = {
   up: (R) => { R(3, 0, 1, 1, '#c8f0a0'); R(2, 1, 3, 1, '#8ad870'); R(1, 2, 5, 1, '#8ad870'); R(0, 3, 7, 1, '#6ab850'); R(2, 4, 3, 3, '#6ab850'); R(3, 1, 1, 3, '#c8f0a0'); },
   // galon (expérience)
   star: (R) => { R(3, 0, 1, 2, '#f8d070'); R(0, 2, 7, 1, '#f8d070'); R(1, 3, 5, 1, '#f8d070'); R(2, 4, 3, 1, '#e8b030'); R(1, 5, 2, 2, '#e8b030'); R(4, 5, 2, 2, '#e8b030'); R(3, 2, 1, 2, '#fff8c0'); },
+  // poignée de main (alliance)
+  pact: (R) => { R(0, 2, 2, 3, '#8a5a32'); R(5, 2, 2, 3, '#5e3a1e'); R(2, 2, 3, 3, '#e0a878'); R(2, 1, 2, 1, '#e0a878'); R(3, 5, 2, 1, '#e0a878'); R(2, 3, 1, 1, '#b07848'); R(4, 2, 1, 1, '#f0c8a0'); },
+  // cœur brisé (trahi : affaibli)
+  weak: (R) => { R(0, 1, 3, 3, '#a050d0'); R(4, 1, 3, 3, '#a050d0'); R(1, 4, 5, 1, '#a050d0'); R(2, 5, 3, 1, '#a050d0'); R(3, 6, 1, 1, '#a050d0'); R(3, 1, 1, 2, '#1a0f0a'); R(2, 3, 2, 1, '#1a0f0a'); R(3, 4, 1, 1, '#1a0f0a'); R(1, 1, 1, 1, '#d8a0f8'); },
+  // bulle (message)
+  talk: (R) => { R(0, 0, 7, 5, '#fdf6e0'); R(1, 5, 2, 1, '#fdf6e0'); R(1, 6, 1, 1, '#fdf6e0'); R(1, 2, 1, 1, '#6a4426'); R(3, 2, 1, 1, '#6a4426'); R(5, 2, 1, 1, '#6a4426'); },
 };
 const icon = (name) => cached(`i:${name}`, () => pixelSprite(9, 9, 1, 1, ICONS[name]));
 function swords(ctx, x, y, col) {
@@ -695,13 +705,23 @@ export class RtsScene extends MiniScene {
       'BÂTIMENT EN BAS PUIS LA CARTE : CONSTRUIRE - UN CHANTIER À LA FOIS',
       'TOUCHE UN BÂTIMENT : L\'AMÉLIORER, ENTRAÎNER TES UNITÉS',
       'GLISSE : VOIR AILLEURS - PINCE : ZOOM - BOIS : À COUVERT',
+      'PACTES (EN HAUT) : ALLIANCES, TRAHISONS, DONS, MESSAGES',
     ] : [
       'CLIC : CHOISIR (MAJ + GLISSER : CADRE) - CLIC DROIT : ENVOYER',
       'CLIC DROIT SUR UN ENNEMI : L\'ATTAQUER - C : CHARGER - S : TENIR',
       'BÂTIR (1-6), RECRUTER (A Z E R) - CLIC SUR UN BÂTIMENT : AMÉLIORER',
       'GLISSER : DÉPLACER LA CARTE - MOLETTE : ZOOM - T : TOUTE L\'ARMÉE',
-      'COLLINES : PLUS DE PORTÉE - BOIS : À COUVERT DES BALLES',
+      'P : PACTES - ALLIANCES, TRAHISONS (LA VICTIME FAIBLIT 1 MIN), DONS',
     ];
+  }
+
+  // pas de limite de temps : l'horloge du haut compte le temps de jeu, sans barre de progression
+  clock() { return Math.max(0, this.t); }
+  progress() { return null; }
+  mood() {
+    if (this.over || this.t < 0) return super.mood();
+    const hot = this.alert && this.now - this.alert.at < 6000 ? 0.15 : 0;
+    return { level: Math.min(0.9, 0.5 + 0.25 * Math.min(1, this.t / 600000) + hot) };
   }
   goText() { return 'À LA CONQUÊTE !'; }
 
@@ -737,6 +757,10 @@ export class RtsScene extends MiniScene {
     this.pendingTrain = {};
     this.pendingUp = null;
     this.terrKey = null;
+    this.diplo = false; // panneau des pactes ouvert
+    this.sayTo = null; // menu des messages ouvert pour ce joueur
+    this.pacts = new Set();
+    this.offers = new Set();
     this.snapA = this.snapB = null;
     this.applySnap(this.emptySnap());
     const [fx, fy] = this.world.forts[this.me] || this.world.forts[0];
@@ -745,9 +769,9 @@ export class RtsScene extends MiniScene {
 
   emptySnap() {
     return {
-      t: 0, P: this.state.players.map(() => [RTS.start.gold, RTS.start.food, 1, 0, -1, '0000']),
+      t: 0, P: this.state.players.map(() => [RTS.start.gold, RTS.start.food, 1, 0, -1, '0000', 0]),
       B: this.world.forts.map(([fx, fy], i) => [i + 1, i, 0, fx - 1, fy - 1, FORT.hp, FORT.hp, 0, '', 0, 1, 0]),
-      U: [], S: [],
+      U: [], S: [], A: [], O: [],
     };
   }
 
@@ -810,6 +834,10 @@ export class RtsScene extends MiniScene {
     if (this.pendingUp && (this.now - this.pendingUp.at > 1500 || blds.some((b) => b.id === this.pendingUp.id && (b.up > 0 || b.lv > this.pendingUp.lv)))) this.pendingUp = null;
     this.veinsTaken = new Set(blds.filter((b) => b.kind === 'mine').map((b) => this.world.veins.find((v) => v.x === b.x && v.y === b.y)?.id));
     this.income = incomeOf(this.world, blds, this.me);
+    this.pacts = new Set(s.A || []);
+    this.offers = new Set(s.O || []);
+    this.endS = s.E || 0; // secondes avant la fin des alliances (plus que des alliés en lice)
+    if (this.sayTo != null && !this.state.players[this.sayTo]) this.sayTo = null;
     // la sélection ne garde que ce qui existe encore
     for (const id of this.sel) if (!units.has(id)) { this.sel.delete(id); this.cmdFx.delete(id); }
     if (this.selB != null && !blds.some((b) => b.id === this.selB)) this.selB = null;
@@ -884,6 +912,42 @@ export class RtsScene extends MiniScene {
       if (ev.order.mode === 'rally') this.rally = { x: ev.order.x, y: ev.order.y };
       this.cmdFx.clear();
       sfx('click');
+    } else if (ev.type === 'diplo') this.onDiplo(ev);
+    else if (ev.type === 'gift') {
+      const what = ev.gold ? `${ev.gold} OR` : `${ev.food} VIVRES`;
+      if (ev.to === this.me) { this.say(`${this.name(ev.by).toUpperCase()} T'ENVOIE ${what} !`, this.color(ev.by)); sfx('coin'); } else if (ev.by === this.me) { this.say(`${what} ENVOYÉS À ${this.name(ev.to).toUpperCase()}`, '#e8d8b8', 1600); sfx('coin'); }
+    } else if (ev.type === 'say' && (ev.to === this.me || ev.by === this.me)) {
+      const w = WORDS[ev.w];
+      if (!w) return;
+      const text = w.id === 'join' && ev.on != null ? `ATTAQUONS ${ev.on === this.me ? 'TOI' : this.name(ev.on).toUpperCase()} ENSEMBLE !` : w.text;
+      if (ev.by === this.me) { this.say(`À ${this.name(ev.to).toUpperCase()} : ${text}`, '#e8d8b8', 1600); return; }
+      // au secours : son fort clignote sur la mini-carte, Espace y mène
+      if (w.id === 'help' && ev.x != null) this.alert = { x: ev.x, y: ev.y, at: this.now };
+      this.say(`${this.name(ev.by).toUpperCase()} : ${text}${w.id === 'help' && !this.touch ? ' (ESPACE)' : ''}`, this.color(ev.by), 3200);
+      sfx('ding');
+    }
+  }
+
+  // alliances proposées, conclues, refusées, trahies
+  onDiplo(ev) {
+    // plus que des alliés : un seul gagnera, leurs alliances tombent au bout du compte à rebours
+    if (ev.op === 'lastStand') { this.say(`PLUS QUE DES ALLIÉS : UN SEUL GAGNERA ! FIN DES ALLIANCES DANS ${ev.ms / 1000} S`, '#f8d070', 4500); sfx('bad'); return; }
+    if (ev.op === 'dissolve') { this.say('LES ALLIANCES SONT ROMPUES : CHACUN POUR SOI !', '#f0705a', 4000); sfx('boom'); return; }
+    const by = this.name(ev.by).toUpperCase(), to = this.name(ev.to).toUpperCase();
+    const mine = ev.by === this.me || ev.to === this.me;
+    const other = ev.by === this.me ? ev.to : ev.by, them = this.name(other).toUpperCase();
+    if (ev.op === 'offer') {
+      if (ev.to === this.me) { this.say(`${by} TE PROPOSE UNE ALLIANCE${this.touch ? ' (PACTES)' : ' (P)'}`, this.color(ev.by), 4000); sfx('ding'); } else if (ev.by === this.me) this.say(`ALLIANCE PROPOSÉE À ${to}`, '#e8d8b8', 1600);
+    } else if (ev.op === 'ally') {
+      if (mine) { this.say(`ALLIANCE AVEC ${them} : VOUS NE VOUS TIREZ PLUS DESSUS`, '#8ad870', 3200); sfx('power'); } else this.say(`${by} ET ${to} S'ALLIENT`, '#e8d8b8', 2400);
+    } else if (ev.op === 'refuse') {
+      if (ev.to === this.me) { this.say(`${by} REFUSE TON ALLIANCE`, '#f0705a', 2200); sfx('dry'); }
+    } else if (ev.op === 'betray') {
+      if (ev.to === this.me) {
+        this.say(`${by} T'A TRAHI ! TES TROUPES FAIBLISSENT 1 MIN`, WEAK_COL, 4500);
+        sfx('bad');
+        this.shake = Math.max(this.shake, 4);
+      } else if (ev.by === this.me) { this.say(`TU AS TRAHI ${to} : SES TROUPES FAIBLISSENT 1 MIN, FRAPPE !`, WEAK_COL, 3200); sfx('power'); } else { this.say(`${by} A TRAHI ${to} !`, WEAK_COL, 3000); sfx('bad'); }
     }
   }
 
@@ -901,9 +965,30 @@ export class RtsScene extends MiniScene {
   }
 
   // ---------------------------------------------------------- état local
-  get my() { return this.snapB?.P[this.me] || [0, 0, 0, 0, -1, '0000']; }
+  get my() { return this.snapB?.P[this.me] || [0, 0, 0, 0, -1, '0000', 0]; }
   get alive() { return !!this.my[2]; }
   get can() { return this.playing && this.alive; }
+  // diplomatie
+  allied(a, b) { return a !== b && this.pacts.has(pairKey(a, b)); }
+  isFoe(o) { return o !== this.me && !this.allied(this.me, o); }
+  weakS(j) { return +(this.snapB?.P[j]?.[6] || 0); } // secondes de malus qui restent au joueur trahi
+  inPlay(j) { return !!this.snapB?.P[j]?.[2] && !this.state.players[j]?.left; }
+  // où j'en suis avec ce joueur : gone, ally, in (il me propose), out (je lui ai proposé), none
+  dState(j) {
+    if (!this.inPlay(j)) return 'gone';
+    if (this.allied(this.me, j)) return 'ally';
+    if (this.offers.has(`${j}>${this.me}`)) return 'in';
+    if (this.offers.has(`${this.me}>${j}`)) return 'out';
+    return 'none';
+  }
+  offersToMe() { return this.state.players.reduce((n, _, j) => n + (this.offers.has(`${j}>${this.me}`) ? 1 : 0), 0); }
+  // une alliance demande au moins 3 joueurs en lice
+  canPact() { return this.state.players.filter((_, j) => this.inPlay(j)).length >= 3; }
+  // cette alliance allierait-elle tout le monde ? (interdit : il faut un ennemi commun, un seul gagnera)
+  allyAll(j) {
+    const alive = this.state.players.map((_, k) => k).filter((k) => this.inPlay(k)), extra = pairKey(this.me, j);
+    return alive.every((a) => alive.every((b) => a === b || this.pacts.has(pairKey(a, b)) || pairKey(a, b) === extra));
+  }
   techOf(owner, kind) { return +(this.snapB?.P[owner]?.[5]?.[UNIT_IDS.indexOf(kind)] || 0); }
   uMax(u) { return uStats(u.kind, this.techOf(u.owner, u.kind), u.rank).hp; }
   myBlds(kind) { return this.snapB.blds.filter((b) => b.owner === this.me && (!kind || b.kind === kind)); }
@@ -933,7 +1018,7 @@ export class RtsScene extends MiniScene {
   cost(kind) { return costOf(this.allBlds(), this.me, kind); }
   selBld() { return this.selB != null ? this.snapB.blds.find((b) => b.id === this.selB) || null : null; }
   selUnits() { return [...this.sel].map((id) => this.snapB.units.get(id)).filter(Boolean); }
-  get mode() { return this.selB != null ? 'bld' : this.sel.size ? 'units' : 'none'; }
+  get mode() { return this.diplo ? 'diplo' : this.selB != null ? 'bld' : this.sel.size ? 'units' : 'none'; }
 
   // ---------------------------------------------------------- sélection
   select(ids, add = false) {
@@ -941,10 +1026,19 @@ export class RtsScene extends MiniScene {
     for (const id of ids) if (this.sel.size < RTS.maxSel) this.sel.add(id);
     this.selB = null;
     this.armed = null;
+    if (ids.length) this.closeDiplo();
     if (ids.length) sfx('ui');
   }
-  clearSel() { this.sel.clear(); this.selB = null; this.armed = null; }
-  selectBld(b) { this.sel.clear(); this.selB = b.id; this.armed = null; this.placing = null; sfx('ui'); }
+  clearSel() { this.sel.clear(); this.selB = null; this.armed = null; this.closeDiplo(); }
+  selectBld(b) { this.sel.clear(); this.selB = b.id; this.armed = null; this.placing = null; this.closeDiplo(); sfx('ui'); }
+  // panneau des pactes : il remplace celui des commandes (la sélection reste)
+  toggleDiplo() {
+    this.diplo = !this.diplo;
+    this.sayTo = null;
+    if (this.diplo) this.placing = null;
+    sfx('ui');
+  }
+  closeDiplo() { this.diplo = false; this.sayTo = null; }
   // mes unités de ce type à l'écran
   selectType(kind, add) { this.select(this.myUnits().filter((u) => u.kind === kind && this.seen(u.x, u.y, 0)).map((u) => u.id), add); }
   selectAll() {
@@ -1020,7 +1114,9 @@ export class RtsScene extends MiniScene {
     const units = mode === 'units' ? this.selUnits() : [];
     const types = UNIT_IDS.filter((k) => units.some((u) => u.kind === k));
     const b = mode === 'bld' ? this.selBld() : null;
-    const key = `${mode}:${this.selB}:${types.join()}:${units.length === 1}:${b?.owner}:${this.snapB?.P.length}`;
+    const others = this.others();
+    const dip = mode === 'diplo' ? others.map((j) => this.dState(j)).join() : '';
+    const key = `${mode}:${this.selB}:${types.join()}:${units.length === 1}:${b?.owner}:${this.snapB?.P.length}:${dip}`;
     if (this._btnKey === key) return this._btns;
     const list = [];
     // à droite : les ordres à toute l'armée (ou à la sélection)
@@ -1036,6 +1132,19 @@ export class RtsScene extends MiniScene {
       if (units.length === 1) list.push({ type: 'card', id: types[0], single: true, x: 2, y: PY + 2, w: 143, h: 34 });
       else types.forEach((k, i) => list.push({ type: 'card', id: k, x: 2 + i * 36, y: PY + 2, w: 35, h: 34 }));
       Object.entries(CMDS).forEach(([id, [label]], i) => list.push({ type: 'cmd', id, label, x: 148 + (i % 2) * 54, y: PY + 2 + Math.floor(i / 2) * 18, w: 53, h: 16 }));
+    } else if (mode === 'diplo') {
+      // une ligne par joueur : nom et état (dessinés à part), alliance, dons, message
+      others.forEach((j, k) => {
+        const y = PY + 2 + k * 12, st = this.dState(j);
+        if (st === 'gone') return;
+        if (st === 'in') {
+          list.push({ type: 'pact', op: 'accept', to: j, x: 110, y, w: 23, h: 11 });
+          list.push({ type: 'refuse', to: j, x: 134, y, w: 22, h: 11 });
+        } else list.push({ type: 'pact', op: st === 'ally' ? 'betray' : 'offer', to: j, x: 110, y, w: 46, h: 11 });
+        list.push({ type: 'gift', res: 'gold', to: j, x: 158, y, w: 30, h: 11 });
+        list.push({ type: 'gift', res: 'food', to: j, x: 190, y, w: 30, h: 11 });
+        list.push({ type: 'say', to: j, x: 222, y, w: 32, h: 11 });
+      });
     } else if (b && b.owner === this.me) {
       list.push({ type: 'up', x: 96, y: PY + 2, w: 40, h: 34 });
       const from = UNIT_IDS.filter((k) => UNITS[k].from === b.kind);
@@ -1048,10 +1157,23 @@ export class RtsScene extends MiniScene {
     return list;
   }
 
-  btnAt(m) { return this.buttons().find((b) => m.x >= b.x && m.x < b.x + b.w && m.y >= b.y && m.y < b.y + b.h); }
+  btnAt(m) {
+    const hit = (b) => b && m.x >= b.x && m.x < b.x + b.w && m.y >= b.y && m.y < b.y + b.h;
+    if (m.y < TOP) return hit(this.topBtn) ? this.topBtn : null;
+    return this.buttons().find(hit);
+  }
+  others() { return this.state.players.map((_, j) => j).filter((j) => j !== this.me); }
+
+  // menu des messages tout faits, au-dessus du panneau
+  sayItems() {
+    if (this.sayTo == null) return [];
+    const w = 118, x = 254 - w, y0 = PY - 2 - WORDS.length * 10;
+    return WORDS.map((wd, k) => ({ w: k, x, y: y0 + k * 10, bw: w, h: 10 }));
+  }
 
   press(b) {
     if (this.touch) this.tip = { b, until: this.now + 2200 };
+    if (b.type === 'diplo') { this.toggleDiplo(); return; }
     if (b.type === 'card') {
       // ne garder que ce type (Maj : le retirer)
       const ids = this.selUnits().filter((u) => (u.kind === b.id) !== this.keys.has('shift')).map((u) => u.id);
@@ -1066,10 +1188,15 @@ export class RtsScene extends MiniScene {
       sfx('click');
       const why = this.buildBlock(b.id);
       if (why) { this.say(why, '#f0705a', 1800); return; }
+      this.closeDiplo();
       this.placing = b.id;
       this.armed = null;
       return;
     }
+    if (b.type === 'pact') { this.pact(b); return; }
+    if (b.type === 'refuse') { this.hooks.send({ kind: 'diplo', op: 'refuse', to: b.to }); sfx('click'); return; }
+    if (b.type === 'gift') { this.gift(b); return; }
+    if (b.type === 'say') { this.sayTo = this.sayTo === b.to ? null : b.to; sfx('ui'); return; }
     this.placing = null; // tout autre bouton annule la construction en cours
     if (b.type === 'unit') this.train(b.id);
     else if (b.type === 'tech') this.research(b.id);
@@ -1079,9 +1206,43 @@ export class RtsScene extends MiniScene {
       if (b.id === 'amove') { this.armed = this.armed ? null : 'amove'; sfx('click'); } else this.command(b.id);
     } else if (b.type === 'defend') {
       if (this.sel.size) this.command('home'); else this.order({ mode: 'defend' });
+    } else if (b.type === 'attack' && this.allied(this.me, b.target)) {
+      sfx('dry');
+      this.say(`ALLIÉ DE ${this.name(b.target).toUpperCase()} : ROMPS D'ABORD L'ALLIANCE (PACTES)`, '#f8d070', 2000);
     } else if (b.type === 'attack' && this.snapB.P[b.target]?.[2]) {
       if (this.sel.size) this.command('fort', null, b.target); else this.order({ mode: 'attack', target: b.target });
     }
+  }
+
+  // alliance : proposer, accepter, trahir (il faut appuyer deux fois pour trahir)
+  pact(b) {
+    const who = this.name(b.to).toUpperCase();
+    if (b.op !== 'betray' && !this.canPact()) { sfx('dry'); this.say('VOUS N\'ÊTES PLUS QUE DEUX : UN SEUL FORT RESTERA DEBOUT', '#f0705a', 2200); return; }
+    if (b.op === 'offer' && this.dState(b.to) === 'out') { sfx('dry'); this.say(`${who} N'A PAS ENCORE RÉPONDU`, '#f8d070', 1600); return; }
+    if (b.op !== 'betray' && this.allyAll(b.to)) { sfx('dry'); this.say('VOUS SERIEZ TOUS ALLIÉS : IL FAUT UN ENNEMI COMMUN', '#f0705a', 2200); return; }
+    if (b.op === 'betray' && !(this.betrayArm?.to === b.to && this.now - this.betrayArm.at < 2500)) {
+      this.betrayArm = { to: b.to, at: this.now };
+      sfx('click');
+      this.say(`ENCORE UNE FOIS POUR TRAHIR ${who}`, WEAK_COL, 2500);
+      return;
+    }
+    this.betrayArm = null;
+    this.hooks.send({ kind: 'diplo', op: b.op, to: b.to });
+    sfx(b.op === 'betray' ? 'clank' : 'click');
+  }
+
+  gift(b) {
+    const gold = b.res === 'gold' ? DIPLO.gift.gold : 0, food = b.res === 'food' ? DIPLO.gift.food : 0;
+    if (this.my[0] < gold || this.my[1] < food) { sfx('dry'); this.say(`IL TE FAUT ${gold ? `${gold} OR` : `${food} VIVRES`}`, '#f0705a', 1500); return; }
+    this.hooks.send({ kind: 'gift', to: b.to, res: b.res });
+  }
+
+  sayWord(k) {
+    const to = this.sayTo;
+    this.sayTo = null;
+    if (to == null || !this.can) return;
+    this.hooks.send({ kind: 'say', to, w: k });
+    sfx('click');
   }
 
   // ce qui empêche de lancer ce bâtiment, où qu'on le pose (ou null)
@@ -1165,17 +1326,20 @@ export class RtsScene extends MiniScene {
 
   // clic droit (ou toucher la carte avec une sélection) : envoyer les unités choisies, sinon toute l'armée
   orderAt(w, amove, fromMini = false) {
-    const fu = !fromMini && this.unitAt(w, false);
+    // les unités et bâtiments des alliés ne sont pas des cibles : on y va, simplement
+    let fu = !fromMini && this.unitAt(w, false);
+    if (fu && !this.isFoe(fu.owner)) fu = null;
     const fb = !fromMini && !fu && this.bldAt(w);
+    const foeB = fb && this.isFoe(fb.owner);
     if (!this.sel.size) {
-      if (fu || (fb && fb.owner !== this.me)) { this.order({ mode: 'attack', target: (fu || fb).owner }); return; }
-      if (fb && fb.kind === 'fort') { this.order({ mode: 'defend' }); return; }
+      if (fu || foeB) { this.order({ mode: 'attack', target: (fu || fb).owner }); return; }
+      if (fb && fb.kind === 'fort' && fb.owner === this.me) { this.order({ mode: 'defend' }); return; }
       this.rallyAt(w);
       return;
     }
     if (fu) { this.command('attack', w, fu.id); return; }
-    if (fb && fb.owner !== this.me) { this.command('attack', w, fb.id); return; }
-    if (fb && fb.kind === 'fort') { this.command('home'); return; }
+    if (foeB) { this.command('attack', w, fb.id); return; }
+    if (fb && fb.kind === 'fort' && fb.owner === this.me) { this.command('home'); return; }
     this.command(amove ? 'amove' : 'move', w);
   }
 
@@ -1209,8 +1373,15 @@ export class RtsScene extends MiniScene {
 
   onFire(m, e) {
     if (!this.snapB) return;
+    if (this.sayTo != null) {
+      // menu des messages : un choix l'envoie, un clic ailleurs le ferme
+      const it = this.sayItems().find((s) => m.x >= s.x && m.x < s.x + s.bw && m.y >= s.y && m.y < s.y + s.h);
+      if (it) { this.sayWord(it.w); return; }
+      const b = m.y >= PY && this.btnAt(m);
+      if (!(b && b.type === 'say')) { this.sayTo = null; if (m.y < PY) return; }
+    }
     if (this.inMini(m)) { this.miniDrag = true; const w = this.fromMini(m); this.centerOn(w.x, w.y); return; }
-    if (m.y >= PY) { const b = this.btnAt(m); if (b) this.press(b); return; }
+    if (m.y >= PY || m.y < TOP) { const b = this.btnAt(m); if (b) this.press(b); return; }
     if (!this.inView(m) || !this.can) return;
     const w = this.toWorld(m);
     if (e?.pointerType === 'touch') { if (!this.pinching) this.clickMap(w, false, true); return; }
@@ -1261,6 +1432,7 @@ export class RtsScene extends MiniScene {
   }
 
   onAlt(m) {
+    if (this.sayTo != null) { this.sayTo = null; return; }
     if (this.placing) { this.placing = null; return; }
     if (this.armed) { this.armed = null; return; }
     if (!this.can) return;
@@ -1271,11 +1443,14 @@ export class RtsScene extends MiniScene {
 
   onKey(k) {
     if (k === 'escape') {
-      if (this.placing) this.placing = null;
+      if (this.sayTo != null) this.sayTo = null;
+      else if (this.diplo) this.closeDiplo();
+      else if (this.placing) this.placing = null;
       else if (this.armed) this.armed = null;
       else this.clearSel();
       return;
     }
+    if (k === 'p') { this.toggleDiplo(); return; }
     if (k === ' ') { const a = this.alert && this.now - this.alert.at < 15000 ? this.alert : null; this.jumpHome(a); return; }
     if (k === 'h') { this.jumpHome(null); const f = this.myBlds('fort')[0]; if (f) this.selectBld(f); return; }
     if (k === 't') { this.press({ type: 'all' }); return; }
@@ -1417,6 +1592,7 @@ export class RtsScene extends MiniScene {
     this.drawTop(out, now);
     this.drawPanel(out, now);
     this.drawMini(out, now);
+    this.drawSayMenu(out);
     this.drawTip(out);
     this.drawBanner(out, now);
     if (now - (this.zoomShown ?? -1e9) < 900) {
@@ -1662,6 +1838,13 @@ export class RtsScene extends MiniScene {
 
   // barres de vie (bâtiments abîmés, unités blessées ou choisies) et galons
   drawBars(ctx) {
+    // joueurs trahis il y a moins d'une minute : un cœur brisé qui clignote au-dessus de leurs bâtiments et de leurs unités
+    const weak = new Set(this.others().filter((j) => this.weakS(j)));
+    if (this.weakS(this.me)) weak.add(this.me);
+    const pulse = Math.floor(this.now / 350) % 2;
+    if (weak.size && pulse) {
+      for (const b of this.snapB.blds) if (weak.has(b.owner) && this.seen(bCenter(b).x, bCenter(b).y, 20)) ctx.drawImage(icon('weak'), rd(bCenter(b).x) - 4, this.bldTop(b) - 13);
+    }
     for (const b of this.snapB.blds) {
       const chosen = b.id === this.selB;
       if ((b.hp >= b.maxHp && !chosen) || b.build > 0) continue;
@@ -1681,6 +1864,12 @@ export class RtsScene extends MiniScene {
         ctx.fillStyle = u.hp / max > 0.4 ? '#7ac860' : '#f0705a'; ctx.fillRect(x, top, Math.max(1, rd((6 * u.hp) / max)), 1);
       }
       if (u.rank) chevrons(ctx, rd(u.x) - Math.floor((u.rank * 3 - 1) / 2), top - 4, u.rank);
+      if (pulse && weak.has(u.owner)) {
+        // petite flèche violette vers le bas : affaibli
+        ctx.fillStyle = WEAK_COL;
+        const x = rd(u.x) + 5;
+        ctx.fillRect(x, top - 1, 3, 1); ctx.fillRect(x + 1, top, 1, 1);
+      }
     }
   }
 
@@ -1689,6 +1878,12 @@ export class RtsScene extends MiniScene {
     const o = this.my[4];
     const bob = Math.floor(now / 300) % 2;
     const col = this.color(this.me);
+    // forts de mes alliés : la poignée de main au-dessus
+    for (const f of this.snapB.blds) {
+      if (f.kind !== 'fort' || !this.allied(this.me, f.owner)) continue;
+      const c = bCenter(f);
+      ctx.drawImage(icon('pact'), rd(c.x) - 4, rd(c.y) - 31);
+    }
     if (o >= 0) {
       const f = this.snapB.blds.find((b) => b.kind === 'fort' && b.owner === o);
       if (f) {
@@ -1801,13 +1996,14 @@ export class RtsScene extends MiniScene {
     const u = this.unitAt(w, null);
     const b = !u && this.bldAt(w);
     let text, col, top;
+    const tag = (o) => (o === this.me ? '' : this.allied(this.me, o) ? ' (ALLIÉ)' : this.weakS(o) ? ' (AFFAIBLI)' : '');
     if (u) {
-      const who = u.owner === this.me ? '' : ` - ${this.name(u.owner).toUpperCase()}`;
+      const who = u.owner === this.me ? '' : ` - ${this.name(u.owner).toUpperCase()}${tag(u.owner)}`;
       text = `${UNITS[u.kind].name.toUpperCase()}${u.rank ? ` ${RANK_NAME[u.rank]}` : ''} ${Math.ceil(u.hp)}/${this.uMax(u)}${who}`;
       col = this.color(u.owner); top = this.toScreen(u.x, u.y).y - 16 * this.zoom - 14;
     } else if (b) {
       const name = b.kind === 'fort' ? `FORT DE ${b.owner === this.me ? 'TOI' : this.name(b.owner).toUpperCase()}` : BUILDINGS[b.kind].name.toUpperCase();
-      text = b.build > 0 ? `${name} - CHANTIER` : `${name}${b.lv > 1 ? ` NIV. ${b.lv}` : ''} ${Math.ceil(b.hp)}/${b.maxHp}`;
+      text = (b.build > 0 ? `${name} - CHANTIER` : `${name}${b.lv > 1 ? ` NIV. ${b.lv}` : ''} ${Math.ceil(b.hp)}/${b.maxHp}`) + tag(b.owner);
       col = this.color(b.owner); top = this.toScreen(0, this.bldTop(b)).y - 14;
     } else {
       // terrains qui comptent pour la bataille : la bande du bas les explique
@@ -1845,10 +2041,23 @@ export class RtsScene extends MiniScene {
     item('pop', `${army}/${pop}`, full ? '#f0705a' : '#fdf6e0');
     const fort = this.myBlds('fort')[0];
     if (fort) item('heart', Math.ceil(fort.hp), fort.hp / fort.maxHp > 0.35 ? '#fdf6e0' : '#f0705a');
-    // à droite : le chantier en cours, sinon l'ordre de l'armée
+    // bouton des pactes (P), qui clignote quand on me propose une alliance
+    const inbox = this.offersToMe();
+    const b = (this.topBtn = { type: 'diplo', x: rd(x), y: 1, w: 44, h: 10 });
+    const hov = !this.touch && this.mouse.in && this.mouse.y < TOP && this.btnAt(this.mouse) === b;
+    const blink = inbox && Math.floor(now / 400) % 2;
+    ctx.fillStyle = OUT; ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = this.diplo || blink ? '#8a6a3a' : hov ? '#6a4a2a' : '#4e3220'; ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+    ctx.drawImage(icon('pact'), b.x + 1, b.y + 1);
+    canvasText(ctx, 'PACTES', b.x + 10, b.y + 2, { align: 'left', color: this.diplo || blink ? '#fdf6e0' : '#e8d8b8' });
+    if (inbox) { ctx.fillStyle = OUT; ctx.fillRect(b.x + b.w - 1, b.y, 7, 9); ctx.fillStyle = '#a8382a'; ctx.fillRect(b.x + b.w, b.y + 1, 5, 7); canvasText(ctx, String(inbox), b.x + b.w + 3, b.y + 1, { color: '#fdf6e0' }); }
+    // à droite : le malus si on vient d'être trahi, sinon le chantier en cours, sinon l'ordre de l'armée
     const site = this.site();
+    const weak = this.weakS(this.me);
     let txt, col = '#e8d8b8', ic = null;
-    if (site) {
+    if (weak) { ic = 'weak'; txt = `TRAHI : AFFAIBLI ${weak} S`; col = WEAK_COL; } else if (this.endS && this.alive) {
+      ic = 'pact'; txt = `FIN DES ALLIANCES ${this.endS} S`; col = Math.floor(now / 400) % 2 ? '#f0705a' : '#f8d070';
+    } else if (site) {
       const name = site.kind === 'fort' ? 'FORT' : BUILDINGS[site.kind].name.toUpperCase();
       if (site.up > 0) { ic = 'up'; txt = `${name} NIV. ${(site.lv || 1) + 1} ${Math.max(1, Math.ceil(site.up / 1000))} S`; } else { ic = 'hammer'; txt = `${name} ${Math.max(1, Math.ceil(site.build / 1000))} S`; }
       col = '#f8d070';
@@ -1897,15 +2106,16 @@ export class RtsScene extends MiniScene {
     if (mode === 'none') ctx.fillRect(153, y0 + 3, 1, 33);
     const [gold, food] = this.my;
     const can = this.can;
-    const hov = !this.touch && this.mouse.in && this.mouse.y >= PY ? this.btnAt(this.mouse) : null;
+    const hov = !this.touch && this.mouse.in && (this.mouse.y >= PY || this.mouse.y < TOP) ? this.btnAt(this.mouse) : null;
     this.hoverBtn = hov;
     const o = this.my[4];
     const site = this.site();
     const selN = this.sel.size;
     const selB = this.selBld();
     if (mode === 'bld' && selB) this.drawBldInfo(ctx, selB, now);
+    if (mode === 'diplo') this.drawDiploRows(ctx);
     for (const b of this.buttons()) {
-      let on = false, ok = can, label = null, sub = null, subCol = '#fdf6e0', badge = 0, block = null;
+      let on = false, ok = can, label = null, sub = null, subCol = '#fdf6e0', badge = 0, block = null, lcol = null;
       if (b.type === 'build') {
         const B = BUILDINGS[b.id];
         const n = countOf(this.allBlds(), this.me, b.id), cost = this.cost(b.id);
@@ -1943,9 +2153,18 @@ export class RtsScene extends MiniScene {
         label = b.label; on = b.id === 'amove' && this.armed === 'amove';
         ok = b.id === 'clear' || can;
       } else if (b.type === 'card') ok = true;
+      else if (b.type === 'pact') {
+        const st = this.dState(b.to);
+        label = b.op === 'accept' ? 'OUI' : b.op === 'betray' ? 'TRAHIR' : st === 'out' ? 'ENVOYÉE' : 'ALLIANCE';
+        ok = can && (b.op === 'betray' || (this.canPact() && st !== 'out' && !this.allyAll(b.to)));
+        on = b.op === 'betray' && this.betrayArm?.to === b.to && now - this.betrayArm.at < 2500;
+        lcol = b.op === 'accept' ? '#8ad870' : b.op === 'betray' ? WEAK_COL : null;
+      } else if (b.type === 'refuse') { label = 'NON'; lcol = '#e08a7a'; }
+      else if (b.type === 'gift') ok = can && (b.res === 'gold' ? gold >= DIPLO.gift.gold : food >= DIPLO.gift.food);
+      else if (b.type === 'say') on = this.sayTo === b.to;
       else {
         const alive = !!this.snapB.P[b.target]?.[2];
-        on = o === b.target && !selN; ok = can && alive;
+        on = o === b.target && !selN; ok = can && alive && !this.allied(this.me, b.target);
       }
       this.btnFrame(ctx, b, on, ok, hov === b);
       if (!ok) ctx.globalAlpha = 0.45;
@@ -1972,13 +2191,25 @@ export class RtsScene extends MiniScene {
         ctx.drawImage(icon('up'), b.x + 1, b.y + 1);
         canvasText(ctx, nx ? `NIV.${selB.lv + 1}` : 'MAX', b.x + b.w - 2, b.y + 2, { align: 'right', color: '#fdf6e0' });
         if (selB?.up > 0 && nx) this.bar(ctx, b.x + 4, b.y + 18, b.w - 8, 1 - selB.up / nx[1], '#8ad870');
+      } else if (b.type === 'gift') {
+        ctx.drawImage(icon(b.res), b.x + 2, b.y + 1);
+        canvasText(ctx, `+${DIPLO.gift[b.res]}`, b.x + b.w - 2, b.y + 2, { align: 'right', color: b.res === 'gold' ? '#f8d070' : '#f0c8a8' });
+      } else if (b.type === 'say') {
+        ctx.drawImage(icon('talk'), b.x + 2, b.y + 1);
+        canvasText(ctx, 'MOT', b.x + b.w - 3, b.y + 2, { align: 'right', color: on ? '#fdf6e0' : '#e8d8b8' });
+      } else if (b.type === 'attack' && this.allied(this.me, b.target)) {
+        // allié : la poignée de main à la place des sabres
+        ctx.drawImage(icon('pact'), b.x + 1, b.y + 1);
+        ctx.fillStyle = OUT; ctx.fillRect(b.x + 10, b.y + 2, 7, 7);
+        ctx.fillStyle = this.color(b.target); ctx.fillRect(b.x + 11, b.y + 3, 5, 5);
+        if (b.w > 22) canvasText(ctx, this.name(b.target).toUpperCase().slice(0, Math.floor((b.w - 21) / 5.2)), b.x + 19, b.y + 2, { align: 'left', color: this.color(b.target) });
       } else if (b.type === 'attack') {
         swords(ctx, b.x + 3, b.y + 3, this.color(b.target));
         ctx.fillStyle = OUT; ctx.fillRect(b.x + 10, b.y + 2, 7, 7);
         ctx.fillStyle = this.color(b.target); ctx.fillRect(b.x + 11, b.y + 3, 5, 5);
         if (b.w > 22) canvasText(ctx, this.name(b.target).toUpperCase().slice(0, Math.floor((b.w - 21) / 5.2)), b.x + 19, b.y + 2, { align: 'left', color: this.color(b.target) });
       } else if (b.type === 'card') this.drawCard(ctx, b);
-      else canvasText(ctx, label, b.x + b.w / 2, b.y + (b.h > 12 ? 4 : 2), { color: on ? '#fdf6e0' : '#e8d8b8' });
+      else canvasText(ctx, label, b.x + b.w / 2, b.y + (b.h > 12 ? 4 : 2), { color: lcol || (on ? '#fdf6e0' : '#e8d8b8') });
       if (sub) {
         if (sub !== 'MAX') ctx.drawImage(icon('gold'), b.x + 1, b.y + 24);
         canvasText(ctx, sub, b.x + b.w - 2, b.y + 25, { align: 'right', color: subCol });
@@ -2065,6 +2296,51 @@ export class RtsScene extends MiniScene {
     if (b.kind !== 'armory') lines.forEach((l, i) => canvasText(ctx, l, x0, PY + 4 + i * 10, { align: 'left', color: i ? '#c8b898' : '#e8d8b8' }));
   }
 
+  // pactes : une ligne par joueur, son nom (et ses alliés), puis où l'on en est avec lui ; les boutons suivent
+  drawDiploRows(ctx) {
+    const others = this.others();
+    others.forEach((j, k) => {
+      const y = PY + 2 + k * 12, st = this.dState(j), col = this.color(j);
+      ctx.fillStyle = OUT; ctx.fillRect(2, y + 2, 7, 7);
+      ctx.fillStyle = col; ctx.fillRect(3, y + 3, 5, 5);
+      canvasText(ctx, this.name(j).toUpperCase().slice(0, 7), 11, y + 2, { align: 'left', color: st === 'gone' ? '#7a6a5a' : col });
+      // ses alliés (autres que moi) : de petits carrés à leurs couleurs
+      let ax = 49;
+      for (const o of this.state.players.keys()) {
+        if (o === this.me || o === j || !this.allied(j, o) || !this.inPlay(o) || ax > 54) continue;
+        ctx.fillStyle = OUT; ctx.fillRect(ax - 1, y + 3, 5, 5);
+        ctx.fillStyle = this.color(o); ctx.fillRect(ax, y + 4, 3, 3);
+        ax += 5;
+      }
+      const weak = this.weakS(j);
+      const [txt, tc] = st === 'gone' ? [this.state.players[j]?.left ? 'PARTI' : 'ÉLIMINÉ', '#7a6a5a']
+        : weak ? [`TRAHI ${weak}S`, WEAK_COL] : st === 'ally' ? ['ALLIÉ', '#8ad870'] : st === 'in' ? ['PROPOSE !', '#f8d070']
+          : st === 'out' ? ['ATTENTE…', '#c8b898'] : ['ENNEMI', '#e08a7a'];
+      canvasText(ctx, txt, 60, y + 2, { align: 'left', color: tc });
+    });
+    if (others.length === 1) {
+      canvasText(ctx, 'À DEUX : PAS D\'ALLIANCE, UN SEUL FORT GAGNE', 4, PY + 16, { align: 'left', color: '#a89a8a' });
+      canvasText(ctx, 'DONS ET MESSAGES RESTENT POSSIBLES', 4, PY + 26, { align: 'left', color: '#a89a8a' });
+    }
+  }
+
+  // menu des messages tout faits, au-dessus du panneau
+  drawSayMenu(ctx) {
+    const items = this.sayItems();
+    if (!items.length) return;
+    const x = items[0].x, y = items[0].y - 11, w = items[0].bw, h = items.length * 10 + 12;
+    ctx.fillStyle = OUT; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+    ctx.fillStyle = '#2a1a10'; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#6a4426'; ctx.fillRect(x, y, w, 1);
+    canvasText(ctx, `À ${this.name(this.sayTo).toUpperCase().slice(0, 14)} :`, x + 4, y + 2, { align: 'left', color: this.color(this.sayTo) });
+    const m = this.mouse;
+    for (const it of items) {
+      const hov = !this.touch && m.in && m.x >= it.x && m.x < it.x + it.bw && m.y >= it.y && m.y < it.y + it.h;
+      if (hov) { ctx.fillStyle = '#6a4a2a'; ctx.fillRect(it.x + 1, it.y, it.bw - 2, it.h); }
+      canvasText(ctx, WORDS[it.w].text, it.x + 4, it.y + 1, { align: 'left', color: hov ? '#fdf6e0' : '#e8d8b8' });
+    }
+  }
+
   // ce que fait un bâtiment à son niveau (lv)
   statLines(b, lv = b.lv) {
     const k = LV.prod[lv - 1];
@@ -2110,7 +2386,7 @@ export class RtsScene extends MiniScene {
   // bulle d'aide du bouton survolé (au doigt : du dernier bouton touché)
   drawTip(ctx) {
     const b = this.hoverBtn || (this.tip && this.now < this.tip.until ? this.tip.b : null);
-    if (!b) return;
+    if (!b || this.sayTo != null) return;
     const lines = []; // [segments] ; segment : texte ou { icon }
     let title, status = null, stCol = '#f0705a';
     const [gold, food, , army] = this.my;
@@ -2187,16 +2463,63 @@ export class RtsScene extends MiniScene {
       lines.push([b.single ? 'CLIC : LA RETROUVER SUR LA CARTE' : 'CLIC : NE GARDER QUE CEUX-LÀ']);
       if (!b.single && !this.touch) lines.push(['MAJ + CLIC : LES RETIRER']);
       lines.push([`GALONS : ${RANK_NAME.slice(1).join(', ')}`]);
+    } else if (b.type === 'diplo') {
+      title = `PACTES (${this.touch ? 'BOUTON DU HAUT' : 'P'})`;
+      lines.push(['ALLIANCE : VOS ARMÉES NE SE TIRENT PLUS DESSUS']);
+      lines.push([{ icon: 'weak' }, `TRAHISON : LA VICTIME FAIBLIT ${DIPLO.betray / 1000} S`]);
+      lines.push([{ icon: 'gold' }, { icon: 'food' }, { icon: 'talk' }, 'DONS ET MESSAGES']);
+      const n = this.offersToMe();
+      if (n) { status = `${n} PROPOSITION${n > 1 ? 'S' : ''} D'ALLIANCE !`; stCol = '#8ad870'; }
+    } else if (b.type === 'pact' || b.type === 'refuse') {
+      const who = this.name(b.to).toUpperCase();
+      if (b.type === 'refuse') title = `REFUSER L'ALLIANCE DE ${who}`;
+      else if (b.op === 'accept') {
+        title = `ACCEPTER L'ALLIANCE DE ${who}`;
+        lines.push(['VOS ARMÉES NE SE TIRENT PLUS DESSUS']);
+        lines.push(['UN SEUL GAGNANT : PLUS QUE DES ALLIÉS, ELLE TOMBE']);
+      } else if (b.op === 'betray') {
+        title = `TRAHIR ${who}`;
+        lines.push(['L\'ALLIANCE EST ROMPUE SUR-LE-CHAMP, ET PENDANT 1 MIN :']);
+        lines.push([{ icon: 'weak' }, `SES UNITÉS FONT ${pct(DIPLO.weak.dps)} % DE DÉGÂTS EN MOINS`]);
+        lines.push([`ET EN PRENNENT ${pct(DIPLO.weak.hurt)} % DE PLUS`]);
+        lines.push([`SES BÂTIMENTS PRENNENT ${pct(DIPLO.weak.bld)} % DE DÉGÂTS EN PLUS`]);
+        status = this.touch ? 'TOUCHE DEUX FOIS POUR TRAHIR' : 'CLIQUE DEUX FOIS POUR TRAHIR';
+        stCol = WEAK_COL;
+      } else {
+        title = `PROPOSER UNE ALLIANCE À ${who}`;
+        lines.push(['VOS ARMÉES NE SE TIRENT PLUS DESSUS']);
+        lines.push(['UN SEUL GAGNANT : PLUS QUE DES ALLIÉS, ELLE TOMBE']);
+        lines.push([`SANS RÉPONSE, ELLE TOMBE AU BOUT DE ${DIPLO.offerMs / 1000} S`]);
+        status = !this.canPact() ? 'À DEUX : UN SEUL FORT RESTERA DEBOUT' : this.allyAll(b.to) ? 'VOUS SERIEZ TOUS ALLIÉS : IL FAUT UN ENNEMI COMMUN'
+          : this.dState(b.to) === 'out' ? 'EN ATTENTE DE SA RÉPONSE' : null;
+        if (status === 'EN ATTENTE DE SA RÉPONSE') stCol = '#f8d070';
+      }
+    } else if (b.type === 'gift') {
+      const n = DIPLO.gift[b.res], what = b.res === 'gold' ? 'OR' : 'VIVRES';
+      title = `DONNER ${n} ${what} À ${this.name(b.to).toUpperCase()}`;
+      lines.push(['POUR AIDER UN ALLIÉ… OU AMADOUER UN ENNEMI']);
+      status = (b.res === 'gold' ? gold : food) < n ? `IL TE MANQUE ${n - (b.res === 'gold' ? gold : food)} ${what}` : null;
+    } else if (b.type === 'say') {
+      title = `MESSAGE À ${this.name(b.to).toUpperCase()}`;
+      lines.push(['DES MOTS TOUT FAITS (ENTRÉE : LE CHAT)']);
+      lines.push(['AU SECOURS : TON FORT CLIGNOTE SUR SA CARTE']);
+      lines.push(['ATTAQUONS ENSEMBLE : NOMME LE FORT QUE TU ATTAQUES']);
+      lines.push(['UN BOT ALLIÉ RÉPOND À L\'APPEL']);
+    } else if (this.allied(this.me, b.target)) {
+      title = `ALLIÉ : ${this.name(b.target).toUpperCase()}`;
+      lines.push(['VOS ARMÉES NE SE TIRENT PAS DESSUS']);
+      lines.push(['POUR L\'ATTAQUER : ROMPS L\'ALLIANCE (PACTES)']);
     } else {
       const alive = !!this.snapB.P[b.target]?.[2];
       title = `ATTAQUER ${this.name(b.target).toUpperCase()}`;
       lines.push([!alive ? 'DÉJÀ ÉLIMINÉ' : selN ? 'LES UNITÉS CHOISIES MARCHENT SUR SON FORT' : 'TON ARMÉE MARCHE SUR SON FORT']);
+      if (alive && this.weakS(b.target)) lines.push([{ icon: 'weak' }, `TRAHI : AFFAIBLI ENCORE ${this.weakS(b.target)} S`]);
     }
     if (status) lines.push([status]);
     const segW = (s) => (typeof s === 'string' ? tw(s) + 3 : 11);
     const w = rd(Math.max(tw(title), ...lines.map((l) => l.reduce((a, s) => a + segW(s), 0)))) + 10;
     const h = 13 + lines.length * 9;
-    const x = clamp(rd(b.x + b.w / 2 - w / 2), 1, W - w - 1), y = PY - h - 2;
+    const x = clamp(rd(b.x + b.w / 2 - w / 2), 1, W - w - 1), y = b.y < TOP ? TOP + 2 : PY - h - 2;
     ctx.fillStyle = OUT; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
     ctx.fillStyle = '#2a1a10'; ctx.fillRect(x, y, w, h);
     ctx.fillStyle = '#6a4426'; ctx.fillRect(x, y, w, 1);

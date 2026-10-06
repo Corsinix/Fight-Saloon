@@ -28,7 +28,8 @@ export const MODES = {
   // règles, piste et arbitre dans coursegame.js ; s'arrête quand tout le monde est arrivé, ou au bout de 90 s
   course: { name: 'La course de chevaux', sub: 'Saute les obstacles, cravache… sans épuiser ton cheval', min: 2, max: 4, duration: 90000 },
   // mini-RTS : carte, règles, arbitre et bots dans rtsgame.js
-  rts: { name: 'Conquête de l’Ouest', sub: 'Bâtis ton fort, exploite les filons, recrute et attaque', min: 2, max: 4, duration: 600000 },
+  // pas de limite de temps : la partie dure jusqu'au dernier fort debout (ou à la dernière alliance) ; 24 h pour l'horloge commune
+  rts: { name: 'Conquête de l’Ouest', sub: 'Bâtis ton fort, recrute, fais et défais les alliances', min: 2, max: 4, duration: 86400000 },
   // FPS façon Doom dans la ville (fausse 3D) : carte, armes, règles, arbitre et bots dans fpsgame.js
   fps: { name: 'Règlement de comptes', sub: 'FPS en ville : choisis tes armes, abats bandits et rivaux', min: 2, max: 4, duration: 240000 },
   // la même ville sans bandits, entre joueurs (ou contre les bots) : seuls les frags comptent
