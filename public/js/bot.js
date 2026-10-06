@@ -76,7 +76,7 @@ class Bot {
     const shoot = (target) => ({ kind: 'shoot', target });
     let a;
 
-    if (me.items.length <= 6 && (a = use('ace'))) return a;
+    if (me.items.length <= 2 && (a = use('ace'))) return a;
     if (hurt >= 1 && (a = use('cigar'))) return a;
     if (!me.lucky && (me.hp <= 2 || pLive >= 0.5) && (a = use('horseshoe'))) return a;
     if ((op.hp <= 2 || Math.random() < 0.5) && (a = use('derringer'))) return a;

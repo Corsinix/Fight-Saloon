@@ -3,7 +3,7 @@
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
-import { SKIN, HAIR_COLORS, CLOTH_COLORS, hatColorOf, beardHasMustache, beardHasChin } from './data.js';
+import { SKIN, HAIR_COLORS, CLOTH_COLORS, EYE_COLORS, hatColorOf, beardHasMustache, beardHasChin } from './data.js';
 import { MiniScene, ring, pixelSprite as sprite } from './miniscene.js';
 import { skyDeco } from './env.js';
 import {
@@ -65,6 +65,7 @@ export function riderLook(c = {}, color, key) {
     skin: SKIN[c.skin] || SKIN[1], hair: HAIR_COLORS[c.hairColor] || HAIR_COLORS[1],
     cloth: CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2], hatC: hatColorOf(c),
     hat: c.hat || 'cowboy', beard: c.beard, outfit: c.outfit, color,
+    hairStyle: c.hair, eyes: c.eyes, eyeC: EYE_COLORS[c.eyeColor] || EYE_COLORS[0], mouth: c.mouth, extra: c.extra,
   };
 }
 
@@ -753,6 +754,7 @@ export class LassoScene extends MiniScene {
         this.my.caught++;
         sfx(CRY[a.kind]);
         if (a.kind === 'goldbull' || boost) sfx('good');
+        if (a.kind === 'goldbull' || a.kind === 'outlaw') sfx('hiha', 0.15);
       } else {
         const r = this.remote[ev.by];
         if (r) r.throw = null;

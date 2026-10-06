@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="css/fonts.css"></head>
+<body style="margin:0;background:#000">
+<canvas id="game" width="384" height="216" style="width:768px;height:432px;image-rendering:pixelated"></canvas><div id="touchpad"></div>
+<script type="module">
+import { FpsScene, FpsDmScene } from './js/fps.js';
+import { FpsGame } from './js/fpsgame.js';
+window.onerror = (m, s, l, c, e) => { (window.errs ||= []).push(String(e?.stack || m)); };
+const players = [{ key: 'me', name: 'Moi', character: {} }, { key: 'b1', name: 'Bot1', bot: true, character: { hat: 'sombrero' } }, { key: 'b2', name: 'Bot2', bot: true, character: {} }, { key: 'b3', name: 'Bot3', bot: true, character: {} }];
+const dm = new URLSearchParams(location.search).has('dm');
+const g = new FpsGame(players, dm ? 'fpsdm' : 'fps');
+const cv = document.getElementById('game');
+let scene;
+const deliver = (evs) => { for (const e of evs) { const { states, ...rest } = e; try { scene.event({ ...rest, state: states[0] }); } catch (err) { (window.errs ||= []).push(String(err.stack)); } } };
+scene = new (dm ? FpsDmScene : FpsScene)(cv, { send: (a) => { const r = g.act(0, a); if (r.error) (window.acterr ||= []).push(r.error + JSON.stringify(a)); deliver(r.events || []); }, live: (d) => g.onLive('me', d), onState() {}, onEnd(e) { window.ended = e; } });
+const ev = g.start();
+const fast = new URLSearchParams(location.search).has('fast');
+if (fast) { g.startAt = Date.now() + 300; ev[0].countdown = 300; }
+deliver(ev);
+setInterval(() => { try { deliver(g.tick()); for (const o of g.liveOut.splice(0)) scene.onLive(o.key, o.d); } catch (err) { (window.errs ||= []).push(String(err.stack)); } }, 100);
+window.g = g; window.scene = scene;
+</script></body></html>

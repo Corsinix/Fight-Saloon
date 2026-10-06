@@ -1203,6 +1203,37 @@ export function characterSprite(c, opts = {}) {
   return s;
 }
 
+// Le chapeau seul, découpé du personnage (ce qui change quand on l'enlève, au-dessus des sourcils) :
+// { img, x, y } avec sa position dans le sprite, ou null sans chapeau.
+const hatCache = new Map();
+export function hatSprite(c) {
+  const key = JSON.stringify(c);
+  if (hatCache.has(key)) return hatCache.get(key);
+  let out = null;
+  if (c.hat && c.hat !== 'none') {
+    const pix = (ch) => { const cv = makeCanvas(CHAR_W, CHAR_H, true); const x = cv.getContext('2d', { willReadFrequently: true }); drawCharacter(x, ch, {}); return x.getImageData(0, 0, CHAR_W, CHAR_H).data; };
+    const a = pix(c), b = pix({ ...c, hat: 'none' });
+    let x0 = CHAR_W, y0 = CHAR_H, x1 = -1, y1 = -1;
+    const keep = (i) => a[i + 3] > 0 && (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2] || a[i + 3] !== b[i + 3]);
+    for (let y = 0; y < 22; y++) for (let x = 0; x < CHAR_W; x++) {
+      if (!keep((y * CHAR_W + x) * 4)) continue;
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+    if (x1 >= 0) {
+      const cv = makeCanvas(x1 - x0 + 1, y1 - y0 + 1);
+      const x = cv.getContext('2d'), img = x.createImageData(cv.width, cv.height);
+      for (let y = y0; y <= y1; y++) for (let xx = x0; xx <= x1; xx++) {
+        const i = (y * CHAR_W + xx) * 4, o = ((y - y0) * cv.width + xx - x0) * 4;
+        if (keep(i)) for (let k = 0; k < 4; k++) img.data[o + k] = a[i + k];
+      }
+      x.putImageData(img, 0, 0);
+      out = { img: cv, x: x0, y: y0 };
+    }
+  }
+  hatCache.set(key, out);
+  return out;
+}
+
 // Portrait encadré pour l'interface (fond désert)
 export function portrait(c, scale = 3, opts = {}) {
   const w = CHAR_W + 8, hh = CHAR_H + 4;
@@ -1327,7 +1358,8 @@ export function gunSprite(sawed = false, pump = 0, kind = 'pump') {
 }
 
 // Fusil vu de face (canon pointé vers la caméra)
-export function drawGunFront(ctx, cx, cy, r, skin, sawed, kind = 'pump') {
+// cloth : manche de l'avant-bras qui part du poignet vers soi (sleeve : sa longueur, en unités)
+export function drawGunFront(ctx, cx, cy, r, skin, sawed, kind = 'pump', cloth = null, sleeve = 40) {
   const { R } = painter(ctx);
   const g = gunDef(kind), Wd = WOODS[g.wood], M = METALS[g.metal];
   const bore = sawed ? mix(M.b, '#8a6a50', 0.35) : M.b;
@@ -1339,6 +1371,12 @@ export function drawGunFront(ctx, cx, cy, r, skin, sawed, kind = 'pump') {
   const u = r / 9;
   const hp = (pts) => pts.map(([x, y]) => [cx + x * u, py + y * u]);
   const sd = skin && shade(skin, -0.25), sl = skin && shade(skin, 0.18);
+  if (skin && cloth) {
+    // avant-bras : la manche s'élargit vers soi, avec le revers de la chemise au poignet
+    const sv = fillPoly(R, hp([[-7, 13], [7, 13], [7 + sleeve * 0.12, 13 + sleeve], [-7 - sleeve * 0.12, 13 + sleeve]]), cloth);
+    for (const [y, a, b] of sv) { R(a, y, Math.max(1, Math.round(2 * u)), 1, shade(cloth, 0.18)); R(b - Math.max(1, Math.round(2 * u)) + 1, y, Math.max(1, Math.round(2 * u)), 1, shade(cloth, -0.3)); }
+    fillPoly(R, hp([[-7, 13], [7, 13], [7.4, 16], [-7.4, 16]]), '#e8e0d0');
+  }
   if (skin) {
     // paume et poignet qui dépassent sous le fût (dessinés avant lui)
     const palm = fillPoly(R, hp([[-8, 2], [8, 2], [7, 10], [4, 17], [-4, 17], [-7, 10]]), skin);
@@ -1843,7 +1881,7 @@ export function renderTable() {
   return c;
 }
 
-export function renderVignette() {
+export function renderVignette(rgb = [20, 10, 6]) {
   const c = makeCanvas(384, 216);
   const ctx = c.getContext('2d');
   const img = ctx.createImageData(384, 216);
@@ -1855,7 +1893,7 @@ export function renderVignette() {
     const th = bayer[(y % 4) * 4 + (x % 4)] / 16;
     const level = Math.floor(v * 4 + th) / 4;
     const i = (y * 384 + x) * 4;
-    img.data[i] = 20; img.data[i + 1] = 10; img.data[i + 2] = 6;
+    img.data[i] = rgb[0]; img.data[i + 1] = rgb[1]; img.data[i + 2] = rgb[2];
     img.data[i + 3] = Math.min(220, level * 120);
   }
   ctx.putImageData(img, 0, 0);

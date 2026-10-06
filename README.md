@@ -27,7 +27,7 @@ Le duel se joue au meilleur des 3 manches. À chaque chargement, les cartouches 
 
 - **tirer sur l'adversaire** : avec une rouge, tu gardes le fusil ;
 - **tirer sur toi** : avec une blanche, tu rejoues ;
-- **utiliser des objets** (clic sur la table).
+- **utiliser des objets** (clic sur la table) : chacun en garde 4 au plus, chaque objet joue sa petite scène (menottes qui claquent sur les poignets, lasso lancé sur l'objet adverse, cigare allumé et fumé…, dessins dans `public/js/itemfx.js`).
 
 | Objet | Effet |
 |---|---|
@@ -328,7 +328,7 @@ Sur le champ de courses de Dusty Gulch, chaque cavalier a son couloir, du dépar
 - **Carottes** au sol, souvent en file : il faut passer dessus, à la bonne profondeur. Certaines flottent au-dessus d'un tronc.
 - Le parcours est tiré de la graine (`public/js/coursegame.js`, décor et obstacles dans `public/js/coursewild.js`) : des motifs de plus en plus serrés (rocher, cactus, passage entre deux grands obstacles, champ de cactus en quinconce, tronc, buissons, terriers, virevoltants, ruisseau, file de carottes). Les bots regardent devant eux, contournent les grands obstacles par le passage libre le plus proche, prennent souvent le gué et vont chercher les carottes quand la voie est libre. De temps en temps, ils ne voient pas un rocher venir.
 
-### Conquête de l'Ouest (mini-RTS, 7 min, chacun pour soi)
+### Conquête de l'Ouest (mini-RTS, 10 min, chacun pour soi)
 
 Chaque joueur tient un **fort** sur une grande carte (768 × 432 px, l'écran en montre une partie). Le **décor** est tiré au hasard à chaque partie, ainsi que la place des forts (face à face ou en diagonale à deux joueurs) ; l'ambiance (heure, météo) est choisie pour aller avec le décor :
 
@@ -402,9 +402,62 @@ Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près 
 
 - **Expérience** : les unités gagnent des points en infligeant des dégâts et en abattant des ennemis, et prennent du galon : **vétéran** (6 points), **élite** (15), **légende** (30). Chaque galon : +12 % de PV (et un peu de soin), +15 % de dégâts, un peu plus de vitesse. Les galons s'affichent en carrés dorés au-dessus de la tête ; une élite porte une étoile sur la poitrine, une légende aussi une bande dorée au chapeau ; une unité seule choisie montre sa barre d'expérience.
 - Forts et tours se défendent seuls, et les bâtiments se réparent après 8 s sans dégâts (le fort plus vite).
-- Un fort rasé élimine son joueur (ses bâtiments et ses unités disparaissent). Le dernier fort debout gagne ; au bout de 7 min, le meilleur score l'emporte (ennemi abattu +10, bâtiment rasé +40, fort rasé +300, plus 1 point par 10 or produits).
+- Un fort rasé élimine son joueur (ses bâtiments et ses unités disparaissent). Le dernier fort debout gagne ; au bout de 10 min, le meilleur score l'emporte (ennemi abattu +10, bâtiment rasé +40, fort rasé +300, plus 1 point par 10 or produits).
 - En solo, contre 3 bots qui suivent les mêmes règles : ils développent leur économie, s'étendent avec des tours vers les filons, améliorent leur fort et leurs mines, entraînent leurs unités les plus nombreuses et n'attaquent pas avant 2 min 30.
 - Ici l'hôte simule toute la partie (`public/js/rtsgame.js` : décors, carte, chemins, combats, expérience, bots) et envoie 2 instantanés par seconde ; chaque navigateur recalcule la carte depuis la graine et lisse les déplacements (`public/js/rts.js`).
+
+### Règlement de comptes (FPS, 4 min, chacun pour soi)
+
+Un FPS à l'ancienne, façon Doom, dans une ville western en fausse 3D (lancer de rayons, décor en pixel art). Chacun pour soi : on se tire dessus entre joueurs, pendant que des bandits rôdent en ville et attaquent tout le monde.
+
+**La carte** est tirée de la graine (`public/js/fpsgame.js`) et reprend tous les décors du jeu :
+
+- **La gare**, au nord : le train à quai (locomotive, voitures de voyageurs, wagons de marchandises), le quai, la salle d'attente et son guichet, le château d'eau.
+- **La grand-rue**, au milieu : des façades à fausse devanture et leurs enseignes, des ruelles, des chevaux à l'attache, des abreuvoirs et des caisses pour se cacher. Quatre bâtiments s'ouvrent : **le saloon** (comptoir, bouteilles, pianola, tables), **la cantina**, **le bureau du shérif** (avis de recherche, cellules) et **la banque** (guichet, coffre).
+- **Quatre quartiers** autour, placés au hasard à chaque partie : **Boot Hill** (chapelle de pierre, mausolée, tombes et croix, muret), **le ranch** (grange et son foin, enclos avec chevaux et vaches, éolienne, poules), **la mine** (falaise percée de galeries, boucle de rails, bureau des essais, caisses de TNT) et **le fort** (palissade et ses portes, blockhaus).
+
+Les murs ont des hauteurs différentes : on tire par-dessus les comptoirs, les barrières, le foin et les murets, pas à travers les façades. L'ambiance (heure, météo) est tirée au hasard comme dans les autres mini-jeux.
+
+**L'armurerie** s'ouvre au départ et à chaque mort (le choix est gardé d'une partie à l'autre) :
+
+| Emplacement | Au choix |
+|---|---|
+| Arme blanche (1) | Couteau Bowie (rapide), tomahawk (lent mais fort), sabre (plus d'allonge) |
+| Arme de poing (2) | Colt (6 coups), Schofield (recharge éclair), Derringer (2 coups, très fort de près) |
+| Arme d'épaule (3) | Winchester (12 coups, précise), fusil à pompe (gerbe de plombs), canon scié (2 coups dévastateurs au contact), carabine Sharps (1 coup, lunette au clic droit) |
+| Équipement | Dynamite (3 bâtons à lancer, **G**), gilet de cuir (+50 d'armure), gourde (les PV reviennent à l'abri), éperons (+15 % de vitesse), cartouchière (munitions ×1,6) |
+
+Plus de balles : l'autre arme à feu prend le relais, puis l'arme blanche.
+
+**Les caisses** tombent au hasard sur la carte (deux ou trois à la fois, environ toutes les 14 s), et un bandit sur six en lâche une. Le contenu est tiré à l'ouverture, sans rien de décisif : munitions, whisky (+35 PV), gilet (+25 d'armure), dynamite, l'étoile du shérif (9 s pendant lesquelles on n'encaisse qu'un tiers des dégâts), et parfois une **arme de caisse**, qui remplace les autres jusqu'à la fin de son temps ou de son chargeur :
+
+| Arme de caisse | Effet |
+|---|---|
+| Gatling | 90 balles en rafale (clic maintenu), 15 s, mais on marche moins vite |
+| Deux colts | Akimbo : 2 balles par clic, 32 balles, 15 s |
+| Winchester dorée | 15 balles qui traversent tout ce qu'elles touchent, 20 s |
+
+**Montures** (**E** pour monter et descendre) :
+
+- **À cheval** : deux fois plus vite, on voit de plus haut, et lancé au galop on renverse ce qu'on croise. Le cheval encaisse une partie des balles ; abattu, il désarçonne son cavalier, et un autre revient à l'écurie 20 s plus tard. On n'entre pas à cheval dans les bâtiments. Des chevaux attendent devant le saloon, devant le bureau du shérif et dans l'enclos du ranch.
+- **En wagonnet** : sur la boucle de rails de la mine (avancer / freiner), jusqu'à 8,5 cases par seconde, et la caisse de fer arrête la moitié des balles.
+
+**Les bandits** arrivent par les bords de la carte : bandit (+100), tireur à la Winchester qui garde ses distances (+150), dynamiteur (+150) et gros bras au fusil de chasse (+200). Ils visent un instant avant de tirer, et ratent plus souvent ceux qui courent ou galopent. Rival abattu +250, mort −50 (le score ne descend pas sous zéro). Au retour, on apparaît loin des autres, avec 1,5 s d'invulnérabilité.
+
+**Retournements de situation** (`public/js/fpsevents.js`, tirés de la graine : 4 à 6 par partie) : prime doublée, avis de recherche (le premier au score est mis à prix et marqué d'une étoile visible à travers les murs : +300 pour qui l'abat), la bande attaque la ville, les dynamiteurs, midi sonne (dégâts doublés), bagarre générale (armes blanches seulement), le train entre en gare (sur les rails, c'est la mort), la diligence a versé (sacs d'or à ramasser, +50), le ravitaillement du fort (caisses pleines d'armes), la tournée du patron (soins), la tornade (tout le monde est emporté ailleurs), la tempête de sable, l'orage, la nuit qui tombe, et **El Diablo** en personne (600 PV, +1000 pour celui qui l'abat ; il repart s'il survit).
+
+- Clavier : **Z Q S D** (ou **W A S D** sur un clavier QWERTY, ou les flèches) pour avancer, la souris pour viser (clic dans l'image pour capturer la souris, Échap pour la libérer), clic pour tirer (maintenu pour la Gatling et les armes blanches), **1** à **5** ou la molette pour changer d'arme, **R** recharger, **Maj** courir, **E** monter, **G** dynamite, **Tab** le tableau des scores, **M** la grande carte.
+- Au doigt : un stick à gauche (poussé à fond vers l'avant, on court), glisser à droite pour tourner la tête, **double tap** à droite pour tirer (doigt gardé posé : on continue de tirer en visant). Boutons ronds à icône sous le pouce droit, en arc autour du gros bouton de tir : arme suivante, recharger, viser, dynamite, et monter / descendre quand c'est possible.
+- **La carte** (`public/js/fpsmap.js`) : un radar rond en haut à gauche, centré sur toi (nord en haut, ta flèche tourne avec ta vue), et la grande carte de la ville avec le nom des lieux (**M**, ou au doigt en touchant le radar). Elle est dessinée à 4 pixels par case et copiée pixel pour pixel, sans flou : sols et planchers, rails et traverses, murs, comptoirs et barrières, portes, tombes, cactus, tonneaux, foin, réverbères. On y voit les caisses, les sacs d'or, les chevaux et les wagonnets libres, la dynamite qui vole, El Diablo et les bandits en vue (à moins de 12 cases) ou qui viennent de tirer. Les autres joueurs n'y apparaissent jamais.
+- La résolution interne s'adapte à la machine (pleine, trois quarts ou moitié) pour rester fluide sur téléphone (`public/js/fpsperf.js`).
+- **La cinématique d'ouverture** (11 s, un clic la passe) est tournée dans le moteur du jeu, sur la carte de la partie (`public/js/fpscut.js`) : travelling sur le quai de la gare (la locomotive fume), la caméra s'élève au-dessus de la grand-rue, la bande s'avance au ras du sol et dégaine, chaque joueur est présenté en arrêt sur image sépia avec un surnom à la Leone (« Le Bon », « La Brute »…), puis tout le monde se fait face au milieu de la rue pendant que la cloche sonne et que le titre tombe. Les plans cherchent un passage dégagé sur la carte tirée de la graine.
+- Ici, chaque navigateur simule son propre cow-boy et annonce ce qu'il touche ; l'hôte vérifie que c'est plausible (portée, dégâts de l'arme), fait vivre les bandits, les caisses, la dynamite, les chevaux et les bots, et diffuse la position des bandits dix fois par seconde. Rendu dans `public/js/fps.js`, graphismes dans `public/js/fpsart.js`, HUD dans `public/js/fpshud.js`, commandes dans `public/js/fpsinput.js`.
+
+### Mort ou vif (FPS entre joueurs, 4 min)
+
+La même ville, les mêmes armes, la même armurerie, les mêmes caisses et les mêmes montures que dans « Règlement de comptes », mais **sans bandits** : on ne se bat qu'entre joueurs (contre 3 bots en solo, qui partent à la chasse aux rivaux). **Seuls les frags comptent** : +1 par rival abattu, −1 pour un suicide (sa propre dynamite), et mourir ne coûte rien. L'avis de recherche rapporte un frag de plus pour qui abat le meneur.
+
+Les retournements de situation liés aux bandits ou à l'or (la bande attaque, les dynamiteurs, El Diablo, la prime doublée, la diligence) n'ont pas lieu ; les autres (orage, nuit, tempête de sable, tornade, train, bagarre générale, midi sonne, ravitaillement, tournée du patron, avis de recherche) restent. Même code que « Règlement de comptes » (`FpsGame` avec le mode `fpsdm`, `FpsDmScene` dans `public/js/fps.js`).
 
 Comment ça marche : l'hôte envoie une graine, et chaque navigateur génère exactement les mêmes cibles et les mêmes animaux (`public/js/worlds.js`), y compris toute la foule d'« Où est Charlie ? » et le trajet de chaque passant.
 Seuls les coups passent par l'hôte, qui arbitre au premier arrivé (`public/js/mini.js`, `public/js/fortgame.js` pour l'assaut du fort, `public/js/wagongame.js` pour la roulotte et `public/js/minegame.js` pour la mine) ; les viseurs et les chevaux des autres sont diffusés en direct à toute la table.
@@ -432,6 +485,7 @@ La musique est composée pour le jeu, façon western spaghetti, et synthétisée
 | La mine | Le Filon (guitare, guimbarde, coups de pioche) | Le Train de Minuit, Le Vautour |
 | La course de chevaux | Rodéo au Ranch (emprunté au lasso, en attendant son propre thème) | La Diligence, Le Train de Minuit |
 | Conquête de l'Ouest | La Ruée vers l'Or (trompette, chœur, chant d'hommes) | L'Or des Collines, Le Cri du Coyote, Le Vautour, Le Glas de Boot Hill, Sous le Soleil de Plomb |
+| Règlement de comptes | Fusillade à Dodge City (emprunté à la Fusillade) | Le Cri du Coyote, Sous le Soleil de Plomb, Chevauchée Nocturne |
 
 **Musique dynamique** : la musique suit ce qui se passe (`setMood` et `musicCue` dans `public/js/audio.js`).
 
@@ -445,6 +499,8 @@ Le son 8 bits imite le NES (ondes pulse 12,5/25/50 %, triangle 4 bits, bruit LFS
 
 Pour utiliser tes propres morceaux, dépose-les dans `public/music/` avec les noms listés dans `CUSTOM_TRACKS` (`public/js/audio.js`), ou `menu.mp3` / `game.mp3`. Ils s'intercalent entre les morceaux synthétisés (répartis régulièrement dans la playlist) et passent dans un filtre 8/16 bits. Le jeu ne les cherche qu'en local, dans la liste que le serveur `npm start` fournit (`music/index.json`) : il ne demande que les fichiers présents, sans erreurs 404 dans la console.
 Le dossier `music/` est exclu du déploiement Surge (`public/.surgeignore`) : ces fichiers ne jouent qu'en local, pour ne pas mettre en ligne de morceaux protégés.
+
+Les bruitages enregistrés vont dans `public/sfx/` (liste `SAMPLES` dans `public/js/audio.js`), qui est publié en ligne. Ils sont déjà passés en 16 bits (mono, 16 kHz, 10 bits, filtres SNES). `sfx/yeehaw.wav` est le cri de Corsi avec la rafale de mitrailleuse, tiré de `music/Corsi-YIHHHAAA.mp3`. On l'entend en entier (`sfx('yeehaw')`) pour une victoire, une gatling ramassée ou El Diablo abattu, et le cri seul (`sfx('hiha')`) pour une manche gagnée, une belle prise au lasso ou trois frags d'affilée dans le Doom-like.
 
 ## Jouer à distance
 

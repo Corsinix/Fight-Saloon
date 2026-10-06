@@ -1107,7 +1107,7 @@ export class ShooterScene extends MiniScene {
         this.nextShot = 0;
         this.reloadUntil = 0;
         this.ammo = this.cap;
-        sfx('power');
+        sfx(bonus === 'gatling' ? 'yeehaw' : 'power'); // la mitrailleuse : rafale et cri de Corsi
         this.banner = { text: GUN_TXT[bonus] || 'ÉTOILE DU SHÉRIF : PROTÉGÉ !', col: '#f8d070', at: t };
       } else this.powers[by] = { kind: bonus, until: t + ms };
     } else if (bonus === 'dynamite') {

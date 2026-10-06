@@ -146,6 +146,34 @@ const GRIDS = {
     'kbBbknnnkbBbk',
     'kkkkkkkkkkkkk',
   ],
+  // colt vu de profil (Règlement de comptes)
+  fps: [
+    '..k..........',
+    '.kgk.........',
+    'kgGGkkkkkkkkk',
+    'kGdGGGGGGGGGk',
+    'kgdggggggggGk',
+    'kgGgkkkkkkkkk',
+    'kbBkk.k......',
+    'kbBnkkk......',
+    'kbBbk........',
+    'kBbbk........',
+    'kkkkk........',
+  ],
+  // crâne et revolvers croisés (Mort ou vif)
+  fpsdm: [
+    '...kkkkkkk...',
+    '..kwwwwwwwk..',
+    '.kwwwwwwwwwk.',
+    '.kwkkwwwkkwk.',
+    '.kwkkwwwkkwk.',
+    '.kwwwwkwwwwk.',
+    '..kwwwwwwwk..',
+    'kk.kwkwkwk.kk',
+    'kgk.kkkkk.kgk',
+    '.kgk.....kgk.',
+    '..kbk...kbk..',
+  ],
   // cadenas des cases « coming soon »
   soon: [
     '...kkkk...',

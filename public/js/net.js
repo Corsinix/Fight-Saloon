@@ -14,6 +14,7 @@ import { PinteGame } from './pintegame.js';
 import { MineGame } from './minegame.js';
 import { CourseGame } from './coursegame.js';
 import { RtsGame } from './rtsgame.js';
+import { FpsGame } from './fpsgame.js';
 import { MODES, MAX_PLAYERS } from './worlds.js';
 import { CHAR_PARTS, CHAR_COLORS } from './data.js';
 
@@ -775,7 +776,7 @@ export class Net {
       // Mini-jeu en temps réel : l'hôte fait avancer l'horloge (tirs des bandits, bots, fin de partie).
       const g = l.mode === 'fort' ? new FortGame(players) : l.mode === 'wagon' ? new WagonGame(players)
         : l.mode === 'pinte' ? new PinteGame(players) : l.mode === 'mine' ? new MineGame(players) : l.mode === 'course' ? new CourseGame(players)
-        : l.mode === 'rts' ? new RtsGame(players) : new MiniGame(l.mode, players);
+        : l.mode === 'rts' ? new RtsGame(players) : l.mode === 'fps' || l.mode === 'fpsdm' ? new FpsGame(players, l.mode) : new MiniGame(l.mode, players);
       l.game = g;
       l.miniTimer = setInterval(() => {
         if (this.hosting !== l || l.game !== g) return clearInterval(l.miniTimer);

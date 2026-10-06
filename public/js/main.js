@@ -15,6 +15,7 @@ import { PinteScene } from './pinte.js';
 import { MineScene } from './mine.js';
 import { CourseScene } from './course.js';
 import { RtsScene } from './rts.js';
+import { FpsScene, FpsDmScene } from './fps.js';
 import { TEAM_NAMES } from './fortgame.js';
 import { MODES, PLAYER_COLORS } from './worlds.js';
 import { gameIcon } from './gameicons.js';
@@ -28,7 +29,7 @@ let user = null;
 let lobby = null;
 let scene = null; // roulette
 let mini = null; // mini-jeu en cours (fusillade, lasso, duel, Charlie)
-const MINI_SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene };
+const MINI_SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene, fps: FpsScene, fpsdm: FpsDmScene };
 let screen = 'title';
 const pad = new TouchPad(document.getElementById('touchpad')); // commandes tactiles des mini-jeux
 let pending = false;
@@ -361,7 +362,7 @@ function renderLeaderboard(lb) {
 const SOLO = {
   roulette: ['Roulette', '1 bot'], shooter: ['Fusillade', '3 bots'], lasso: ['Lasso', '3 bots'], duel: ['Duel', '1 bot'],
   charlie: ['Charlie', '3 bots'], fort: ['Fort', 'toi + 1 bot'], wagon: ['Roulotte', '3 bots'], pinte: ['Pinte', '3 bots'], mine: ['Mine', '3 bots'],
-  course: ['Course', '3 bots'], rts: ['Conquête', '3 bots'],
+  course: ['Course', '3 bots'], rts: ['Conquête', '3 bots'], fps: ['Règlement', '3 bots'], fpsdm: ['Mort ou vif', '3 bots'],
 };
 // Pages de 2 × 3 jeux, parcourues avec les flèches ; les cases vides annoncent les prochains jeux.
 const SOLO_PAGE = 6;
@@ -1034,6 +1035,7 @@ function showMiniOver(ev) {
     return `<span style="color:${PLAYER_COLORS[i]}">${k + 1}. ${esc(p.name)} — ${p.score} ${unit}${p.left ? ' (parti)' : ''}</span>`;
   }).join('<br>');
   sfx(win ? 'victory' : 'defeat');
+  if (win) sfx('yeehaw', 0.4);
   setTimeout(() => { if (screen === 'game') setMusic('menu'); }, 3500);
   updateGameOver();
 }

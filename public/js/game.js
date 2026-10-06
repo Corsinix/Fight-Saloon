@@ -9,7 +9,7 @@ const ROUNDS = [
   { hp: 4, items: 3 },
   { hp: 5, items: 4 },
 ];
-const MAX_ITEMS = 8;
+const MAX_ITEMS = 4;
 const WINS_NEEDED = 2;
 // Événements de saloon : ils tombent au hasard à un rechargement et changent la donne pour les deux.
 const EVENTS = ['tournee', 'sherif', 'bagarre', 'pianiste', 'poker', 'crieur', 'canicule', 'ivrogne'];
@@ -301,7 +301,7 @@ class Game {
       if (err) return err;
       me.items.splice(slot, 1);
       opp.items.splice(steal, 1);
-      this.push({ type: 'item', by: i, item: 'lasso', stolen, stealSlot: steal, dur: 1700 });
+      this.push({ type: 'item', by: i, item: 'lasso', stolen, stealSlot: steal, dur: 2400 });
       this.applyItem(i, stolen, true);
       return null;
     }
@@ -325,29 +325,29 @@ class Game {
     const base = { type: 'item', by: i, item, viaLasso };
     switch (item) {
       case 'spyglass':
-        this.push({ ...base, private: { to: i, data: { live: this.shells[0] } }, dur: 2600 });
+        this.push({ ...base, private: { to: i, data: { live: this.shells[0] } }, dur: 3000 });
         break;
       case 'cigar': {
         const healed = me.hp < me.maxHp;
         if (healed) me.hp++;
-        this.push({ ...base, healed, dur: 2000 });
+        this.push({ ...base, healed, dur: 3000 });
         break;
       }
       case 'whisky': {
         const live = this.shells.shift();
         this.spent.push(live);
-        this.push({ ...base, ejected: live, dur: 2600 });
+        this.push({ ...base, ejected: live, dur: 3000 });
         this.settleBets(live);
         if (!this.checkDead() && !this.shells.length) this.newLoad();
         break;
       }
       case 'saw':
         this.sawed = true;
-        this.push({ ...base, dur: 2000 });
+        this.push({ ...base, dur: 2600 });
         break;
       case 'cuffs':
         this.p[1 - i].cuffed = true;
-        this.push({ ...base, dur: 1900 });
+        this.push({ ...base, dur: 2800 });
         break;
       case 'telegraph': {
         let data;
@@ -356,38 +356,38 @@ class Game {
           const pos = rand(1, this.shells.length - 1);
           data = { pos: pos + 1, live: this.shells[pos] };
         }
-        this.push({ ...base, private: { to: i, data }, dur: 2800 });
+        this.push({ ...base, private: { to: i, data }, dur: 3400 });
         break;
       }
       case 'coin':
         this.shells[0] = !this.shells[0];
-        this.push({ ...base, dur: 2000 });
+        this.push({ ...base, dur: 2600 });
         break;
       case 'remedy': {
         const ok = Math.random() < 0.5;
         if (ok) me.hp = Math.min(me.maxHp, me.hp + 2);
         else me.hp = Math.max(0, me.hp - 1);
-        this.push({ ...base, ok, dur: 2600 });
+        this.push({ ...base, ok, dur: 3200 });
         if (me.hp <= 0) this.endRound(1 - i);
         break;
       }
       case 'horseshoe':
         me.lucky = true;
-        this.push({ ...base, dur: 2000 });
+        this.push({ ...base, dur: 2600 });
         break;
       case 'ace': {
         const n = Math.min(2, MAX_ITEMS - me.items.length);
         const drew = [];
         for (let k = 0; k < n; k++) drew.push(pick(ITEMS.filter((x) => x !== 'ace')));
         me.items.push(...drew);
-        this.push({ ...base, drew, dur: 2400 });
+        this.push({ ...base, drew, dur: 2800 });
         break;
       }
       case 'derringer': {
         const opp = this.p[1 - i];
         const hit = Math.random() < 0.5;
         if (hit) opp.hp = Math.max(0, opp.hp - 1);
-        this.push({ ...base, hit, dur: 2400 });
+        this.push({ ...base, hit, dur: 2800 });
         if (opp.hp <= 0) this.endRound(i);
         break;
       }

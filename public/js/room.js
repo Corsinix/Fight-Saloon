@@ -429,6 +429,118 @@ function drawParrot(ctx, x, now) {
 // Prisonnier qui fait les cent pas dans sa cellule
 const PRISONER = { skin: 2, hat: 'none', hatColor: 0, hair: 'messy', hairColor: 1, eyes: 'tired', nose: 'broken', mouth: 'frown', beard: 'stubble', outfit: 'shirt', outfitColor: 5 };
 
+// ------------------------------------------------------------ détails de décor
+// Police de 5 pixels de haut pour les écriteaux (W fait 5 de large, le reste 3 ou 4)
+const GLYPHS = {
+  W: ['k...k', 'k...k', 'k.k.k', 'k.k.k', '.k.k.'], A: ['.k.', 'k.k', 'kkk', 'k.k', 'k.k'], N: ['k..k', 'kk.k', 'k.kk', 'k..k', 'k..k'],
+  T: ['kkk', '.k.', '.k.', '.k.', '.k.'], E: ['kkk', 'k..', 'kk.', 'k..', 'kkk'], D: ['kk.', 'k.k', 'k.k', 'k.k', 'kk.'],
+  $: ['.kk', 'kk.', '.k.', '.kk', 'kk.'], 0: ['kkk', 'k.k', 'k.k', 'k.k', 'kkk'], 1: ['.k.', 'kk.', '.k.', '.k.', 'kkk'],
+  2: ['kk.', '..k', '.k.', 'k..', 'kkk'], 5: ['kkk', 'k..', 'kk.', '..k', 'kk.'],
+};
+function pixText(R, str, x, y, col) {
+  for (const ch of str) {
+    const g = GLYPHS[ch];
+    if (!g) { x += 2; continue; }
+    g.forEach((row, j) => [...row].forEach((c, i) => c === 'k' && R(x + i, y + j, 1, 1, col)));
+    x += g[0].length + 1;
+  }
+}
+const textW = (str) => [...str].reduce((w, ch) => w + (GLYPHS[ch] ? GLYPHS[ch][0].length + 1 : 2), -1);
+
+// Avis de recherche (30 × 26) : papier taché au coin corné, clou, « WANTED », portrait au fusain, la prime
+function wantedPoster(R, x, y, rnd, reward, mustache) {
+  const w = 30, h = 26;
+  R(x + 1, y + 1, w + 1, h + 1, 'rgba(0,0,0,0.25)');
+  R(x - 1, y - 1, w + 2, h + 2, OUT);
+  R(x, y, w, h, '#e4cc94');
+  for (let k = 0; k < 30; k++) R(x + Math.floor(rnd() * (w - 2)), y + Math.floor(rnd() * h), 1 + Math.floor(rnd() * 3), 1, rnd() < 0.5 ? '#d4b880' : '#ecd8a8');
+  for (let k = 0; k < 2; k++) { const sx = x + 3 + Math.floor(rnd() * 20), sy = y + 4 + Math.floor(rnd() * 16); R(sx, sy, 4, 2, 'rgba(140,100,50,0.2)'); R(sx + 1, sy - 1, 2, 4, 'rgba(140,100,50,0.2)'); }
+  // coin corné en bas à droite
+  for (let k = 0; k < 4; k++) { R(x + w - 4 + k, y + h - 4 + k, 4 - k, 1, '#c4a46a'); R(x + w - 4 + k, y + h - 4 + k, 1, 1, '#a88a50'); }
+  pixText(R, 'WANTED', x + Math.round((w - textW('WANTED')) / 2), y + 3, '#3a2214');
+  R(x + 3, y + 9, w - 6, 1, '#8a6a40');
+  // portrait : chapeau, yeux, moustache ou barbe, en traits sombres
+  const px = x + 9, py = y + 10;
+  R(px, py + 1, 12, 9, '#f0dcb0'); R(px - 1, py, 14, 1, '#8a6a40'); R(px - 1, py + 10, 14, 1, '#8a6a40');
+  R(px + 1, py + 3, 10, 1, '#4a3420'); R(px + 3, py + 1, 6, 2, '#4a3420');
+  R(px + 3, py + 5, 2, 1, '#4a3420'); R(px + 7, py + 5, 2, 1, '#4a3420');
+  if (mustache) { R(px + 3, py + 7, 6, 1, '#4a3420'); R(px + 2, py + 8, 1, 1, '#4a3420'); R(px + 9, py + 8, 1, 1, '#4a3420'); }
+  else for (let k = 0; k < 4; k++) R(px + 3 + k * 2, py + 7 + (k % 2), 1, 2, '#6a5030');
+  pixText(R, reward, x + Math.round((w - textW(reward)) / 2), y + 20, '#8a2a1a');
+  // clou
+  R(x + w / 2 - 1, y - 1, 3, 3, OUT); R(x + w / 2, y, 1, 1, '#b8bec6');
+}
+
+// Râtelier à fusils : fronton chantourné, barre à encoches, socle à logements, quatre armes différentes, chaîne et cadenas
+function gunRack(bg, R, box, rx, ry) {
+  const rw = 48, STEEL = '#9aa0a8', STEEL_D = '#4a4f58';
+  box(rx, ry + 6, rw, 62, '#4a2a14');
+  for (let x = rx + 6; x < rx + rw; x += 8) { R(x, ry + 6, 1, 62, '#3a2010'); R(x + 1, ry + 6, 1, 62, '#56321a'); }
+  // fronton
+  box(rx - 2, ry, rw + 4, 7, '#6a3e1e'); R(rx - 2, ry, rw + 4, 1, '#8a5a30'); R(rx - 2, ry + 6, rw + 4, 1, '#4a2a14');
+  box(rx + 14, ry - 5, 20, 5, '#6a3e1e'); R(rx + 14, ry - 5, 20, 1, '#8a5a30');
+  for (const dx of [6, 42]) { S.disc(bg, rx + dx, ry + 3, 2, '#4a2a14'); S.disc(bg, rx + dx, ry + 3, 1, '#8a5a30'); }
+  S.disc(bg, rx + 24, ry - 1, 3, OUT); S.disc(bg, rx + 24, ry - 1, 2, '#e0b040'); R(rx + 23, ry - 2, 1, 1, '#f8e08a');
+  // barre à encoches
+  box(rx - 1, ry + 14, rw + 2, 4, '#7a4a24'); R(rx - 1, ry + 14, rw + 2, 1, '#a8703c');
+  const guns = [
+    { x: rx + 7, wood: ['#9a3e22', '#c4623a'], recv: '#c89a40', tube: true, lever: true },
+    { x: rx + 18, wood: ['#8a5228', '#b07038'], recv: '#6e6478', dbl: true },
+    { x: rx + 29, wood: ['#5a3420', '#7c4c30'], recv: '#5c626c', scope: true },
+    { x: rx + 40, wood: ['#b88a48', '#dcb070'], recv: '#5c626c', tube: true, pump: true },
+  ];
+  const top = ry + 8, rec = ry + 38;
+  for (const g of guns) {
+    const x = g.x;
+    // canon(s)
+    if (g.dbl) { R(x - 2, top - 1, 5, rec - top + 2, OUT); R(x - 1, top, 3, rec - top, STEEL_D); R(x - 1, top, 1, rec - top, STEEL); R(x + 1, top, 1, rec - top, STEEL); }
+    else { R(x - 1, top - 1, 3, rec - top + 2, OUT); R(x, top, 1, rec - top, STEEL); }
+    if (g.tube) { R(x + 1, top + 8, 2, rec - top - 8, OUT); R(x + 1, top + 9, 1, rec - top - 9, '#6a707a'); }
+    if (g.scope) { R(x - 3, top + 14, 3, 12, OUT); R(x - 2, top + 15, 1, 10, '#2a2e36'); R(x - 3, top + 14, 3, 1, '#7a808a'); }
+    R(x - 2, ry + 16, 6, 1, OUT); // encoche de la barre
+    if (g.pump) { box(x - 1, top + 16, 4, 9, g.wood[0]); for (let k = 0; k < 4; k++) R(x - 1, top + 17 + k * 2, 4, 1, g.wood[1]); }
+    // boîte de culasse, levier ou pontet
+    box(x - 1, rec, 4, 7, g.recv); R(x - 1, rec, 1, 7, S.shade(g.recv, 0.3));
+    if (g.lever) { R(x + 3, rec + 4, 4, 1, OUT); R(x + 6, rec + 4, 1, 6, OUT); R(x + 3, rec + 9, 4, 1, OUT); }
+    else { R(x + 3, rec + 4, 2, 1, OUT); R(x + 4, rec + 5, 1, 3, OUT); }
+    // crosse : poignée étroite qui s'évase en descendant, plaque de couche noire
+    for (let yy = rec + 7; yy < ry + 64; yy++) {
+      const k = yy - rec - 7, w = 3 + Math.floor(k / 6), x0 = x - 1 + Math.floor(k / 9);
+      R(x0 - 1, yy, w + 2, 1, OUT); R(x0, yy, w, 1, g.wood[0]); R(x0, yy, 1, 1, g.wood[1]);
+    }
+    R(x - 1, ry + 63, 7, 2, OUT);
+  }
+  // socle à logements (devant le bas des crosses)
+  box(rx - 2, ry + 62, rw + 4, 7, '#7a4a24'); R(rx - 2, ry + 62, rw + 4, 1, '#a8703c');
+  for (const g of guns) R(g.x - 1, ry + 63, 6, 1, '#3a2010');
+  // chaîne passée devant les armes, et son cadenas
+  for (let x = rx; x < rx + rw - 6; x += 3) { const dy = x % 6 < 3 ? 0 : 1; R(x - 1, ry + 33 + dy, 4, 3, OUT); R(x, ry + 34 + dy, 2, 1, '#8a909a'); }
+  const lx = rx + rw - 7, ly = ry + 33;
+  R(lx, ly - 3, 5, 1, OUT); R(lx, ly - 3, 1, 4, OUT); R(lx + 4, ly - 3, 1, 4, OUT);
+  box(lx - 1, ly, 7, 6, '#c8a040'); R(lx - 1, ly, 7, 1, '#f0d070'); R(lx + 2, ly + 2, 1, 2, OUT);
+}
+
+// Ceinturon pendu à une patère : cartouchière, étui et crosse du revolver
+function gunBelt(R, x, y) {
+  R(x - 1, y - 1, 4, 4, OUT); R(x, y, 2, 2, '#a06a3a');
+  for (let k = 0; k < 26; k++) {
+    const dx = Math.round(Math.sin((k / 26) * Math.PI) * 8);
+    R(x - dx - 2, y + 2 + k, 3, 1, OUT); R(x + dx + 1, y + 2 + k, 3, 1, OUT);
+    R(x - dx - 1, y + 2 + k, 1, 1, '#7a4a24'); R(x + dx + 2, y + 2 + k, 1, 1, '#7a4a24');
+  }
+  for (let k = 4; k < 22; k += 3) { const dx = Math.round(Math.sin((k / 26) * Math.PI) * 8); R(x - dx - 1, y + 2 + k, 1, 2, '#e0b040'); }
+  // étui avec le revolver
+  R(x + 6, y + 18, 8, 14, OUT); R(x + 7, y + 19, 6, 12, '#6a3a1a'); R(x + 7, y + 19, 6, 1, '#8a5a30'); R(x + 8, y + 23, 4, 1, '#4a2410');
+  R(x + 8, y + 13, 5, 6, OUT); R(x + 9, y + 14, 3, 4, '#3a2a20'); R(x + 9, y + 14, 1, 4, '#5a4a3a'); R(x + 11, y + 17, 3, 2, OUT);
+}
+
+// Tableau au cadre doré : draw(x, y, w, h) peint l'intérieur
+function goldFrame(R, x, y, w, h, draw) {
+  R(x - 3, y - 3, w + 6, h + 6, OUT); R(x - 2, y - 2, w + 4, h + 4, '#c8a040'); R(x - 2, y - 2, w + 4, 1, '#f0d070'); R(x - 2, y + h + 1, w + 4, 1, '#8a6a20');
+  R(x - 1, y - 1, w + 2, h + 2, '#6a4a10');
+  draw(x, y, w, h);
+}
+
 // ------------------------------------------------------------ les lieux
 // windows : ouvertures sur l'extérieur ; lamps(now, room) : sources de lumière animées ; render() : décor fixe
 // (bg = fond, mid = premier plan du décor) ; anim() : derrière le premier plan ; front() : devant.
@@ -642,9 +754,40 @@ const ROOMS = {
       for (let x = 12; x < W; x += 40) { box(x, 3, 18, 7, '#d8a048'); R(x + 1, 4, 16, 2, '#f0c868'); R(x + 9, 3, 1, 7, '#3a1a10'); }
       // lambris et main courante en laiton
       R(0, 90, W, 3, '#c8a040'); R(0, 93, W, 35, '#4a1c12');
-      for (let x = 6; x < W; x += 42) { box(x, 98, 34, 24, '#3e180e'); R(x + 1, 99, 32, 1, '#6a3020'); }
+      for (let x = 6; x < W; x += 42) {
+        box(x, 98, 34, 24, '#3e180e'); R(x + 1, 99, 32, 1, '#6a3020'); R(x + 1, 99, 1, 22, '#5a2618');
+        box(x + 5, 102, 24, 16, '#4a1c12'); R(x + 5, 102, 24, 1, '#6a3020'); R(x + 5, 117, 24, 1, '#2a0e08');
+        for (const [dx, dy] of [[2, 1], [31, 1], [2, 21], [31, 21]]) R(x + dx, 98 + dy, 1, 1, '#e0b040');
+      }
       // porte-bagages
       for (const [x0, x1] of [[6, 112], [272, 378]]) { R(x0, 22, x1 - x0, 1, '#c8a040'); R(x0, 26, x1 - x0, 1, '#c8a040'); for (let x = x0; x < x1; x += 12) R(x, 22, 1, 5, '#a88030'); }
+      // pilastres moulurés de part et d'autre des fenêtres, chapiteaux en laiton
+      for (const x of [106, 272]) {
+        box(x, 20, 6, 70, '#4a1c12'); R(x, 20, 1, 70, '#7a3424'); R(x + 5, 20, 1, 70, '#2a0e08');
+        box(x - 1, 19, 8, 3, '#c8a040'); box(x - 1, 86, 8, 3, '#c8a040');
+      }
+      // tableaux : une locomotive dans la prairie, et la carte de la ligne
+      goldFrame(R, 116, 46, 26, 20, (x, y, w, h) => {
+        for (let j = 0; j < h; j++) R(x, y + j, w, 1, j < 12 ? S.mix('#e8a868', '#f8d8a0', j / 12) : S.mix('#8a9a4a', '#6a7a3a', (j - 12) / 8));
+        S.disc(bg, x + 21, y + 4, 2, '#fff0c0');
+        R(x + 2, y + 12, 22, 1, '#5a4a3a');
+        R(x + 6, y + 7, 9, 4, '#2a2420'); R(x + 13, y + 5, 2, 2, '#2a2420'); R(x + 7, y + 6, 3, 1, '#2a2420'); R(x + 15, y + 9, 3, 2, '#2a2420');
+        R(x + 7, y + 11, 2, 1, '#1a1410'); R(x + 11, y + 11, 2, 1, '#1a1410'); R(x + 17, y + 10, 1, 1, '#c03020');
+        for (let k = 0; k < 4; k++) S.disc(bg, x + 13 - k * 3, y + 3 - (k > 1 ? 1 : 0), k > 1 ? 2 : 1, '#f4ecd8');
+      });
+      goldFrame(R, 244, 46, 24, 20, (x, y, w, h) => {
+        R(x, y, w, h, '#e8d4a0');
+        for (let k = 0; k < 10; k++) R(x + Math.floor(rnd() * (w - 2)), y + Math.floor(rnd() * h), 2, 1, '#d4bc88');
+        const pts = [[2, 15], [7, 12], [10, 13], [14, 8], [18, 9], [21, 4]];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
+          for (let t = 0; t <= 1; t += 0.12) if (Math.round(t * 8) % 2) R(x + ax + (bx - ax) * t, y + ay + (by - ay) * t, 1, 1, '#3a2214');
+        }
+        for (const [px, py] of [pts[0], pts[3], pts[5]]) { R(x + px - 1, y + py - 1, 3, 3, OUT); R(x + px, y + py, 1, 1, '#c0392b'); }
+        R(x + 2, y + 2, 7, 1, '#7a5a38'); R(x + 13, y + 16, 8, 1, '#7a5a38');
+      });
+      // rivets sur la bande dorée du plafond
+      for (let x = 6; x < W; x += 12) R(x, 15, 1, 1, '#f8e08a');
       // médaillon au-dessus de l'adversaire
       S.disc(bg, 192, 30, 9, OUT); S.disc(bg, 192, 30, 8, '#c8a040'); S.disc(bg, 192, 30, 6, '#8a6a20');
       R(188, 28, 9, 4, '#c8a040'); R(190, 26, 5, 8, '#c8a040');
@@ -693,16 +836,24 @@ const ROOMS = {
     render(bg, mid) {
       const { R, box } = paint(bg);
       const rnd = seeded(11);
-      // murs en pierre
+      // murs en pierre : moellons ombrés par-dessous, piqués, quelques fissures, suie sous le plafond
       R(0, 0, W, 92, '#6a6458');
       for (let y = 0, row = 0; y < 92; y += 12, row++) {
         for (let x = -(row % 2) * 13; x < W;) {
           const w = 20 + Math.floor(rnd() * 10);
-          const c = ['#9a9080', '#a49a88', '#8e8676', '#a89e8a'][Math.floor(rnd() * 4)];
-          R(x + 1, y + 1, w - 1, 11, c); R(x + 1, y + 1, w - 1, 1, S.shade(c, 0.12));
+          const c = ['#9a9080', '#a49a88', '#8e8676', '#a89e8a', '#948a78'][Math.floor(rnd() * 5)];
+          R(x + 1, y + 1, w - 1, 11, c); R(x + 1, y + 1, w - 1, 1, S.shade(c, 0.12)); R(x + 1, y + 1, 1, 10, S.shade(c, 0.06));
+          R(x + 1, y + 11, w - 1, 1, S.shade(c, -0.14)); R(x + w - 1, y + 2, 1, 9, S.shade(c, -0.1));
+          for (let k = 0; k < 3; k++) R(x + 2 + Math.floor(rnd() * (w - 4)), y + 3 + Math.floor(rnd() * 7), 1, 1, S.shade(c, -0.2));
+          if (rnd() < 0.08) { let cx = x + 3 + Math.floor(rnd() * (w - 6)); for (let k = 0; k < 7; k++) { R(cx, y + 2 + k, 1, 1, '#5a5448'); cx += rnd() < 0.5 ? 1 : -1; } }
+          if (rnd() < 0.06) R(x + 1, y + 10, 4 + Math.floor(rnd() * 5), 2, '#6a7a4a'); // mousse dans un joint
           x += w;
         }
       }
+      for (let y = 0; y < 14; y++) R(0, y, W, 1, `rgba(26,16,8,${(0.42 * (1 - y / 14)).toFixed(3)})`);
+      // poutre du plafond et ses corbeaux
+      box(0, 0, W, 5, '#4a2c18'); R(0, 0, W, 1, '#6a4024');
+      for (const x of [140, 300]) { box(x, 5, 8, 4, '#4a2c18'); R(x + 1, 9, 6, 1, OUT); }
       R(0, 92, W, 3, '#3a2214'); R(0, 95, W, 33, '#5a3a20');
       for (let x = 0; x < W; x += 12) R(x, 95, 1, 33, '#4a2c18');
       // cellule : mur du fond plus sombre, couchette
@@ -716,11 +867,12 @@ const ROOMS = {
       S.disc(bg, sx, sy, 7, OUT); S.disc(bg, sx, sy, 6, '#e0b040');
       for (const [dx, dy] of [[0, -8], [7, -3], [5, 7], [-5, 7], [-7, -3]]) { R(sx + dx - 1, sy + dy - 1, 3, 3, OUT); R(sx + dx, sy + dy, 1, 1, '#e0b040'); }
       S.disc(bg, sx, sy, 2, '#c09020');
-      // râtelier à fusils
-      box(254, 26, 36, 60, '#5a3418'); R(254, 34, 36, 3, '#3a2214'); R(254, 76, 36, 3, '#3a2214');
-      for (const x of [260, 270, 280]) { R(x, 30, 3, 36, '#6a6f78'); R(x, 30, 1, 36, '#9aa0a8'); box(x - 1, 64, 5, 18, '#7a4a24'); }
+      // râtelier à fusils, ceinturon pendu à côté
+      gunRack(bg, R, box, 248, 20);
+      gunBelt(R, 222, 28);
       // avis de recherche sous la fenêtre
-      for (const px of [304, 338]) { box(px, 66, 24, 22, '#d8c088'); R(px + 3, 68, 18, 3, '#5a3a20'); R(px + 7, 72, 10, 9, '#a88a5a'); R(px + 4, 83, 16, 1, '#5a3a20'); }
+      wantedPoster(R, 302, 65, rnd, '$500', true);
+      wantedPoster(R, 338, 66, rnd, '$1200', false);
       // fenêtre à barreaux
       box(302, 14, 68, 50, '#4a463e');
       bg.clearRect(306, 18, 60, 42);
@@ -754,9 +906,9 @@ const ROOMS = {
       S.disc(ctx, kx, ky, 3, OUT); S.disc(ctx, kx, ky, 2, '#c8a040'); S.disc(ctx, kx, ky, 1, '#4a463e');
       for (const d of [-2, 2]) { R(kx + d, ky + 3, 1, 6, '#c8a040'); R(kx + d, ky + 8, 2, 1, '#c8a040'); }
       // un courant d'air soulève les coins des avis de recherche
-      for (const [i, px] of [[0, 304], [1, 338]]) {
+      for (const [i, px, py] of [[0, 302, 65], [1, 338, 66]]) {
         const lift = Math.sin(now / 240 + i * 2) > 0.55 ? 1 : 0;
-        if (lift) { R(px + 20, 84, 4, 4, '#4a463e'); R(px + 19, 82, 4, 4, OUT); R(px + 20, 83, 3, 3, '#f0dca8'); }
+        if (lift) { R(px + 26, py + 22, 5, 5, '#8e8676'); R(px + 25, py + 20, 4, 4, OUT); R(px + 26, py + 21, 3, 3, '#f0dca8'); }
       }
       drawFly(ctx, 200, 48, now, 3);
     },

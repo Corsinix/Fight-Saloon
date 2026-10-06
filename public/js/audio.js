@@ -4,6 +4,8 @@
 let ac = null, master, musicBus, sfxBus, echoIn, noiseBuf, nesNoise;
 // musique dynamique : musicBus -> hushG (ambiance) -> duckG (effets ponctuels) -> moodLP -> master ; stingBus = effets hors atténuation
 let hushG, duckG, moodLP, stingBus;
+// sfxSlap : écho de canyon des coups de feu ; driveR / driveL : amplis saturés (riffs / solos) du Doom-like
+let sfxSlap, driveR, driveL;
 const WAVES = {};
 const settings = { music: 0.55, sfx: 0.8, muted: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('bs-audio') || '{}')); } catch {}
@@ -90,6 +92,22 @@ export function initAudio() {
   fb.connect(delay);
   lp.connect(wet);
   wet.connect(musicBus);
+  // la détonation revient des façades et des collines, un peu plus sourde à chaque fois
+  sfxSlap = ac.createGain();
+  const sd = ac.createDelay(1);
+  sd.delayTime.value = 0.23;
+  const sfb = ac.createGain();
+  sfb.gain.value = 0.38;
+  const slp = ac.createBiquadFilter();
+  slp.type = 'lowpass';
+  slp.frequency.value = 1400;
+  const sw = ac.createGain();
+  sw.gain.value = 0.45;
+  sfxSlap.connect(sd).connect(slp).connect(sfb).connect(sd);
+  slp.connect(sw).connect(sfxBus);
+  // guitares saturées : toutes les notes passent dans la même saturation, comme dans un vrai ampli
+  driveR = driveChain(7, 2600, 0.09, 0);
+  driveL = driveChain(5, 3400, 0.07, 0.3);
   noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -109,6 +127,7 @@ export function initAudio() {
   applyVolumes();
   loadCrusher();
   loadCustomMusic();
+  loadSamples();
   setInterval(layers, 100);
   applyMood();
 }
@@ -156,7 +175,8 @@ function vibrato(o, t, d, cents, rate = 5.5, delay = 0.18) {
   return lfo;
 }
 
-function noise(t, dur, { type = 'lowpass', f = 1000, f2 = null, q = 1, gain = 0.3, dest = sfxBus, decay = true, buf = noiseBuf } = {}) {
+// slap : le son part aussi dans l'écho de canyon
+function noise(t, dur, { type = 'lowpass', f = 1000, f2 = null, q = 1, gain = 0.3, dest = sfxBus, decay = true, buf = noiseBuf, slap = false } = {}) {
   const src = ac.createBufferSource();
   src.buffer = buf;
   src.loop = true;
@@ -170,11 +190,12 @@ function noise(t, dur, { type = 'lowpass', f = 1000, f2 = null, q = 1, gain = 0.
   if (decay) g.gain.exponentialRampToValueAtTime(0.001, t + dur);
   else g.gain.setValueAtTime(0, t + dur);
   src.connect(flt).connect(g).connect(dest);
+  if (slap) g.connect(sfxSlap);
   src.start(t, Math.random() * 0.5);
   src.stop(t + dur + 0.05);
 }
 
-function tone(t, f, dur, { type = 'sine', gain = 0.2, f2 = null, dest = sfxBus, attack = 0.005 } = {}) {
+function tone(t, f, dur, { type = 'sine', gain = 0.2, f2 = null, dest = sfxBus, attack = 0.005, slap = false } = {}) {
   const o = osc(type, f, t);
   if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
   const g = ac.createGain();
@@ -182,6 +203,7 @@ function tone(t, f, dur, { type = 'sine', gain = 0.2, f2 = null, dest = sfxBus, 
   g.gain.linearRampToValueAtTime(gain, t + attack);
   g.gain.exponentialRampToValueAtTime(0.001, t + dur);
   o.connect(g).connect(dest);
+  if (slap) g.connect(sfxSlap);
   o.start(t);
   o.stop(t + dur + 0.02);
 }
@@ -730,14 +752,114 @@ const INST = {
     }
   },
   Q16(t) { for (let i = 0; i < 3; i++) tone(t + i * 0.045, 4300, 0.03, { gain: 0.03, dest: musicBus }); },
+
+  // ---- western métal (Doom-like) : guitares saturées, orgue du diable, cymbale, gong
+  // accord de puissance (fondamentale + quinte) dans l'ampli saturé : étouffé de la paume sur les notes courtes,
+  // laissé sonner sur les longues
+  chug(m, t, d, v = 1) {
+    const open = d >= 0.3;
+    const len = open ? Math.min(1.6, d * 0.95) : Math.min(0.16, d * 0.95);
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = open ? 3000 : 1000;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.7 * v, t + 0.003);
+    if (open) g.gain.setValueAtTime(0.7 * v, t + len * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    for (const k of [0, 7]) {
+      const o = osc('sawtooth', mtof(m + k), t);
+      o.connect(lp);
+      o.start(t);
+      o.stop(t + len + 0.02);
+    }
+    lp.connect(g).connect(driveR);
+  },
+  // guitare solo qui hurle : les notes longues partent un ton en dessous et montent (bend), large vibrato
+  wail(m, t, d, v = 1) {
+    const f = mtof(m);
+    const end = t + Math.max(0.08, d * 0.95);
+    const bend = d > 0.4;
+    const o = osc('sawtooth', bend ? f * 0.891 : f, t);
+    if (bend) o.frequency.exponentialRampToValueAtTime(f, t + 0.12);
+    vibrato(o, t, d, 38, 6, 0.3);
+    const g = ac.createGain();
+    env(g, t, 0.01, 0.45 * v, 0.06, end);
+    o.connect(g).connect(driveL);
+    o.start(t);
+    o.stop(end + 0.03);
+  },
+  // orgue d'église (tirettes 16', 8', 4') avec un tremolo lent : la messe noire d'El Diablo
+  organ(notes, t, d, v = 1) {
+    const end = t + d;
+    const g = ac.createGain();
+    env(g, t, 0.06, 0.022 * v, 0.12, end);
+    const lfo = ac.createOscillator();
+    lfo.frequency.value = 5.5;
+    const lg = ac.createGain();
+    lg.gain.value = 0.006 * v;
+    lfo.connect(lg).connect(g.gain);
+    lfo.start(t);
+    lfo.stop(end + 0.05);
+    for (const n of notes) {
+      for (const [k, lvl] of [[0.5, 0.7], [1, 1], [2, 0.45]]) {
+        const o = osc('sine', mtof(n) * k, t);
+        const og = ac.createGain();
+        og.gain.value = lvl;
+        o.connect(og).connect(g);
+        o.start(t);
+        o.stop(end + 0.05);
+      }
+    }
+    g.connect(musicBus);
+    g.connect(echoIn);
+  },
+  // cymbale crash, gong (tam-tam) qui gronde longtemps
+  X8(t) { noise(t, 0.8, { type: 'highpass', f: 5000, gain: 0.08, dest: musicBus, buf: nesNoise }); },
+  X16(t) {
+    noise(t, 1.2, { type: 'highpass', f: 4500, gain: 0.1, dest: musicBus });
+    noise(t, 0.3, { type: 'bandpass', f: 3000, q: 1, gain: 0.08, dest: musicBus });
+  },
+  G8(t) { tone(t, 110, 1.5, { type: 'tri4', f2: 98, gain: 0.2, dest: musicBus }); noise(t, 0.8, { f: 800, f2: 200, gain: 0.1, dest: musicBus, buf: nesNoise }); },
+  G16(t) {
+    for (const [f, lvl, len] of [[73, 1, 3.2], [104, 0.7, 2.8], [151, 0.5, 2.3], [217, 0.35, 1.8], [347, 0.2, 1.2]]) {
+      tone(t, f, len, { f2: f * 0.98, gain: 0.09 * lvl, dest: musicBus, attack: 0.03 });
+    }
+    noise(t, 2, { type: 'bandpass', f: 700, f2: 250, q: 1, gain: 0.1, dest: musicBus });
+  },
 };
 
-let FUZZ = null;
-function fuzzCurve() {
-  if (FUZZ) return FUZZ;
-  FUZZ = new Float32Array(1024);
-  for (let i = 0; i < 1024; i++) FUZZ[i] = Math.tanh(((i / 1023) * 2 - 1) * 4);
-  return FUZZ;
+const CURVES = {};
+function driveCurve(k) {
+  if (CURVES[k]) return CURVES[k];
+  const c = (CURVES[k] = new Float32Array(1024));
+  for (let i = 0; i < 1024; i++) c[i] = Math.tanh(((i / 1023) * 2 - 1) * k);
+  return c;
+}
+const fuzzCurve = () => driveCurve(4);
+
+// ampli saturé partagé : saturation -> coupe-bas -> baffle (passe-bas) -> bus musique (+ écho pour les solos)
+function driveChain(k, lpF, out, echo) {
+  const inp = ac.createGain();
+  const sh = ac.createWaveShaper();
+  sh.curve = driveCurve(k);
+  sh.oversample = '2x';
+  const hp = ac.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 90;
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = lpF;
+  lp.Q.value = 1.2;
+  const g = ac.createGain();
+  g.gain.value = out;
+  inp.connect(sh).connect(hp).connect(lp).connect(g).connect(musicBus);
+  if (echo) {
+    const s = ac.createGain();
+    s.gain.value = echo;
+    g.connect(s).connect(echoIn);
+  }
+  return inp;
 }
 
 // cri de coyote : la hauteur monte d'une quinte puis redescend ; en 16 bits, les formants passent de « a » à « i »
@@ -872,7 +994,7 @@ function compile(song) {
     }));
   }
   // Y = cri de coyote, sur la note song.howl
-  const drum = (k, at) => ev.push(k === 'Y' ? { s: at, d: 1, fn: 'Yh' + st.drum, arg: noteNum(song.howl || 'A4') } : { s: at, d: 0, fn: k + st.drum, role: 'KSWAB'.includes(k) ? 'loud' : null });
+  const drum = (k, at) => ev.push(k === 'Y' ? { s: at, d: 1, fn: 'Yh' + st.drum, arg: noteNum(song.howl || 'A4') } : { s: at, d: 0, fn: k + st.drum, role: 'KSWABXG'.includes(k) ? 'loud' : null });
   if (song.drums) pattern(song.drums, drum, song.drumsB ? (b) => b % 2 === 0 : null);
   if (song.drumsB) pattern(song.drumsB, drum, (b) => b % 2 === 1);
   // couche de tension (jouée seulement quand ça chauffe) : grosse caisse sur le temps, tambourin à contretemps,
@@ -1338,6 +1460,82 @@ Object.assign(SONGS, {
   },
 });
 
+// ---- Doom-like : western métal (riffs saturés en doubles croches, trompette ou sifflement de Morricone par-dessus)
+Object.assign(SONGS, {
+  // Partie : chevauchée infernale, riff galopant sur la corde de mi grave, trompette mariachi
+  enfer: {
+    title: "L'Enfer de Tombstone", style: '16bit', bpm: 168, div: 4, bar: 16, loops: 3, accel: 1.03,
+    inst: { lead: 'trumpet' }, pad: false,
+    melody:
+      'E5:6 B4:2 E5:4 G5:4 | F#5:2 G5:2 F#5:2 E5:2 B4:8 | C5:6 G4:2 C5:4 E5:4 | F#5:2 E5:2 D5:2 F#5:2 A5:8 |' +
+      'B5:6 A5:2 G5:4 E5:4 | G5:2 A5:2 B5:4 E6:8 | E6:4 D6:2 C6:2 G5:4 E5:4 | D#5:2 F#5:2 A5:2 B5:2 D#6:8 |' +
+      'E6:12 D6:2 B5:2 | G5:4 B5:4 E5:8 | C6:6 B5:2 G5:4 E5:4 | D6:4 C6:2 A5:2 F#5:8 |' +
+      'E6:4 G6:4 E6:4 C6:4 | F#6:4 E6:2 D6:2 A5:8 | B5:4 A5:2 G5:2 F#5:4 D#5:4 | B4:8 -:8',
+    chords: 'Em Em C D Em Em C B Em Em C D C D B B7',
+    voices: [{
+      inst: 'chug',
+      melody: riff('Em Em C D Em Em C B Em Em C D C D B B7', {
+        Em: 'E2:1 E2:1 E2:1 E2:1 G2:2 E2:1 E2:1 Bb2:2 E2:1 E2:1 A2:2 G2:2',
+        C: 'C3:1 C3:1 C3:1 C3:1 E3:2 C3:1 C3:1 G3:2 C3:1 C3:1 F#3:2 E3:2',
+        D: 'D3:1 D3:1 D3:1 D3:1 F#3:2 D3:1 D3:1 A3:2 D3:1 D3:1 G#3:2 F#3:2',
+        B: 'B2:1 B2:1 B2:1 B2:1 D#3:2 B2:1 B2:1 F3:2 B2:1 B2:1 E3:2 D#3:2',
+        B7: 'B2:2 -:2 B2:2 -:2 B2:4 -:4',
+      }),
+    }],
+    bass: 'R:2 R:2 R:2 R:2 R:2 R:2 R:2 R:2',
+    drums: 'K:1 K:1 H:2 S:2 K:1 K:1 K:1 K:1 H:2 S:2 K:2',
+    drumsB: 'X:2 K:1 K:1 S:2 K:1 K:1 K:2 K:1 K:1 S:2 S:1 S:1',
+  },
+  // Partie : plateau rouge sous le soleil, sifflement solitaire sur un riff lourd et un chœur
+  mesa: {
+    title: 'Mesa Sanglante', style: '16bit', bpm: 138, div: 4, bar: 16, loops: 4, accel: 1.03,
+    inst: { lead: 'whistle', pad: 'choir' },
+    melody:
+      'A5:8 D6:4 C6:2 A5:2 | F5:4 G5:2 A5:2 D5:8 | Bb5:6 A5:2 F5:4 D5:4 | E5:4 G5:4 C#6:8 |' +
+      'D6:8 F6:4 E6:2 D6:2 | A5:4 C6:2 A5:2 F5:8 | G5:6 Bb5:2 D6:4 G5:4 | A5:8 -:4 C#5:2 E5:2',
+    chords: 'Dm Dm Bb A Dm Dm Gm A',
+    voices: [{
+      inst: 'chug', v: 0.9,
+      melody: riff('Dm Dm Bb A Dm Dm Gm A', {
+        Dm: 'D3:2 D3:1 D3:1 -:2 D3:1 D3:1 F3:2 D3:1 D3:1 G#3:2 A3:2',
+        Bb: 'Bb2:2 Bb2:1 Bb2:1 -:2 Bb2:1 Bb2:1 D3:2 Bb2:1 Bb2:1 E3:2 F3:2',
+        A: 'A2:4 -:2 A2:1 A2:1 C#3:4 E3:2 G3:2',
+        Gm: 'G2:2 G2:1 G2:1 -:2 G2:1 G2:1 Bb2:2 G2:1 G2:1 C#3:2 D3:2',
+      }),
+    }],
+    bass: 'R:2 R:2 R:4 5:4 R:4',
+    drums: 'K:4 H:2 K:2 S:4 H:2 H:2',
+    drumsB: 'K:4 H:2 K:2 S:4 S:2 X:2',
+  },
+  // Boss : El Diablo sort de Boot Hill. Orgue, gong, accords qui sonnent, guitare qui hurle, chœur d'hommes
+  diable: {
+    title: 'Le Diable de Boot Hill', style: '16bit', bpm: 96, div: 4, bar: 16, loops: 4, accel: 1.03,
+    inst: { lead: 'wail', pad: 'organ' },
+    melody:
+      'E5:12 F5:2 E5:2 | B5:8 Bb5:4 G5:4 | C6:12 B5:2 G5:2 | F#5:8 D#5:4 B4:4 |' +
+      'E6:8 D6:4 B5:4 | G5:4 Bb5:4 B5:8 | A5:4 C6:4 F6:8 | D#6:4 C6:2 B5:2 F5:4 D#5:4',
+    chords: 'Em Em C B Em Em F B',
+    voices: [
+      {
+        inst: 'chug',
+        melody: riff('Em Em C B Em Em F B', {
+          Em: 'E2:4 E2:1 E2:1 E2:1 E2:1 Bb2:4 E2:1 E2:1 G2:2',
+          C: 'C3:4 C3:1 C3:1 C3:1 C3:1 G3:4 C3:1 C3:1 B2:2',
+          B: 'B2:4 B2:1 B2:1 B2:1 B2:1 F3:4 B2:1 B2:1 D#3:2',
+          F: 'F2:4 F2:1 F2:1 F2:1 F2:1 B2:4 F2:1 F2:1 E2:2',
+        }),
+      },
+      {
+        inst: 'chant', v: 0.7,
+        melody: riff('Em Em C B Em Em F B', { Em: 'E3:4 -:12', C: 'C3:4 -:12', B: 'B2:4 -:12', F: 'F3:4 -:12' }),
+      },
+    ],
+    bass: 'R:4 R:4 R:4 R:4',
+    drums: 'G:4 K:2 K:2 S:4 K:1 K:1 K:2',
+    drumsB: 'K:1 K:1 K:1 K:1 S:4 K:1 K:1 K:1 K:1 S:2 S:1 S:1',
+  },
+});
+
 const PLAYLISTS = {
   menu: ['poussiere', 'feu', 'coyote', 'desert', 'montre', 'piano', 'colt', 'cantina'],
   game: ['duel', 'diligence', 'glas', 'collines', 'train', 'cri', 'plomb', 'vautour', 'nocturne'],
@@ -1352,6 +1550,10 @@ const PLAYLISTS = {
   'mini-mine': ['filon', 'train', 'vautour'],
   'mini-course': ['rodeo', 'diligence', 'train'],
   'mini-rts': ['ruee', 'collines', 'cri', 'vautour', 'glas', 'plomb'],
+  'mini-fps': ['enfer', 'mesa', 'fusillade', 'cri', 'nocturne'],
+  'mini-fpsdm': ['mesa', 'enfer', 'cri', 'fusillade', 'nocturne'],
+  // El Diablo est sur la carte (fps.js) : son thème tourne en boucle jusqu'à sa chute
+  'mini-fps-boss': ['diable'],
 };
 const compiled = {};
 const getSong = (id) => (compiled[id] ||= compile(SONGS[id]));
@@ -1594,6 +1796,13 @@ export function musicCue(kind, sec = 1.5) {
   } else if (kind === 'blank') {
     g.linearRampToValueAtTime(1, t + 0.8);
     [64, 67, 71, 76].forEach((m, i) => tone(t + i * 0.07, mtof(m), 0.5, { type: 'triangle', gain: 0.09, dest: stingBus }));
+  } else if (kind === 'boss') {
+    // El Diablo arrive : la musique se tait, grosse caisse et accord de triton (mi - si bémol) qui gronde
+    g.linearRampToValueAtTime(0.05, t + 0.05);
+    g.setValueAtTime(0.05, t + 2.2);
+    g.linearRampToValueAtTime(1, t + 4);
+    noise(t, 2, { f: 300, f2: 40, gain: 0.6, dest: stingBus });
+    stab([28, 34, 40, 46], t, 4, 0.12);
   }
 }
 
@@ -1656,7 +1865,18 @@ function tick() {
   }
 }
 
+// Thème de boss : tant qu'il est actif, la playlist du mini-jeu est remplacée par « <nom>-boss ».
+// main.js redemande la playlist à chaque clic (déblocage du son) : elle reste alors sur celle du boss.
+const bossOn = {};
+export function bossMusic(name, on) {
+  bossOn[name] = on;
+  if (wanted === name || wanted === `${name}-boss`) playMusic(name);
+}
+
 export function playMusic(name, force = false) {
+  const base = name.replace(/-boss$/, '');
+  for (const k in bossOn) if (k !== base) bossOn[k] = false; // on a quitté le mini-jeu
+  name = bossOn[base] && PLAYLISTS[`${base}-boss`] ? `${base}-boss` : base;
   if (!ac) { wanted = name; return; }
   if (!force && wanted === name && (player || customEl)) return;
   if (wanted !== name) setMood();
@@ -1696,7 +1916,7 @@ const SFX = {
   ui(t) { tone(t, 990, 0.05, { type: 'square', gain: 0.05 }); },
   hover(t) { tone(t, 1320, 0.03, { type: 'square', gain: 0.025 }); },
   gunshot(t) {
-    noise(t, 0.9, { f: 6000, f2: 180, gain: 1.0 });
+    noise(t, 0.9, { f: 6000, f2: 180, gain: 1.0, slap: true });
     noise(t, 0.08, { type: 'highpass', f: 3000, gain: 0.6 });
     tone(t, 110, 0.35, { f2: 28, gain: 0.9 });
     noise(t + 0.22, 0.9, { f: 1400, f2: 120, gain: 0.25 });
@@ -1769,11 +1989,11 @@ const SFX = {
   },
   // ---- mini-jeux
   revolver(t) {
-    noise(t, 0.35, { f: 5000, f2: 300, gain: 0.7 });
+    noise(t, 0.35, { f: 5000, f2: 300, gain: 0.7, slap: true });
     noise(t, 0.05, { type: 'highpass', f: 3500, gain: 0.5 });
     tone(t, 160, 0.18, { f2: 40, gain: 0.5 });
   },
-  far(t) { noise(t, 0.3, { f: 1800, f2: 200, gain: 0.25 }); tone(t, 120, 0.12, { f2: 40, gain: 0.15 }); },
+  far(t) { noise(t, 0.3, { f: 1800, f2: 200, gain: 0.25, slap: true }); tone(t, 120, 0.12, { f2: 40, gain: 0.15 }); },
   dry(t) { tone(t, 2600, 0.015, { type: 'square', gain: 0.1 }); },
   reload(t) {
     for (let i = 0; i < 4; i++) tone(t + i * 0.12, 2100 + i * 90, 0.03, { type: 'square', gain: 0.07 });
@@ -1795,10 +2015,9 @@ const SFX = {
   bark(t) { for (let i = 0; i < 2; i++) { tone(t + i * 0.18, 420, 0.08, { type: 'sawtooth', f2: 260, gain: 0.08 }); noise(t + i * 0.18, 0.06, { type: 'bandpass', f: 900, q: 2, gain: 0.25 }); } },
   meow(t) { tone(t, 700, 0.35, { type: 'triangle', f2: 1100, gain: 0.05, attack: 0.05 }); tone(t + 0.2, 1100, 0.2, { type: 'triangle', f2: 600, gain: 0.04 }); },
   tick(t) { tone(t, 880, 0.08, { type: 'square', gain: 0.06 }); },
-  gatling(t) { noise(t, 0.09, { f: 4000, f2: 400, gain: 0.45 }); tone(t, 140, 0.06, { f2: 60, gain: 0.25 }); },
   // Winchester : détonation sèche puis le levier qu'on actionne
   rifle(t) {
-    noise(t, 0.3, { f: 6500, f2: 350, gain: 0.6 });
+    noise(t, 0.3, { f: 6500, f2: 350, gain: 0.6, slap: true });
     noise(t, 0.04, { type: 'highpass', f: 4000, gain: 0.45 });
     tone(t, 130, 0.14, { f2: 45, gain: 0.4 });
     noise(t + 0.13, 0.03, { type: 'bandpass', f: 1800, q: 4, gain: 0.35 });
@@ -1822,19 +2041,277 @@ const SFX = {
   },
   sand(t) { noise(t, 1.6, { type: 'bandpass', f: 500, f2: 2500, q: 1, gain: 0.35, decay: true }); },
   go(t) { tone(t, 1320, 0.25, { type: 'square', gain: 0.07 }); tone(t, 660, 0.25, { type: 'square', gain: 0.05 }); },
+
+  // ---- Doom-like : une détonation par arme (le calibre s'entend : claquement, grave, écho, mécanique)
+  // Colt : la détonation franche du .45, le barillet qui tourne
+  colt(t) {
+    noise(t, 0.4, { f: 5200, f2: 280, gain: 0.75, slap: true });
+    noise(t, 0.05, { type: 'highpass', f: 3500, gain: 0.55 });
+    tone(t, 150, 0.2, { f2: 40, gain: 0.55 });
+    noise(t + 0.16, 0.02, { type: 'bandpass', f: 2600, q: 5, gain: 0.18 });
+  },
+  // Schofield : plus sec et plus aigu, coup de feu plus court
+  schofield(t) {
+    noise(t, 0.26, { f: 7000, f2: 450, gain: 0.65, slap: true });
+    noise(t, 0.04, { type: 'highpass', f: 4500, gain: 0.55 });
+    tone(t, 210, 0.13, { f2: 60, gain: 0.4 });
+  },
+  // Derringer : petit « pop » de poche, aigu, presque pas de grave
+  derringer(t) {
+    noise(t, 0.16, { f: 4200, f2: 700, gain: 0.55, slap: true });
+    noise(t, 0.03, { type: 'highpass', f: 5000, gain: 0.45 });
+    tone(t, 300, 0.07, { f2: 110, gain: 0.25 });
+  },
+  // Deux colts : deux détonations à quelques millisecondes, la seconde un peu plus grave
+  akimbo(t) {
+    SFX.colt(t);
+    noise(t + 0.045, 0.3, { f: 4200, f2: 250, gain: 0.55 });
+    tone(t + 0.045, 135, 0.16, { f2: 38, gain: 0.4 });
+  },
+  // Winchester : détonation longue, puis le levier qu'on baisse et relève, la douille qui tinte
+  winchester(t) {
+    noise(t, 0.45, { f: 6500, f2: 300, gain: 0.7, slap: true });
+    noise(t, 0.04, { type: 'highpass', f: 4000, gain: 0.5 });
+    tone(t, 120, 0.22, { f2: 40, gain: 0.5 });
+    noise(t + 0.2, 0.035, { type: 'bandpass', f: 1500, q: 4, gain: 0.4 });
+    tone(t + 0.2, 700, 0.03, { type: 'square', gain: 0.04 });
+    noise(t + 0.3, 0.035, { type: 'bandpass', f: 2300, q: 4, gain: 0.38 });
+    tone(t + 0.3, 1100, 0.03, { type: 'square', gain: 0.04 });
+    tone(t + 0.42, 3300, 0.06, { gain: 0.04 });
+  },
+  // Winchester dorée : même levier, détonation plus brillante qui résonne longtemps
+  goldwin(t) {
+    SFX.winchester(t);
+    tone(t, 2400, 0.5, { type: 'triangle', f2: 1800, gain: 0.03, slap: true });
+  },
+  // Sharps : le gros calibre de chasse au bison, grondement qui roule dans les collines, culasse qui s'ouvre
+  sharps(t) {
+    noise(t, 0.6, { f: 7000, f2: 160, gain: 1.0, slap: true });
+    noise(t, 0.05, { type: 'highpass', f: 3000, gain: 0.7 });
+    tone(t, 65, 0.6, { f2: 24, gain: 0.95 });
+    for (let i = 1; i <= 3; i++) noise(t + 0.38 * i, 0.7, { f: 1100 / i, f2: 110, gain: 0.28 / i });
+    noise(t + 0.6, 0.04, { type: 'bandpass', f: 1300, q: 4, gain: 0.45 });
+    tone(t + 0.6, 600, 0.04, { type: 'square', gain: 0.05 });
+  },
+  // Fusil à pompe : grosse détonation large, puis « tchk-tchk »
+  shotgun(t) {
+    noise(t, 0.65, { f: 4000, f2: 140, gain: 1.0, slap: true });
+    noise(t, 0.07, { type: 'highpass', f: 2200, gain: 0.7 });
+    tone(t, 80, 0.32, { f2: 28, gain: 0.95 });
+    SFX.pump(t + 0.33);
+  },
+  // Canon scié : les deux canons à la fois, une explosion sourde et énorme
+  sawed(t) {
+    noise(t, 0.8, { f: 3200, f2: 110, gain: 1.0, slap: true });
+    noise(t + 0.012, 0.6, { f: 5000, f2: 200, gain: 0.7 });
+    noise(t, 0.09, { type: 'highpass', f: 1800, gain: 0.8 });
+    tone(t, 62, 0.45, { f2: 22, gain: 1.0 });
+  },
+  // Gatling : rafale mécanique, la manivelle claque entre deux coups
+  gatling(t) {
+    noise(t, 0.1, { f: 4200, f2: 400, gain: 0.5 });
+    tone(t, 140, 0.06, { f2: 60, gain: 0.28 });
+    noise(t + 0.04, 0.015, { type: 'bandpass', f: 2600, q: 5, gain: 0.2 });
+  },
+
+  // ---- Doom-like : balles, lames, mécanique
+  // ricochet « piiouu » : la balle chante en repartant (deux sifflements qui battent entre eux)
+  ricochet(t) {
+    const f = 2000 + Math.random() * 1800, len = 0.45 + Math.random() * 0.3;
+    tone(t, f, len, { type: 'triangle', f2: f * 0.4, gain: 0.07, attack: 0.01 });
+    tone(t, f * 1.015, len * 0.85, { f2: f * 0.42, gain: 0.05, attack: 0.01 });
+    noise(t, 0.035, { type: 'highpass', f: 3000, gain: 0.3 });
+  },
+  // la balle touche : impact mat dans la chair (le « toc » qui confirme)
+  hitmark(t) {
+    tone(t, 150, 0.08, { f2: 60, gain: 0.35 });
+    noise(t, 0.05, { type: 'bandpass', f: 1100, q: 1.5, gain: 0.35 });
+  },
+  // lame qui fend l'air, coup qui porte, lame qu'on dégaine
+  swish(t) { noise(t, 0.2, { type: 'bandpass', f: 500 + Math.random() * 200, f2: 3500, q: 3, gain: 0.4 }); },
+  chop(t) {
+    noise(t, 0.12, { type: 'bandpass', f: 500, q: 1.5, gain: 0.6 });
+    tone(t, 120, 0.15, { f2: 50, gain: 0.5 });
+    noise(t + 0.02, 0.1, { type: 'highpass', f: 2500, gain: 0.15 });
+  },
+  unsheathe(t) { noise(t, 0.32, { type: 'bandpass', f: 3000, f2: 6500, q: 6, gain: 0.2 }); tone(t + 0.28, 4200, 0.25, { type: 'triangle', gain: 0.03 }); },
+  // sortir l'arme : cuir de l'étui, puis le chien qu'on arme (clic-clac)
+  draw(t) {
+    noise(t, 0.12, { type: 'bandpass', f: 900, f2: 1800, q: 1.5, gain: 0.22 });
+    noise(t + 0.13, 0.03, { type: 'highpass', f: 3500, gain: 0.3 });
+    tone(t + 0.13, 1900, 0.025, { type: 'square', gain: 0.07 });
+    noise(t + 0.2, 0.03, { type: 'bandpass', f: 2200, q: 3, gain: 0.35 });
+    tone(t + 0.2, 1300, 0.03, { type: 'square', gain: 0.06 });
+  },
+  // fin de recharge : le barillet ou la culasse se referme
+  snap(t) {
+    noise(t, 0.03, { type: 'bandpass', f: 1800, q: 4, gain: 0.45 });
+    tone(t, 1500, 0.03, { type: 'square', gain: 0.06 });
+  },
+  // cartouches glissées une à une (winchester, pompe), canon scié qu'on casse
+  shells(t) { for (let i = 0; i < 4; i++) SFX.shellIn(t + i * 0.28); },
+  breakopen(t) {
+    noise(t, 0.05, { type: 'bandpass', f: 1200, q: 3, gain: 0.5 });
+    tone(t + 0.12, 2700, 0.08, { gain: 0.05 });
+    tone(t + 0.2, 3100, 0.07, { gain: 0.04 });
+  },
+  // pas dans la poussière, éperons qui tintent, sabots au galop
+  step(t) { noise(t, 0.07, { f: 350 + Math.random() * 250, gain: 0.14 }); },
+  spur(t) { for (let i = 0; i < 3; i++) tone(t + i * 0.022 + Math.random() * 0.01, 4200 + Math.random() * 1500, 0.09, { type: 'triangle', gain: 0.016 }); },
+  hoof(t) {
+    tone(t, 240 + Math.random() * 70, 0.06, { type: 'triangle', f2: 110, gain: 0.2 });
+    noise(t, 0.05, { f: 900, gain: 0.16 });
+  },
+  // ramassages : cartouches qui s'entrechoquent, gilet de cuir et sa boucle, mèche qui grésille
+  ammo(t) {
+    for (let i = 0; i < 4; i++) tone(t + i * 0.045, 2500 + i * 230 + Math.random() * 150, 0.07, { type: 'triangle', gain: 0.07 });
+    noise(t, 0.08, { type: 'bandpass', f: 3000, q: 2, gain: 0.15 });
+  },
+  armor(t) {
+    noise(t, 0.15, { type: 'bandpass', f: 700, q: 1.5, gain: 0.3 });
+    tone(t + 0.12, 1700, 0.08, { type: 'triangle', gain: 0.07 });
+    tone(t + 0.16, 2300, 0.15, { type: 'triangle', gain: 0.05 });
+  },
+  fuse(t) {
+    noise(t, 0.7, { type: 'highpass', f: 5500, f2: 3000, gain: 0.1, decay: false });
+    for (let i = 0; i < 4; i++) noise(t + Math.random() * 0.6, 0.012, { type: 'highpass', f: 2500, gain: 0.18 });
+  },
+  // sifflet de locomotive à vapeur : deux coups, accord mineur qui monte un peu
+  steam(t) {
+    for (const [at, d] of [[0, 0.35], [0.45, 1.2]]) {
+      for (const m of [62, 65, 69]) chipNote('triangle', mtof(m), t + at, d, 0.07, { gate: 1, vib: 8, dest: sfxBus });
+      noise(t + at, d, { type: 'bandpass', f: 1400, q: 1, gain: 0.12, decay: false });
+    }
+  },
+  // glas : grosse cloche de l'église de Boot Hill
+  toll(t) {
+    for (const [k, lvl, len] of [[1, 1, 3.5], [2, 0.6, 2.4], [2.4, 0.45, 2], [3, 0.3, 1.5], [4.2, 0.2, 1]]) {
+      tone(t, 146 * k, len, { gain: 0.12 * lvl, slap: k === 1 });
+    }
+    noise(t, 0.03, { type: 'highpass', f: 3000, gain: 0.2 });
+  },
+
+  // ---- Doom-like : voix (bandits, joueur, El Diablo)
+  // « Hé ! » ou « Yaaah ! » : le bandit vous a vu
+  yell(t) {
+    const p = 0.85 + Math.random() * 0.35;
+    if (Math.random() < 0.5) voice(t, 0.24, { f0: 230 * p, f1: 290 * p, from: 'e', to: 'e', gain: 0.3 });
+    else voice(t, 0.5, { f0: 200 * p, f1: 310 * p, from: 'i', to: 'a', gain: 0.3 });
+  },
+  // le bandit tombe : râle qui descend, puis le corps dans la poussière
+  grunt(t) {
+    const p = 0.8 + Math.random() * 0.5;
+    voice(t, 0.55, { f0: 190 * p, f1: 85 * p, from: 'a', to: 'u', gain: 0.3, growl: 0.3 });
+    tone(t + 0.5, 85, 0.25, { f2: 40, gain: 0.35 });
+    noise(t + 0.5, 0.18, { f: 400, gain: 0.2 });
+  },
+  // ---- le cri de Corsi (public/sfx/yeehaw.wav) : rafale de mitrailleuse, « YIIIHAAA ! », fin de rafale
+  // joué entier pour les grands moments (victoires, gatling, El Diablo abattu)
+  yeehaw(t) { if (!sample('yeehaw', t, { gain: 0.9, cool: 3 })) SFX.yell(t); },
+  // le cri seul, sans la mitrailleuse, un peu plus aigu ou plus grave à chaque fois (manche gagnée, belle prise…)
+  hiha(t) { if (!sample('yeehaw', t, { from: 0.55, to: 2.4, gain: 0.8, rate: 0.94 + Math.random() * 0.12, cool: 2 })) SFX.yell(t); },
+
+  // le joueur prend une balle / meurt
+  oof(t) { voice(t, 0.2, { f0: 160, f1: 105, from: 'u', to: 'o', gain: 0.28, growl: 0.2 }); },
+  scream(t) { voice(t, 1.0, { f0: 430, f1: 170, from: 'a', to: 'o', gain: 0.32, growl: 0.15, breath: 0.08 }); },
+  // El Diablo : rire grave et rauque, et son hurlement quand il tombe
+  laugh(t) {
+    for (let i = 0; i < 6; i++) voice(t + i * 0.17, i === 5 ? 0.4 : 0.13, { f0: 125 - i * 6, f1: 108 - i * 7, from: 'a', gain: 0.38, growl: 0.45, breath: 0.03 });
+    tone(t, 55, 1.1, { f2: 45, gain: 0.25 });
+  },
+  roar(t) {
+    voice(t, 1.8, { f0: 115, f1: 42, from: 'a', to: 'u', gain: 0.42, growl: 0.5, breath: 0.2 });
+    noise(t, 2, { f: 600, f2: 60, gain: 0.4 });
+  },
 };
+
+// Échantillons enregistrés, dans public/sfx (publié en ligne, contrairement à public/music) et déjà passés
+// en 16 bits comme CRUSH['16bit'] : mono, 16 kHz, 10 bits, coupe-bas 40 Hz, passe-bas 6,5 kHz.
+const SAMPLES = { yeehaw: 'sfx/yeehaw.wav' };
+const sampleBuf = {};
+const sampleAt = {};
+function loadSamples() {
+  for (const [k, url] of Object.entries(SAMPLES)) {
+    fetch(url).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(r.status)))
+      .then((b) => ac.decodeAudioData(b))
+      .then((buf) => { sampleBuf[k] = buf; }, () => {});
+  }
+}
+
+// Joue le passage [from, to] (s) d'un échantillon, avec l'écho de canyon. rate : vitesse (et hauteur).
+// cool : secondes pendant lesquelles il ne se relance pas (deux cris qui se chevauchent, c'est la bouillie).
+// Faux tant que le fichier n'est pas chargé : l'appelant joue alors un son de secours.
+function sample(name, t, { from = 0, to = null, gain = 1, rate = 1, cool = 0 } = {}) {
+  const buf = sampleBuf[name];
+  if (!buf) return false;
+  if (t - (sampleAt[name] ?? -1e9) < cool) return true;
+  sampleAt[name] = t;
+  const end = Math.min(to ?? buf.duration, buf.duration), len = (end - from) / rate;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  src.playbackRate.value = rate;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain, t + 0.01);
+  g.gain.setValueAtTime(gain, t + Math.max(0.01, len - 0.08));
+  g.gain.linearRampToValueAtTime(0.0001, t + len);
+  src.connect(g).connect(sfxBus);
+  g.connect(sfxSlap);
+  src.start(t, from, end - from);
+  return true;
+}
+
+// Voix synthétique : corde vocale en dent de scie (glissando f0 -> f1) dans deux formants qui passent
+// d'une voyelle à l'autre ; growl : voix rauque (modulée en amplitude à 35 Hz), breath : souffle
+const VOW = { a: [750, 1150], o: [480, 850], u: [350, 650], e: [450, 1850], i: [300, 2250] };
+function voice(t, dur, { f0, f1 = f0, from = 'a', to = from, gain = 0.3, growl = 0, breath = 0.06 }) {
+  const end = t + dur;
+  const o = osc('sawtooth', f0, t);
+  o.frequency.exponentialRampToValueAtTime(f1, end);
+  vibrato(o, t, dur, 25, 7, 0.05);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain * 4, t + 0.025);
+  g.gain.setValueAtTime(gain * 4, t + dur * 0.6);
+  g.gain.exponentialRampToValueAtTime(0.001, end);
+  let src = o;
+  if (growl) {
+    src = ac.createGain();
+    src.gain.value = 1 - growl;
+    const lfo = osc('square', 35, t);
+    const lg = ac.createGain();
+    lg.gain.value = growl;
+    lfo.connect(lg).connect(src.gain);
+    lfo.start(t);
+    lfo.stop(end + 0.05);
+    o.connect(src);
+  }
+  for (let k = 0; k < 2; k++) {
+    const bp = ac.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 5;
+    bp.frequency.setValueAtTime(VOW[from][k], t);
+    bp.frequency.exponentialRampToValueAtTime(VOW[to][k], end);
+    src.connect(bp).connect(g);
+  }
+  g.connect(sfxBus);
+  o.start(t);
+  o.stop(end + 0.05);
+  if (breath) noise(t, dur, { type: 'bandpass', f: VOW[from][1], f2: VOW[to][1], q: 3, gain: breath });
+}
 
 // Limiteur : chaque bruitage crée plusieurs générateurs qui durent jusqu'à une seconde. Avec une arme
 // automatique ou une salve d'explosions, des dizaines se superposaient et saturaient les téléphones.
 // Un même son au plus toutes les 40 ms, et au plus 14 bruitages lancés par quart de seconde.
+// prio : le tir du joueur passe toujours (sinon, en pleine fusillade, sa propre arme devenait muette).
 const sfxLast = {};
 const sfxRecent = [];
-export function sfx(name, delay = 0) {
+export function sfx(name, delay = 0, prio = false) {
   if (!ac || !SFX[name] || document.hidden) return;
   const now = performance.now();
-  if (!delay && now - (sfxLast[name] || -1e9) < 40) return;
+  if (!delay && !prio && now - (sfxLast[name] || -1e9) < 40) return;
   while (sfxRecent.length && now - sfxRecent[0] > 250) sfxRecent.shift();
-  if (sfxRecent.length >= 14) return;
+  if (sfxRecent.length >= 14 && !prio) return;
   sfxRecent.push(now);
   if (!delay) sfxLast[name] = now;
   SFX[name](ac.currentTime + delay);

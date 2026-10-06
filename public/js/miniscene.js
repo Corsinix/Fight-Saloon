@@ -112,11 +112,12 @@ export class MiniScene {
   }
 
   // Position (ms) dans la cinématique d'ouverture, ou null si elle est finie ou passée.
-  // Elle occupe le début du compte à rebours, avant le panneau des règles.
+  // Elle occupe le début du compte à rebours, avant le panneau des règles (un jeu peut avoir la sienne, plus longue : cut.len).
   cutEl() {
     if (!this.cut || this.cutSkip || this.t0 == null) return null;
-    const el = this.t + HELP_MS + CUT_MS;
-    return el >= 0 && el < CUT_MS ? el : null;
+    const len = this.cut.len || CUT_MS;
+    const el = this.t + HELP_MS + len;
+    return el >= 0 && el < len ? el : null;
   }
 
   skipCut() {
@@ -240,7 +241,7 @@ export class MiniScene {
     if (this.t0 == null) return;
     const cel = this.cutEl();
     if (cel != null) {
-      if (cel > CUT_MS - CUT_FADE) this.drawRules(ctx, t); // les règles apparaissent sous le fondu
+      if (cel > (this.cut.len || CUT_MS) - CUT_FADE) this.drawRules(ctx, t); // les règles apparaissent sous le fondu
       this.cut.draw(ctx, cel, this.now);
     } else if (t < 0) this.drawRules(ctx, t);
     else if (t < 900 && !this.over) {

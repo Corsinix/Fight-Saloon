@@ -1,0 +1,1718 @@
+// Scène du mini-jeu « Règlement de comptes » : FPS façon Doom dans la ville, en fausse 3D (lancer de rayons).
+// Chaque navigateur recalcule la carte depuis la graine (fpsgame.js), simule son cow-boy (déplacements, tirs,
+// montures) et annonce à l'hôte ce qu'il touche ; l'hôte fait vivre les bandits, les caisses et la dynamite.
+// Rendu : un tampon de pixels (Uint32) et un tampon de profondeur, à une résolution interne qui s'adapte à la
+// machine (fpsperf.js). Les rayons avancent case par case, du plus proche au plus loin : chaque pixel n'est
+// écrit qu'une fois (le premier qui le couvre est le plus proche). Murs de hauteurs variables (façades, comptoirs,
+// barrières), linteaux au-dessus des portes, plafonds dans les bâtiments, ciel et mesas au loin.
+import { MiniScene } from './miniscene.js';
+import { canvasText } from './scene.js';
+import { sfx, bossMusic, musicCue } from './audio.js';
+import * as S from './sprites.js';
+import { desertOpts } from './env.js';
+import { riderLook } from './lasso.js';
+import { W, H, rng } from './worlds.js';
+import { SKIN, CLOTH_COLORS, CHAR_PARTS, CHAR_COLORS } from './data.js';
+import {
+  FPS, WEAPONS, MELEE, PISTOLS, LONGS, EQUIP, EQUIPS, LOOT, NPCS, DEFAULT_LOADOUT, cleanLoadout,
+  fpsWorld, move, rayWall, rayCircle, railAt, roofed, los, liveOf, bountyLeader,
+} from './fpsgame.js';
+import { fpsMods, fpsBanner, FPS_EVENTS } from './fpsevents.js';
+import * as A from './fpsart.js';
+import { drawHud } from './fpshud.js';
+import { FpsInput } from './fpsinput.js';
+import { AutoRes } from './fpsperf.js';
+import { FpsMap } from './fpsmap.js';
+import { FpsCut } from './fpscut.js';
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const TAU = Math.PI * 2;
+const wrapA = (a) => ((a % TAU) + TAU + Math.PI) % TAU - Math.PI;
+const FOV = 1.15, FOV_ZOOM = 0.42;
+const CEIL = FPS.ceil;
+const LO_KEY = 'fps-loadout';
+// couleur « transparente » des murs (#9fb8c8 opaque, en ABGR) : le ciel entre les pointes des rondins
+const SEE = 0xffc8b89f;
+// arme en main : un peu à droite du centre, entre les panneaux du HUD (vie à gauche, munitions à droite)
+const VM_X = 12;
+const FEED_MS = 5000;
+
+// Fond et brouillard selon l'ambiance (heure, météo) : multiplicateurs de couleur dehors et dedans.
+function lightOf(env) {
+  const hex = (h) => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
+  const tint = env.tint ? hex(env.tint) : [1, 1, 1];
+  const inside = env.inside ? hex(env.inside) : tint.map((v) => v * 0.95);
+  const fog = hex(env.sky ? env.sky[env.sky.length - 1] : '#f0dcb0');
+  const far = { midi: 40, aube: 26, crepuscule: 34, nuit: 22, orage: 24, poussiere: 15, neige: 24 }[env.id] || 36;
+  return { out: tint, in: inside.map((v) => v * 0.82), fog: env.id === 'nuit' ? [0.06, 0.08, 0.16] : fog, far };
+}
+
+// Police 3x5 des affiches (la même que fpsart) : 5 lignes de 3 bits par lettre
+const GLYPH5 = {
+  A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110', E: '111100110100111',
+  F: '111100110100100', G: '011100101101011', H: '101101111101101', I: '111010010010111', J: '001001001101010',
+  K: '101101110101101', L: '100100100100111', M: '101111111101101', N: '110101101101101', O: '010101101101010',
+  P: '110101110100100', Q: '010101101110011', R: '110101110101101', S: '011100010001110', T: '111010010010010',
+  U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101', Y: '101101010010010',
+  Z: '111001010100111', 0: '111101101101111', 1: '010110010010111', 2: '110001010100111', 3: '110001010001110',
+  4: '101101111001001', 5: '111100110001110', 6: '011100111101111', 7: '111001010010010', 8: '111101111101111',
+  9: '111101111001110', $: '011110010011110', '?': '110001010000010', '!': '010010010000010', '.': '000000000000010',
+  '-': '000000111000000', "'": '010010000000000', ' ': '000000000000000',
+};
+// Pixels d'un canvas, gardés en mémoire (relus une seule fois)
+const PIX = new WeakMap();
+function pix(c) {
+  let p = PIX.get(c);
+  if (!p) {
+    const d = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height).data;
+    p = { w: c.width, h: c.height, d: new Uint32Array(d.buffer.slice(0)) };
+    PIX.set(c, p);
+  }
+  return p;
+}
+
+export class FpsScene extends MiniScene {
+  constructor(canvas, hooks) {
+    super(canvas, hooks);
+    this.kind = 'fps';
+    this.showEnv = true;
+    bossMusic('mini-fps', false); // une partie précédente a pu finir pendant le boss
+    this.input = new FpsInput(canvas, { signal: this.abort.signal, root: document.getElementById('touchpad') });
+    this.res = new AutoRes(this.touch);
+    this.world = null;
+    this.menu = null;
+    this.lo = this.loadLoadout();
+  }
+
+  destroy() {
+    super.destroy();
+    this.input.destroy?.();
+  }
+
+  get dm() { return this.kind === 'fpsdm'; }
+  title() { return this.dm ? 'MORT OU VIF' : 'RÈGLEMENT DE COMPTES'; }
+  goText() { return 'DÉGAINEZ !'; }
+
+  // la cinématique d'ouverture est tournée dans le moteur du jeu (fpscut.js), à la place de celle des autres mini-jeux
+  begin(seed, duration, countdown) {
+    super.begin(seed, duration, countdown);
+    this.cut = new FpsCut(this, seed);
+  }
+  help() {
+    return this.touch
+      ? ['STICK : AVANCER - GLISSER À DROITE : TOURNER LA TÊTE', 'FEU : TIRER - MONTER : CHEVAL OU WAGONNET', this.scoreLine()]
+      : ['Z Q S D : AVANCER - SOURIS : VISER - CLIC : TIRER', '1-5 : ARMES - R : RECHARGER - E : MONTER - G : DYNAMITE - M : CARTE', this.scoreLine()];
+  }
+
+  scoreLine() {
+    return this.dm ? 'SANS BANDITS : 1 RIVAL ABATTU = 1 POINT - SUICIDE -1' : 'BANDIT +100 À +200 - RIVAL ABATTU +250 - MORT -50';
+  }
+
+  loadLoadout() {
+    try { return cleanLoadout(JSON.parse(localStorage.getItem(LO_KEY) || '{}')); } catch { return { ...DEFAULT_LOADOUT }; }
+  }
+
+  saveLoadout() {
+    try { localStorage.setItem(LO_KEY, JSON.stringify(this.lo)); } catch { /* rien */ }
+  }
+
+  // Affiche « WANTED » collée sur un mur : t = ['wantedP/<mur>/<variante>', place]. Le monde ne connaît pas les
+  // personnages : le portrait est celui du joueur à cette place, ou d'un hors-la-loi tiré du seed s'il n'y a personne.
+  posterTex([id, v], seed) {
+    const [, base, bv] = id.split('/');
+    const r = rng((seed ^ Math.imul(v + 1, 0x9e3779b1)) >>> 0), pick = (a) => a[Math.floor(r() * a.length)];
+    r(); r(); // les premiers tirages de seeds voisins se ressemblent trop
+    const pl = this.state.players[v];
+    let ch = pl?.character, name = pl?.name;
+    if (!pl) {
+      ch = {};
+      for (const q of CHAR_PARTS) ch[q.key] = pick(q.options)[0];
+      for (const q of CHAR_COLORS) ch[q.key] = Math.floor(r() * q.colors.length);
+      name = pick(['BILLY', 'EL GATO', 'DOC', 'LUCKY', 'SLIM', 'RED', 'JOE', 'LE KID', 'DIABLO']);
+    }
+    const reward = `$${pick([500, 1000, 1500, 2000, 5000])}`;
+    if (A.wantedPoster) return A.wantedPoster(base, +bv, ch, name, reward); // version dessinée par fpsart, si elle existe
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const x = c.getContext('2d');
+    x.imageSmoothingEnabled = false;
+    x.drawImage(A.wallTex(base, +bv), 0, 0);
+    const R = (a, b, w, h, col) => { x.fillStyle = col; x.fillRect(a, b, w, h); };
+    // l'affiche tient dans les lignes 0-42 : dedans, le haut du mur (1 à 1.32) répète les lignes 43-63 de la texture
+    const px = 10, py = 1, pw = 44, ph = 42;
+    R(px + 1, py + 1, pw, ph, '#2a1c10');
+    R(px, py, pw, ph, '#e2d1a2');
+    R(px, py, 1, ph, '#c4aa76'); R(px + pw - 1, py, 1, ph, '#c4aa76');
+    for (let k = 0; k < 40; k++) R(px + Math.floor(r() * pw), py + (r() < 0.5 ? 0 : ph - 1), 1, 1, '#c4aa76');
+    for (let k = 0; k < 14; k++) R(px + 1 + Math.floor(r() * (pw - 2)), py + 1 + Math.floor(r() * (ph - 2)), 1, 1, '#d0bb88');
+    // texte en lettres de 3x5 (police de fpsart), centré : pas de police web, qui peut ne pas être chargée ici
+    const say = (str, y, col) => {
+      const s = str.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().slice(0, 10);
+      let xx = 32 - ((s.length * 4 - 1) >> 1);
+      for (const ch of s) { const g = GLYPH5[ch] ?? GLYPH5['?']; for (let i = 0; i < 15; i++) if (g[i] === '1') R(xx + (i % 3), y + ((i / 3) | 0), 1, 1, col); xx += 4; }
+    };
+    say('WANTED', py + 1, '#3a2614');
+    R(px + 4, py + 7, pw - 8, 1, '#3a2614');
+    R(19, py + 8, 26, 23, '#3a2614'); R(20, py + 9, 24, 21, '#c4aa76');
+    x.filter = 'sepia(0.55)';
+    x.drawImage(A.hudFace(ch, 1, 'idle'), 0, 0, 24, 21, 20, py + 9, 24, 21); // la tête seule, sans les épaules
+    x.filter = 'none';
+    say(String(name || '?'), py + 32, '#3a2614');
+    say(reward, py + 38, '#8a1e12');
+    R(px + pw - 2, py + ph - 1, 2, 1, '#2a1c10'); R(px + pw - 1, py + ph - 2, 1, 1, '#2a1c10'); // coin écorné
+    R(31, py, 2, 2, '#5a5a5e'); R(31, py, 1, 1, '#a8a8b0'); // le clou
+    return c;
+  }
+
+  // ---------------------------------------------------------- mise en place
+  setup(seed) {
+    this.world = fpsWorld(seed, this.n, this.kind);
+    const w = this.world;
+    this.light = lightOf(this.env);
+    this.mods = fpsMods(w.events, 0);
+    // textures (pixels) : murs, sols et plafonds, couleur du dessus des murs bas
+    // une texture pas encore dessinée (damier) prend une remplaçante en attendant :
+    // porte de brique = mur de brique + la porte en bois de plankDoor (cadre, traverse, battant)
+    const miss = A.wallTex('?');
+    const alt = {
+      brickDoor: (v) => {
+        const c = document.createElement('canvas'), d = A.wallTex('plankDoor', v ? 3 : 1);
+        c.width = c.height = 64;
+        const x = c.getContext('2d');
+        x.drawImage(A.wallTex('brick', v), 0, 0);
+        for (const [sx, sy, sw, sh] of [[14, 5, 36, 1], [15, 6, 34, 4], [17, 10, 31, 54]]) x.drawImage(d, sx, sy, sw, sh, sx, sy, sw, sh);
+        return c;
+      },
+    };
+    // enseigne accrochée à l'étage de brique ou d'adobe (v = enseigne * 2 + variante du mur) : le mur, le panneau
+    // de la texture sign (lignes 15-36) par-dessus, et son ombre portée
+    for (const [id, base] of [['signBrick', 'brick'], ['signAdobe', 'adobe']]) alt[id] = (v) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const x = c.getContext('2d');
+      x.drawImage(A.wallTex(base, v & 1), 0, 0);
+      x.fillStyle = 'rgba(24,14,8,0.5)'; x.fillRect(2, 37, 61, 2);
+      x.drawImage(A.wallTex('sign', v >> 1), 1, 15, 62, 22, 1, 15, 62, 22);
+      return c;
+    };
+    // fenêtre vue du dedans ('<mur intérieur>Win', même variante que le mur) : le mur intérieur et, par-dessus, une croisée
+    // claire (ciel puis brume chaude), cadre, appui ; rideaux dans les pièces tapissées ; le vitrail pour la chapelle
+    const winIn = (base, v) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const x = c.getContext('2d'), R = (rx, ry, rw, rh, col) => { x.fillStyle = col; x.fillRect(rx, ry, rw, rh); };
+      x.drawImage(A.wallTex(base, v), 0, 0);
+      if (base === 'stone') { x.drawImage(A.wallTex('chapel', 0), 16, 2, 32, 58, 16, 2, 32, 58); return c; }
+      const [y0, y1] = base === 'wallpaper' ? [9, 37] : base === 'cantinaIn' ? [18, 42] : [10, 40];
+      const x0 = 21, x1 = 42, mx = 32, my = (y0 + y1) >> 1;
+      const [fr, frL] = base === 'cantinaIn' ? ['#1e6a66', '#3a9a92'] : base === 'wallpaper' ? ['#3a1c0c', '#7a4a26'] : ['#4a2e18', '#8a6038'];
+      if (base === 'cantinaIn') { R(x0 - 4, y0 - 4, x1 - x0 + 9, y1 - y0 + 9, '#b4a68e'); R(x0 - 4, y0 - 4, x1 - x0 + 9, 1, '#d8ccb6'); } // ébrasement (épaisseur de l'adobe)
+      R(x0 - 2, y0 - 2, x1 - x0 + 5, y1 - y0 + 5, fr); R(x0 - 2, y0 - 2, x1 - x0 + 5, 1, frL);
+      const sky = ['#94b8d2', '#a8c6dc', '#bcd4e2', '#d2dcd8', '#e6d8b8', '#d6b888'];
+      for (let y = y0; y <= y1; y++) R(x0, y, x1 - x0 + 1, 1, sky[Math.floor(((y - y0) / (y1 - y0 + 1)) * sky.length)]);
+      for (const [gx, gy] of [[x0 + 2, y0 + 7], [mx + 3, y0 + 7]]) for (let k = 0; k < 5; k++) R(gx + k, gy - k, 1, 1, '#f2f6f4'); // reflets
+      R(mx - 1, y0, 2, y1 - y0 + 1, fr); R(x0, my - 1, x1 - x0 + 1, 2, fr); R(x0, my - 1, x1 - x0 + 1, 1, frL);
+      R(x0 - 4, y1 + 3, x1 - x0 + 9, 2, frL); R(x0 - 4, y1 + 5, x1 - x0 + 9, 1, 'rgba(0,0,0,0.4)'); // appui
+      if (base === 'wallpaper') {
+        const cu = v ? ['#1c4a32', '#2e6446', '#0e2c1a'] : ['#6a181c', '#8c2a2a', '#420c10'];
+        for (const cx of [x0 - 4, x1 - 1]) {
+          R(cx, y0 - 2, 6, my - y0 + 6, cu[0]); R(cx + 1, y1 - 6, 4, 9, cu[0]); R(cx + 2, y0 - 2, 1, y1 - y0 + 5, cu[1]); R(cx + 4, y0 - 2, 1, y1 - y0 + 5, cu[2]);
+          R(cx, my + 3, 6, 2, '#c8a040');
+        }
+        R(x0 - 6, y0 - 5, x1 - x0 + 13, 4, cu[2]); R(x0 - 6, y0 - 5, x1 - x0 + 13, 1, '#c8a040'); R(x0 - 6, y0 - 2, x1 - x0 + 13, 1, cu[1]); // cantonnière
+      }
+      return c;
+    };
+    for (const b of ['wallpaper', 'cantinaIn', 'plank', 'stone', 'adobe', 'brick']) alt[`${b}Win`] = (v) => winIn(b, v);
+    // gare vue du dehors : bardage nu (stationWall, soubassement vert gardé) et étage sous corniche (stationUp),
+    // refaits avec la planche du haut de la texture station (lignes 0-7, où il n'y a ni fenêtre ni tableau)
+    const siding = (x, s, boards) => {
+      for (const b of boards) {
+        const y = b * 8, dx = (b * 23) % 64;
+        x.drawImage(s, 0, 0, 64, 7, dx, y, 64, 7); x.drawImage(s, 0, 0, 64, 7, dx - 64, y, 64, 7);
+        for (let k = 0; k < 64; k += 20) x.drawImage(s, 0, 7, 20, 1, k, y + 7, 20, 1);
+      }
+    };
+    alt.stationWall = () => {
+      const c = document.createElement('canvas'), s = A.wallTex('station', 0);
+      c.width = c.height = 64;
+      const x = c.getContext('2d');
+      x.drawImage(s, 0, 0);
+      siding(x, s, [0, 1, 2, 3, 4]);
+      return c;
+    };
+    alt.stationUp = () => {
+      const c = document.createElement('canvas'), s = A.wallTex('station', 0);
+      c.width = c.height = 64;
+      const x = c.getContext('2d');
+      siding(x, s, [0, 1, 2, 3, 4, 5, 6, 7]);
+      const R = (a, b, w, h, col) => { x.fillStyle = col; x.fillRect(a, b, w, h); };
+      R(0, 0, 64, 5, '#5a3a22'); R(0, 0, 64, 1, '#8a6040'); R(0, 4, 64, 1, '#2e1e12');
+      for (let k = 2; k < 64; k += 8) { R(k, 5, 3, 3, '#5a3a22'); R(k, 5, 1, 3, '#8a6040'); R(k, 7, 3, 1, '#2e1e12'); }
+      R(0, 8, 64, 1, 'rgba(30,20,10,0.35)');
+      return c;
+    };
+    // haut du train à quai (au-dessus de 1) : fond en couleur SEE (on voit le ciel au travers) et seulement la silhouette
+    // du toit : lanterneau des voitures, passerelle des wagons, cheminée / cloche / dôme / cabine de la locomotive (v = rang)
+    const roofTex = (draw) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const x = c.getContext('2d');
+      const R = (a, b, w, h, col) => { x.fillStyle = col; x.fillRect(a, b, w, h); };
+      R(0, 0, 64, 64, '#9fb8c8');
+      draw(R);
+      return c;
+    };
+    alt.trainCarUp = (v) => roofTex((R) => {
+      const body = ['#2e4a34', '#6a2220'][v & 1];
+      R(0, 54, 64, 10, '#3a3634'); R(0, 54, 64, 1, '#5a5652'); R(0, 63, 64, 1, '#2a2624');
+      R(0, 44, 64, 10, body); R(0, 52, 64, 1, '#d4aa48'); R(0, 53, 64, 1, '#1a1716');
+      for (let k = 3; k < 64; k += 8) { R(k, 46, 5, 5, '#8a6a28'); R(k + 1, 47, 3, 3, '#161c20'); R(k + 1, 47, 1, 1, '#4a5a64'); }
+      R(0, 40, 64, 4, '#2a2826'); R(0, 40, 64, 1, '#5a5652');
+    });
+    alt.freightCarUp = () => roofTex((R) => {
+      for (let k = 1; k < 64; k += 8) { R(k, 60, 3, 4, '#2a2624'); R(k, 60, 1, 4, '#5a5450'); }
+      R(0, 57, 64, 3, '#5a4630'); R(0, 57, 64, 1, '#8a7050'); R(0, 59, 64, 1, '#2a2018');
+    });
+    alt.locoUp = (v) => roofTex((R) => {
+      const ir = '#2a2a2e', ih = '#5a5a60', id = '#141416', br = '#a87a2a', bh = '#f0d070';
+      if (v === 0) { // cheminée évasée
+        R(27, 26, 10, 38, ir); R(29, 26, 2, 38, ih); R(35, 26, 2, 38, id);
+        for (let y = 8; y < 26; y++) { const w = 22 - Math.round(((y - 8) * 12) / 18); R(32 - (w >> 1), y, w, 1, ir); R(32 - (w >> 1), y, 2, 1, ih); }
+        R(20, 5, 24, 3, '#3a3a3e'); R(20, 5, 24, 1, ih); R(25, 58, 14, 6, id);
+      } else if (v === 1) { // cloche de laiton et dôme à sable
+        R(30, 40, 4, 4, ir); R(28, 44, 8, 3, br); R(27, 47, 10, 8, br); R(28, 47, 2, 8, bh); R(26, 55, 12, 2, '#6a4a18');
+        R(29, 57, 6, 7, ir); R(44, 52, 12, 12, ir); R(46, 50, 8, 2, ir); R(46, 52, 2, 12, ih);
+      } else if (v === 2) { // dôme de vapeur à chapeau de laiton
+        for (let y = 36; y < 64; y++) { const w = y < 44 ? 14 + (y - 36) * 2 : 30; R(32 - (w >> 1), y, w, 1, ir); R(32 - (w >> 1) + 3, y, 2, 1, ih); }
+        R(24, 32, 16, 4, br); R(24, 32, 16, 1, bh); R(30, 28, 4, 4, br);
+      } else { // cabine (rouge, toit noir qui déborde), fenêtre à l'avant
+        R(2, 10, 60, 54, '#6a2220'); R(2, 10, 2, 54, '#8a3a30'); R(60, 10, 2, 54, '#3a1210');
+        R(0, 4, 64, 6, ir); R(0, 4, 64, 1, ih); R(0, 9, 64, 1, id);
+        if (v === 3) { R(14, 18, 32, 24, '#d4aa48'); R(16, 20, 28, 20, '#161c20'); R(29, 20, 2, 20, '#d4aa48'); R(18, 22, 6, 1, '#4a5a64'); }
+        else { R(10, 20, 2, 36, '#c8c8cc'); R(52, 20, 2, 36, '#c8c8cc'); R(24, 30, 16, 10, '#8a3a30'); }
+        R(2, 60, 60, 4, id);
+      }
+    });
+    const wt =(id, v) => { const c = A.wallTex(id, v); return c === miss && alt[id] ? alt[id](v) : c; };
+    this.walls = w.tex.map((t) => (t ? pix(t[0].startsWith('wantedP/') ? this.posterTex?.(t, seed) || wt('wanted', 0) : wt(t[0], t[1])).d : null));
+    // barreaux de cellule vus du dedans (cell v1) : [texture cell v0 du monde, pixels de cell v1] (voir la face d'un mur dans render)
+    this.cellIn = A.wallTex('cell', 1) !== miss ? [w.tex.findIndex((t) => t && t[0] === 'cell' && !t[1]), pix(A.wallTex('cell', 1)).d] : [-1, null];
+    this.tops = this.walls.map((d) => {
+      if (!d) return 0;
+      let r = 0, g = 0, b = 0;
+      for (let k = 0; k < 64 * 2; k++) { const c = d[k]; r += c & 255; g += (c >>> 8) & 255; b += (c >>> 16) & 255; }
+      const n = 128 / 0.8;
+      return 0xff000000 | ((b / n) << 16) | ((g / n) << 8) | (r / n);
+    });
+    this.flats = w.flats.map((f) => (f ? pix(A.flatTex(f)).d : null));
+    this.sky = null;
+    this.looks = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `fps${i}`));
+    const c = this.state.players[this.me]?.character || {};
+    this.skin = SKIN[c.skin] || SKIN[1];
+    this.cloth = CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2];
+    this.my = {
+      x: 30.5, y: 23.5, a: 0, alive: false, hp: FPS.hp, armor: 0, lo: { ...this.lo }, ammo: {}, w: this.lo.l, prevW: this.lo.l,
+      temp: null, dyn: 0, shieldUntil: 0, m: null, s: 0, cartV: 0, horseV: 0, v: 0, lastFire: -1e9, reload: null, swing: null,
+      f: 0, zoom: false, deadAt: -1e9, killer: null, killerCol: null, bob: 0, hurtAt: -1e9, throwAt: -1e9, picks: new Map(), trample: new Map(),
+    };
+    this.remote = {};
+    this.state.players.forEach((p, i) => {
+      if (i !== this.me) this.remote[i] = { x: 30.5, y: 23.5, a: 0, tx: 30.5, ty: 23.5, ta: 0, alive: false, w: 'colt', f: 0, flashAt: -1e9, m: null, s: 0, dieAt: null, moveAt: -1e9, hurtAt: -1e9, seen: false };
+    });
+    this.npcs = new Map();
+    this.crates = new Map();
+    this.gold = new Map();
+    this.horses = w.horses.map((h) => ({ id: h.id, x: h.x, y: h.y, a: h.a, coat: h.coat, hp: FPS.horse.hp, rider: -1, dead: false, deadAt: 0, gait: 0 }));
+    this.carts = w.carts.map((c) => ({ id: c.id, s: c.s, rider: -1 }));
+    this.dyns = new Map();
+    this.fx = [];
+    this.feed = [];
+    this.hurts = [];
+    this.hit = null;
+    this.toast = null;
+    this.flash = 0;
+    this.sinceLive = 0;
+    this.menu = { row: 0, ready: false, openAt: 0 };
+    this.input.setMenu(true);
+    this.lightning = 0;
+    this.map = new FpsMap(w);
+    this.prewarm();
+  }
+
+  // Les armes en main se dessinent à leur première utilisation (quelques ms chacune) : on les prépare pendant le
+  // compte à rebours, une image à la fois, l'équipement choisi d'abord, pour éviter un à-coup au premier tir.
+  prewarm() {
+    const lo = this.lo;
+    const ids = [...new Set([lo.l, lo.p, lo.m, 'dynamite', ...LONGS, ...PISTOLS, ...MELEE, 'gatling', 'akimbo', 'goldwin'])];
+    const jobs = [];
+    for (const id of ids) {
+      const melee = MELEE.includes(id);
+      const states = id === 'dynamite' ? [['idle', 1], ['lit', 2], ['throw', 1]]
+        : melee ? [['idle', 1], ['swing', 3]] : [['idle', 1], ['fire', id === 'gatling' ? 4 : 2], ['reload', 3]];
+      for (const [st, n] of states) for (let f = 0; f < n; f++) jobs.push([id === 'akimbo' ? 'colt' : id, st, f]);
+    }
+    const step = () => {
+      if (this.abort.signal.aborted || !jobs.length) return;
+      const [id, st, f] = jobs.shift();
+      try { A.viewModel(id, st, f, this.skin, this.cloth); } catch { /* rien */ }
+      setTimeout(step, 16);
+    };
+    setTimeout(step, 50);
+  }
+
+  applySync(st) {
+    for (const n of st.npcs || []) this.addNpc(n);
+    for (const c of st.crates || []) this.crates.set(c.id, c);
+    for (const g of st.gold || []) this.gold.set(g.id, g);
+    (st.horses || []).forEach((h) => Object.assign(this.horses[h.id] || {}, { x: h.x, y: h.y, a: h.a, hp: h.hp, rider: h.rider, dead: h.dead }));
+    (st.carts || []).forEach((c) => Object.assign(this.carts[c.id] || {}, c));
+    (st.pos || []).forEach((p, i) => {
+      const r = this.remote[i];
+      if (r) Object.assign(r, { x: p.x, y: p.y, tx: p.x, ty: p.y, a: p.a, ta: p.a, alive: p.alive, m: p.m });
+    });
+    const me = st.mine;
+    if (me?.alive) {
+      Object.assign(this.my, { x: me.x, y: me.y, a: me.a, hp: me.hp, armor: me.armor, alive: true });
+      this.giveLoadout(this.my.lo);
+      this.closeMenu();
+    }
+  }
+
+  // ---------------------------------------------------------- armurerie (au départ et à chaque mort)
+  get menuRows() {
+    return [
+      { key: 'm', label: 'ARME BLANCHE', list: MELEE, name: (id) => WEAPONS[id].name },
+      { key: 'p', label: 'ARME DE POING', list: PISTOLS, name: (id) => WEAPONS[id].name },
+      { key: 'l', label: 'ARME D\'ÉPAULE', list: LONGS, name: (id) => WEAPONS[id].name },
+      { key: 'e', label: 'ÉQUIPEMENT', list: EQUIPS, name: (id) => EQUIP[id].name },
+    ];
+  }
+
+  canSpawn() { return this.t >= 0 && this.t - this.my.deadAt >= FPS.respawn && this.playing; }
+
+  ready() {
+    if (!this.menu) return;
+    this.menu.ready = true;
+    this.saveLoadout();
+    sfx('reload');
+    if (this.canSpawn()) this.requestSpawn();
+  }
+
+  requestSpawn() {
+    if (this.menu?.sent && this.now - this.menu.sent < 1500) return;
+    this.menu.sent = this.now;
+    this.hooks.send({ kind: 'spawn', lo: this.lo });
+  }
+
+  closeMenu() {
+    this.menu = null;
+    this.input.setMenu(false);
+  }
+
+  openMenu() {
+    this.menu = { row: 0, ready: false, openAt: this.t };
+    this.input.setMenu(true);
+  }
+
+  menuChange(row, d) {
+    const r = this.menuRows[row];
+    const k = r.list.indexOf(this.lo[r.key]);
+    this.lo[r.key] = r.list[(k + d + r.list.length) % r.list.length];
+    sfx('click');
+  }
+
+  // boutons du menu, en coordonnées écran (aussi utilisés pour le clic)
+  menuLayout() {
+    const x0 = 60, y0 = 40, rowH = 20;
+    const rows = this.menuRows.map((r, i) => ({ ...r, i, y: y0 + 16 + i * rowH, left: [x0 + 104, y0 + 12 + i * rowH, 14, 14], right: [x0 + 250, y0 + 12 + i * rowH, 14, 14] }));
+    return { x0, y0, w: 264, rows, ok: [W / 2 - 46, y0 + 16 + 4 * rowH + 18, 92, 18] };
+  }
+
+  onKey(k) {
+    // M : la grande carte (le radar reste toujours affiché)
+    if (k === 'm' && !this.menu) { this.map?.toggle(); sfx('click'); return; }
+    if (!this.menu) return;
+    const rows = this.menuRows.length;
+    if (k === 'arrowup' || k === 'z' || k === 'w') { this.menu.row = (this.menu.row + rows - 1) % rows; sfx('hover'); }
+    else if (k === 'arrowdown' || k === 's') { this.menu.row = (this.menu.row + 1) % rows; sfx('hover'); }
+    else if (k === 'arrowleft' || k === 'q' || k === 'a') this.menuChange(this.menu.row, -1);
+    else if (k === 'arrowright' || k === 'd') this.menuChange(this.menu.row, 1);
+    else if (k === ' ' || k === 'e') this.ready();
+  }
+
+  onFire(m) {
+    if (!this.menu) return;
+    const L = this.menuLayout();
+    const inR = ([x, y, w, h]) => m.x >= x && m.x <= x + w && m.y >= y && m.y <= y + h;
+    for (const r of L.rows) {
+      if (inR(r.left)) { this.menu.row = r.i; this.menuChange(r.i, -1); return; }
+      if (inR(r.right)) { this.menu.row = r.i; this.menuChange(r.i, 1); return; }
+      if (m.y >= r.y - 6 && m.y < r.y + 12 && m.x > L.x0 && m.x < L.x0 + L.w) { this.menu.row = r.i; this.menuChange(r.i, 1); return; }
+    }
+    if (inR(L.ok)) this.ready();
+  }
+
+  drawRules(ctx, t) { this.drawMenu(ctx, t); }
+
+  drawMenu(ctx, t) {
+    const L = this.menuLayout();
+    ctx.fillStyle = 'rgba(26,15,10,0.82)';
+    const px0 = t < 0 ? 6 : L.x0 - 12, pw = t < 0 ? W - 12 : L.w + 24; // l'aide du compte à rebours est plus large
+    ctx.fillRect(px0, L.y0 - 30, pw, t < 0 ? 200 : 168);
+    ctx.fillStyle = '#8a5a2a';
+    ctx.fillRect(px0, L.y0 - 30, pw, 1);
+    ctx.fillRect(px0, L.y0 + (t < 0 ? 169 : 137), pw, 1);
+    const dead = this.my.deadAt > -1e8;
+    canvasText(ctx, dead ? 'RETOUR À L\'ARMURERIE' : this.title(), W / 2, L.y0 - 26, { size: 16, color: '#f8d070' });
+    canvasText(ctx, t < 0 ? this.env.name : dead && this.my.killer ? `ABATTU PAR ${this.my.killer}` : 'CHOISIS TON ARSENAL', W / 2, L.y0 - 8, { color: dead ? '#f0705a' : '#c8b8e8' });
+    for (const r of L.rows) {
+      const sel = this.menu && this.menu.row === r.i;
+      if (sel) { ctx.fillStyle = 'rgba(248,208,112,0.14)'; ctx.fillRect(L.x0 - 4, r.y - 5, L.w + 8, 18); }
+      canvasText(ctx, r.label, L.x0, r.y, { color: sel ? '#f8d070' : '#c8a878', align: 'left' });
+      canvasText(ctx, '<', r.left[0] + 7, r.y, { color: '#f8d070' });
+      canvasText(ctx, r.name(this.lo[r.key]), (r.left[0] + r.right[0] + 14) / 2, r.y, { color: '#fdf6e0' });
+      canvasText(ctx, '>', r.right[0] + 7, r.y, { color: '#f8d070' });
+    }
+    // fiche de l'objet sélectionné
+    const row = this.menuRows[this.menu?.row ?? 0];
+    const id = this.lo[row.key];
+    const wpn = WEAPONS[id];
+    const info = wpn
+      ? (wpn.melee ? `DÉGÂTS ${wpn.dmg} - PORTÉE ${wpn.range} - ${wpn.rate < 450 ? 'RAPIDE' : 'LENT'}`
+        : `DÉGÂTS ${wpn.dmg}${wpn.pellets ? ` x${wpn.pellets}` : ''} - CHARGEUR ${wpn.mag} - PORTÉE ${wpn.range}${wpn.zoom ? ' - LUNETTE' : ''}`)
+      : EQUIP[id].desc;
+    canvasText(ctx, info, W / 2, L.y0 + 16 + 4 * 20 - 2, { color: '#a8d8a0' });
+    const [ox, oy, ow, oh] = L.ok;
+    const can = this.canSpawn() || t < 0;
+    ctx.fillStyle = this.menu?.ready ? '#5a7a3a' : can ? '#a8302a' : '#4a3a30';
+    ctx.fillRect(ox, oy, ow, oh);
+    const wait = Math.max(0, Math.ceil((FPS.respawn - (this.t - this.my.deadAt)) / 1000));
+    const label = this.menu?.ready ? (t < 0 ? 'PRÊT ! ATTENDS LE SIGNAL' : 'EN ROUTE…') : wait > 0 && this.t >= 0 ? `ATTENDS ${wait} S` : this.touch ? 'PRÊT !' : 'PRÊT ! (ESPACE)';
+    canvasText(ctx, label, ox + ow / 2, oy + 5, { color: '#fdf6e0' });
+    if (t < 0) {
+      this.help().forEach((l, i) => canvasText(ctx, l, W / 2, L.y0 + 143 + i * 9, { color: '#e2d2a6' }));
+      const c = Math.ceil(-t / 1000);
+      if (c <= 3) canvasText(ctx, String(c), W - 30, 24, { size: 24, color: '#f0705a' });
+    } else if (!dead) {
+      const left = Math.max(0, Math.ceil((FPS.autoSpawn - (this.t - (this.menu?.openAt || 0))) / 1000));
+      canvasText(ctx, `DÉPART AUTOMATIQUE DANS ${left} S`, W / 2, L.y0 + 146, { color: '#8a7a68' });
+    }
+  }
+
+  // ---------------------------------------------------------- équipement du joueur
+  giveLoadout(lo) {
+    const m = this.my;
+    m.lo = { ...lo };
+    const k = lo.e === 'bandolier' ? 1.6 : 1;
+    m.ammo = {};
+    for (const id of [lo.p, lo.l]) m.ammo[id] = { mag: WEAPONS[id].mag, res: Math.round(WEAPONS[id].reserve * k) };
+    m.dyn = lo.e === 'dynamite' ? EQUIP.dynamite.dyn : 0;
+    m.temp = null;
+    m.w = lo.l;
+    m.prevW = lo.l;
+    m.reload = null;
+    m.swing = null;
+    m.zoom = false;
+  }
+
+  has(id) {
+    const m = this.my;
+    if (id === 'dynamite') return m.dyn > 0;
+    if (WEAPONS[id]?.temp) return m.temp?.id === id;
+    return id === m.lo.m || id === m.lo.p || id === m.lo.l;
+  }
+
+  ammoOf(id) {
+    const m = this.my;
+    if (WEAPONS[id]?.temp) return m.temp && m.temp.id === id ? { mag: m.temp.mag, res: 0 } : { mag: 0, res: 0 };
+    return m.ammo[id] || { mag: 0, res: 0 };
+  }
+
+  select(id) {
+    const m = this.my;
+    if (!this.has(id) || m.w === id) return;
+    if (this.mods.melee && !WEAPONS[id]?.melee) return;
+    if (!WEAPONS[m.w]?.temp) m.prevW = m.w;
+    m.w = id;
+    m.reload = null;
+    m.swing = null;
+    m.zoom = false;
+    m.drawAt = this.t;
+    sfx(id === 'dynamite' ? 'fuse' : WEAPONS[id]?.melee ? 'unsheathe' : 'draw');
+  }
+
+  slotWeapon(n) {
+    const m = this.my;
+    return n === 1 ? m.lo.m : n === 2 ? m.lo.p : n === 3 ? m.lo.l : n === 4 ? (m.dyn > 0 ? 'dynamite' : null) : m.temp?.id || null;
+  }
+
+  // Plus de balles : on prend l'autre arme à feu, ou l'arme blanche.
+  autoSwitch() {
+    const m = this.my;
+    const out = (id) => { const a = this.ammoOf(id); return a.mag + a.res <= 0; };
+    if (WEAPONS[m.w]?.melee || m.w === 'dynamite') return;
+    if (!out(m.w)) return;
+    const next = [m.lo.l, m.lo.p].find((id) => !out(id));
+    this.select(next || m.lo.m);
+  }
+
+  startReload() {
+    const m = this.my;
+    const W8 = WEAPONS[m.w];
+    if (!W8 || W8.melee || W8.temp || m.reload) return;
+    const a = m.ammo[m.w];
+    if (!a || a.mag >= W8.mag || a.res <= 0) return;
+    m.reload = { w: m.w, at: this.t, until: this.t + W8.reload };
+    m.zoom = false;
+    sfx(W8.rl || 'reload');
+  }
+
+  // ---------------------------------------------------------- événements de l'hôte
+  onEvent(ev) {
+    const me = this.me;
+    const m = this.my;
+    switch (ev.type) {
+      case 'spawn': {
+        if (ev.who === me) {
+          Object.assign(m, { x: ev.x, y: ev.y, a: ev.a, alive: true, hp: ev.hp, armor: ev.armor, m: null, shieldUntil: this.t + 1500, hurtAt: -1e9 });
+          this.giveLoadout(ev.lo);
+          this.closeMenu();
+          sfx('reload');
+        } else {
+          const r = this.remote[ev.who];
+          if (r) Object.assign(r, { x: ev.x, y: ev.y, tx: ev.x, ty: ev.y, a: ev.a, ta: ev.a, alive: true, dieAt: null, m: null, w: ev.lo?.l });
+        }
+        break;
+      }
+      case 'hurt': {
+        if (ev.who === me) {
+          m.hp = ev.hp; m.armor = ev.armor; m.hurtAt = this.t;
+          const src = ev.by >= 0 ? this.posOf(ev.by) : ev.npc >= 0 ? this.npcs.get(ev.npc) : ev.fx != null ? { x: ev.fx, y: ev.fy } : null;
+          if (src) this.hurts.push({ ang: wrapA(Math.atan2(src.y - m.y, src.x - m.x) - m.a), at: this.now });
+          this.shake = Math.min(8, 2 + ev.dmg / 8);
+          sfx('hurt');
+          // le cri de douleur, pas à chaque balle de gatling
+          if (this.now - (this.oofAt || -1e9) > 500) { this.oofAt = this.now; sfx('oof'); }
+        } else if (this.remote[ev.who]) this.remote[ev.who].hurtAt = this.now;
+        break;
+      }
+      case 'kill': {
+        const killer = ev.by >= 0 ? this.name(ev.by) : ev.npc >= 0 ? NPCS[this.npcs.get(ev.npc)?.kind]?.name || 'UN BANDIT' : ev.w === 'train' ? 'LE TRAIN' : null;
+        const kCol = ev.by >= 0 ? this.color(ev.by) : '#c8a878';
+        this.pushFeed(killer || this.name(ev.who), kCol, ev.by === ev.who || !killer ? 'SUICIDE' : this.name(ev.who), this.color(ev.who), this.weaponName(ev.w));
+        if (ev.who === me) {
+          m.alive = false; m.hp = 0; m.deadAt = this.t; m.killer = ev.by === me ? null : killer; m.killerCol = kCol;
+          m.m = null; m.zoom = false;
+          this.streak = 0;
+          this.shake = 8;
+          sfx('scream');
+          sfx('defeat', 0.7);
+          setTimeout(() => { if (!this.my.alive && !this.over) this.openMenu(); }, 1400);
+        } else {
+          const r = this.remote[ev.who];
+          if (r) { r.alive = false; r.dieAt = this.now; r.x = r.tx = ev.x; r.y = r.ty = ev.y; r.m = null; }
+        }
+        if (ev.by === me && ev.who !== me) {
+          this.popup(W / 2, 70, this.dm ? `+${ev.pts + (ev.bounty || 0)} FRAG${ev.pts + (ev.bounty || 0) > 1 ? 'S' : ''}` : `+${ev.pts}${ev.bounty ? ` +${ev.bounty} PRIME` : ''}`, '#f8d070', true);
+          this.hit = { at: this.now, kill: true };
+          sfx('good');
+          // trois frags sans mourir : yiiihaaa !
+          this.streak = (this.streak || 0) + 1;
+          if (this.streak % 3 === 0) sfx('hiha', 0.2);
+        }
+        break;
+      }
+      case 'npc': {
+        this.addNpc(ev.n);
+        // El Diablo sort de terre : tonnerre, glas, son rire, et son thème remplace la musique
+        if (ev.n.kind === 'diablo') {
+          sfx('thunder');
+          sfx('toll', 0.3);
+          sfx('laugh', 1.2);
+          bossMusic('mini-fps', true);
+          musicCue('boss');
+        }
+        break;
+      }
+      case 'nhit': { const n = this.npcs.get(ev.id); if (n) { n.hurtAt = this.now; n.hp = ev.hp; } break; }
+      case 'nkill': {
+        const n = this.npcs.get(ev.id);
+        if (n) { n.alive = false; n.dieAt = this.now; n.x = n.tx = ev.x; n.y = n.ty = ev.y; }
+        if (ev.by >= 0) this.pushFeed(this.name(ev.by), this.color(ev.by), NPCS[ev.kind]?.name || 'BANDIT', '#c8a878', this.weaponName(ev.w));
+        if (ev.kind === 'diablo') { sfx('roar'); this.bossGone(); }
+        else if (Math.hypot(ev.x - m.x, ev.y - m.y) < 18) sfx('grunt');
+        if (ev.by === me) {
+          this.popup(W / 2, 70, `+${ev.pts}`, '#f8d070');
+          this.hit = { at: this.now, kill: true };
+          if (ev.kind === 'diablo') sfx('yeehaw', 1.2);
+        }
+        break;
+      }
+      case 'nleave': {
+        const n = this.npcs.get(ev.id);
+        if (n?.kind === 'diablo' && n.alive) this.bossGone();
+        this.npcs.delete(ev.id);
+        break;
+      }
+      case 'nshot': {
+        const n = this.npcs.get(ev.id);
+        if (n) { n.fireAt = this.now; n.st = 3; }
+        const d = Math.hypot(ev.x - m.x, ev.y - m.y);
+        if (d < 26) sfx(d > 10 ? 'far' : n?.kind === 'brute' ? 'sawed' : n?.kind === 'rifleman' ? 'winchester' : n?.kind === 'diablo' ? 'akimbo' : 'colt');
+        // la première fois qu'il tire de près, le bandit gueule (El Diablo, lui, ricane)
+        if (n && !n.yelled && d < 16) { n.yelled = true; sfx(n.kind === 'diablo' ? 'laugh' : 'yell', 0.05); }
+        break;
+      }
+      case 'crate': this.crates.set(ev.id, { id: ev.id, x: ev.x, y: ev.y, at: this.now }); break;
+      case 'crateGone': this.crates.delete(ev.id); break;
+      case 'picked': {
+        this.crates.delete(ev.id);
+        if (ev.by === me) this.applyLoot(ev);
+        break;
+      }
+      case 'goldTaken': {
+        this.gold.delete(ev.id);
+        if (ev.by === me) { this.popup(W / 2, 80, `+${ev.pts} $`, '#f8d070'); sfx('coin'); }
+        break;
+      }
+      case 'goldGone': this.gold.delete(ev.id); break;
+      case 'mount': {
+        if (ev.m[0] === 'h') {
+          const h = this.horses[+ev.m.slice(1)];
+          if (h) h.rider = ev.who;
+          if (ev.who === me && h) { m.m = ev.m; m.x = h.x; m.y = h.y; m.horseV = 0; sfx('neigh'); }
+        } else {
+          const c = this.carts[+ev.m.slice(1)];
+          if (c) c.rider = ev.who;
+          if (ev.who === me && c) { m.m = ev.m; m.s = c.s; m.cartV = 0; sfx('clank'); }
+        }
+        if (ev.who !== me && this.remote[ev.who]) this.remote[ev.who].m = ev.m;
+        break;
+      }
+      case 'dismount': {
+        if (ev.m[0] === 'h') { const h = this.horses[+ev.m.slice(1)]; if (h) { h.rider = -1; if (ev.who === me) { h.x = m.x; h.y = m.y; h.a = m.a; } } }
+        else { const c = this.carts[+ev.m.slice(1)]; if (c) { c.rider = -1; if (ev.who === me) c.s = m.s; } }
+        if (ev.who === me) { m.m = null; m.x = ev.x; m.y = ev.y; }
+        else if (this.remote[ev.who]) { const r = this.remote[ev.who]; r.m = null; r.x = r.tx = ev.x; r.y = r.ty = ev.y; }
+        break;
+      }
+      case 'horseDown': {
+        const h = this.horses[ev.id];
+        if (h) { h.dead = true; h.deadAt = this.now; h.rider = -1; h.x = ev.x; h.y = ev.y; }
+        sfx('neigh');
+        break;
+      }
+      case 'horseBack': { const h = this.horses[ev.id]; if (h) Object.assign(h, { x: ev.x, y: ev.y, a: ev.a, dead: false, hp: FPS.horse.hp, rider: -1 }); break; }
+      case 'dyn': this.dyns.set(ev.id, { ...ev, t0: this.t }); break;
+      case 'boom': {
+        this.dyns.delete(ev.id);
+        this.fx.push({ kind: 'boom', x: ev.x, y: ev.y, at: this.now });
+        const d = Math.hypot(ev.x - m.x, ev.y - m.y);
+        this.shake = Math.max(this.shake, clamp(12 - d * 1.5, 0, 12));
+        this.flash = Math.max(this.flash, clamp(1 - d / 14, 0, 0.8));
+        sfx('boom');
+        break;
+      }
+      case 'regen': if (ev.who === me) m.hp = ev.hp; break;
+      case 'fpsEvent': {
+        const def = FPS_EVENTS[ev.id];
+        if (def?.sfx) sfx(def.sfx);
+        if (ev.hp) m.hp = ev.hp[me] ?? m.hp;
+        for (const g of ev.gold || []) this.gold.set(g.id, { ...g, at: this.now });
+        if (ev.swap) {
+          const s = ev.swap[me];
+          if (s && m.alive) { if (m.m) this.dismountLocal(); m.x = s.x; m.y = s.y; }
+          ev.swap.forEach((s2, i) => { const r = this.remote[i]; if (r && s2) { r.x = r.tx = s2.x; r.y = r.ty = s2.y; } });
+        }
+        break;
+      }
+      case 'left': if (this.remote[ev.who]) this.remote[ev.who].alive = false; break;
+      default: break;
+    }
+  }
+
+  applyLoot(ev) {
+    const m = this.my;
+    const L = LOOT[ev.loot];
+    m.hp = ev.hp;
+    m.armor = ev.armor;
+    if (ev.loot === 'ammo') {
+      for (const id of [m.lo.p, m.lo.l]) { const a = m.ammo[id]; if (a) a.res += Math.ceil(WEAPONS[id].reserve * 0.6); }
+    }
+    if (L.dyn) m.dyn += L.dyn;
+    if (ev.loot === 'star') m.shieldUntil = this.t + FPS.shield;
+    if (L.gun) {
+      const g = WEAPONS[L.gun];
+      if (!WEAPONS[m.w]?.temp) m.prevW = m.w;
+      m.temp = { id: L.gun, until: this.t + g.ms, mag: g.mag };
+      m.w = L.gun;
+      m.reload = null;
+      m.zoom = false;
+    }
+    this.toast = { text: L.name, at: this.now };
+    sfx(L.gun === 'gatling' ? 'yeehaw' : L.gun || ev.loot === 'star' ? 'power' : { whisky: 'gulp', ammo: 'ammo', armor: 'armor', dynamite: 'fuse' }[ev.loot] || 'crate');
+  }
+
+  // El Diablo est tombé (ou reparti) : retour à la musique de la partie
+  bossGone() {
+    bossMusic('mini-fps', false);
+  }
+
+  weaponName(w) {
+    if (!w) return '';
+    if (w === 'horse') return 'SABOTS';
+    if (w === 'dynamite') return 'DYNAMITE';
+    if (w === 'train') return 'TRAIN';
+    return WEAPONS[w]?.name || NPCS[w]?.name || '';
+  }
+
+  pushFeed(a, aCol, b, bCol, w) {
+    this.feed.push({ a, aCol, b, bCol, w, at: this.now });
+    if (this.feed.length > 5) this.feed.shift();
+  }
+
+  posOf(i) { return i === this.me ? this.my : this.remote[i]; }
+
+  addNpc(n) {
+    this.npcs.set(n.id, { ...n, tx: n.x, ty: n.y, ta: n.a, alive: true, st: 1, hurtAt: -1e9, fireAt: -1e9, dieAt: null, walk: 0 });
+  }
+
+  // positions des bandits (envoyées par l'hôte à chaque tick)
+  onLive(from, d) {
+    if (from === 'fps:npc') {
+      for (const [id, x, y, a, st] of d?.n || []) {
+        const n = this.npcs.get(id);
+        if (!n || !n.alive) continue;
+        n.tx = x / 100; n.ty = y / 100; n.ta = a / 100; n.st = st;
+      }
+      // les bots voyagent dans le même message (indice du joueur -> position)
+      for (const [i, bd] of Object.entries(d?.b || {})) if (+i !== this.me) this.remoteLive(+i, bd);
+      return;
+    }
+    super.onLive(from, d);
+  }
+
+  remoteLive(i, d) {
+    const r = this.remote[i];
+    if (!r || d.dead) return;
+    if (Number.isFinite(d.x)) { r.tx = d.x / 100; r.ty = d.y / 100; }
+    if (Number.isFinite(d.a)) r.ta = d.a / 100;
+    if (!r.seen || Math.hypot(r.tx - r.x, r.ty - r.y) > 4) { r.x = r.tx; r.y = r.ty; r.a = r.ta; }
+    r.seen = true;
+    if (d.w) r.w = d.w;
+    if ((d.f || 0) !== r.f) {
+      if (r.f != null && d.f > r.f) {
+        r.flashAt = this.now;
+        const dist = Math.hypot(r.x - this.my.x, r.y - this.my.y);
+        const W8 = WEAPONS[r.w];
+        if (dist < 26 && W8 && !W8.melee) sfx(dist > 10 ? 'far' : W8.sfx);
+      }
+      r.f = d.f || 0;
+    }
+    r.m = d.m || null;
+    if (r.m && r.m[0] === 'c' && Number.isFinite(d.s)) { const c = this.carts[+r.m.slice(1)]; if (c) c.s = d.s / 100; }
+    if (r.m && r.m[0] === 'h') { const h = this.horses[+r.m.slice(1)]; if (h) h.rider = i; }
+    r.v = (d.v || 0) / 10;
+    r.alive = true;
+  }
+
+  // ---------------------------------------------------------- boucle
+  update(dt) {
+    // partie finie : on rend la souris pour l'écran des résultats
+    if (this.over) this.input.stop?.();
+    if (!this.world) return;
+    const t = this.t;
+    this.mods = fpsMods(this.world.events, Math.max(0, t));
+    const inp = this.input.poll(dt);
+    this.inp = inp;
+    if (inp.map && !this.menu) this.map?.toggle(); // bouton CARTE (au doigt)
+    this.res.frame(dt);
+    const m = this.my;
+    // départ : le joueur prêt part au signal, les autres au bout de quelques secondes
+    if (this.menu && !m.alive && this.playing) {
+      if (this.menu.ready && this.canSpawn()) this.requestSpawn();
+      else if (m.deadAt < -1e8 && t - this.menu.openAt > FPS.autoSpawn && t > FPS.autoSpawn) { this.menu.ready = true; this.saveLoadout(); this.requestSpawn(); }
+      else if (m.deadAt > -1e8 && t - m.deadAt > FPS.respawn + FPS.autoSpawn) { this.menu.ready = true; this.requestSpawn(); }
+    }
+    // interpolation des autres
+    const k = 1 - Math.exp(-dt / 150); // lissage sur la cadence des positions reçues (150 à 200 ms)
+    for (const r of Object.values(this.remote)) {
+      const ox = r.x, oy = r.y;
+      r.x += (r.tx - r.x) * k; r.y += (r.ty - r.y) * k;
+      r.a += wrapA(r.ta - r.a) * k;
+      if (Math.hypot(r.x - ox, r.y - oy) > dt * 0.0006) r.moveAt = this.now;
+      if (r.m && r.m[0] === 'h') { const h = this.horses[+r.m.slice(1)]; if (h) { h.x = r.x; h.y = r.y; h.a = r.a; h.gait += dt * 0.012 * clamp(r.v || 3, 0, 8); } }
+    }
+    for (const n of this.npcs.values()) {
+      if (!n.alive) { if (this.now - n.dieAt > 9000) this.npcs.delete(n.id); continue; }
+      const ox = n.x, oy = n.y;
+      n.x += (n.tx - n.x) * k; n.y += (n.ty - n.y) * k;
+      n.a += wrapA(n.ta - n.a) * k;
+      n.walk += Math.hypot(n.x - ox, n.y - oy) * 3;
+    }
+    this.fx = this.fx.filter((f) => this.now - f.at < (f.kind === 'boom' ? 700 : 400));
+    this.feed = this.feed.filter((f) => this.now - f.at < FEED_MS);
+    this.hurts = this.hurts.filter((h) => this.now - h.at < 900);
+    this.flash = Math.max(0, this.flash - dt * 0.004);
+    if (this.env.lightning && Math.random() < dt / 9000) { this.lightning = 1; sfx('thunder', 0.4); }
+    this.lightning = Math.max(0, this.lightning - dt * 0.004);
+    if (!this.playing || !m.alive) { this.input.setButtons?.({ use: false, throw: false }); if (m.alive) this.sendLive(liveOf(this.pub())); return; }
+    this.control(inp, dt, t);
+    this.sendLive(liveOf(this.pub()));
+  }
+
+  // position jointe aux actions (ramasser, monter) : l'hôte n'a peut-être pas encore la dernière
+  at() { return { x: Math.round(this.my.x * 100) / 100, y: Math.round(this.my.y * 100) / 100 }; }
+
+  pub() {
+    const m = this.my;
+    return { x: m.x, y: m.y, a: m.a, w: m.w, f: m.f, m: m.m, s: m.s, v: m.v };
+  }
+
+  control(inp, dt, t) {
+    const m = this.my;
+    const w = this.world;
+    const mods = this.mods;
+    if (mods.melee && !WEAPONS[m.w]?.melee) this.select(m.lo.m);
+    // armes temporaires : fin du temps ou du chargeur
+    if (m.temp && (t >= m.temp.until || m.temp.mag <= 0)) {
+      const was = m.temp.id;
+      m.temp = null;
+      if (m.w === was) { m.w = this.has(m.prevW) ? m.prevW : m.lo.l; m.reload = null; }
+      this.autoSwitch();
+    }
+    // choix de l'arme
+    if (inp.slot) { const id = this.slotWeapon(inp.slot); if (id) this.select(id); }
+    if (inp.nextSlot) {
+      for (let k = 1; k <= 5; k++) {
+        const n = ((this.slotOf(m.w) - 1 + inp.nextSlot * k + 50) % 5) + 1;
+        const id = this.slotWeapon(n);
+        if (id && (!mods.melee || WEAPONS[id]?.melee)) { this.select(id); break; }
+      }
+    }
+    // regard
+    m.a = wrapA(m.a + inp.turn * (m.zoom ? 0.35 : 1));
+    const W8 = WEAPONS[m.w];
+    m.zoom = !!(inp.alt && W8?.zoom && !m.reload);
+    // déplacement
+    const fx = Math.cos(m.a), fy = Math.sin(m.a);
+    let vx = 0, vy = 0;
+    if (m.m && m.m[0] === 'c') {
+      // wagonnet : avancer / freiner le long des rails
+      const c = this.carts[+m.m.slice(1)];
+      const dir = railAt(w, m.s + 0.5);
+      const here = railAt(w, m.s);
+      const ahead = Math.cos(Math.atan2(dir.y - here.y, dir.x - here.x) - m.a);
+      const push = inp.move.y * (ahead >= 0 ? 1 : -1);
+      m.cartV += push * FPS.cart.accel * dt / 1000;
+      if (!push) m.cartV *= 1 - Math.min(1, dt / 2500);
+      m.cartV = clamp(m.cartV, -FPS.cart.max, FPS.cart.max);
+      m.s += m.cartV * dt / 1000;
+      const p = railAt(w, m.s);
+      m.v = Math.abs(m.cartV);
+      m.x = p.x; m.y = p.y;
+      if (c) c.s = m.s;
+    } else if (m.m && m.m[0] === 'h') {
+      const h = this.horses[+m.m.slice(1)];
+      const want = inp.move.y * FPS.horse.speed * (inp.sprint ? 1.15 : 1) * mods.speed;
+      m.horseV += (want - m.horseV) * Math.min(1, dt / 450);
+      vx = fx * m.horseV + -fy * inp.move.x * 1.6;
+      vy = fy * m.horseV + fx * inp.move.x * 1.6;
+      const r = move(w, m.x, m.y, vx * dt / 1000, vy * dt / 1000, 0.36, true);
+      m.v = Math.hypot(r.x - m.x, r.y - m.y) / (dt / 1000 || 1);
+      m.x = r.x; m.y = r.y;
+      if (h) { h.x = m.x; h.y = m.y; h.a = m.a; h.gait += dt * 0.012 * clamp(m.v, 0, 8); }
+      if (m.v > 4) this.trample(t);
+    } else {
+      const speed = FPS.speed * (m.lo.e === 'spurs' ? 1.15 : 1) * (inp.sprint ? FPS.sprint : 1) * mods.speed * (W8?.slow || 1) * (m.zoom ? 0.5 : 1);
+      vx = (fx * inp.move.y - fy * inp.move.x) * speed;
+      vy = (fy * inp.move.y + fx * inp.move.x) * speed;
+      const len = Math.hypot(inp.move.x, inp.move.y);
+      if (len > 1) { vx /= len; vy /= len; }
+      const r = move(w, m.x, m.y, vx * dt / 1000, vy * dt / 1000);
+      m.v = Math.hypot(r.x - m.x, r.y - m.y) / (dt / 1000 || 1);
+      m.x = r.x; m.y = r.y;
+    }
+    m.bob += m.v * dt * 0.0042;
+    // bruits de pas (un par oscillation de la vue), éperons un pas sur deux ; à cheval, galop à trois temps
+    const q = Math.floor(m.bob / Math.PI);
+    if (q !== m.stepQ) {
+      m.stepQ = q;
+      if (m.m?.[0] === 'h') { if (m.v > 1 && q % 4 !== 3) sfx('hoof'); }
+      else if (!m.m && m.v > 0.8 && q % 2 === 0) { sfx('step'); if (q % 4 === 0) sfx('spur', 0.03); }
+    }
+    // monter, descendre
+    const near = this.nearMount();
+    this.input.setButtons?.({ use: m.m ? 'down' : near ? 'up' : false, throw: m.dyn > 0 });
+    if (inp.use) {
+      if (m.m) this.dismountLocal();
+      else if (near) this.hooks.send({ kind: 'mount', m: near.m, ...this.at() });
+    }
+    // caisses et sacs d'or
+    for (const c of this.crates.values()) {
+      if (Math.hypot(c.x - m.x, c.y - m.y) < 0.75 && this.now - (m.picks.get(`c${c.id}`) || -1e9) > 600) {
+        m.picks.set(`c${c.id}`, this.now);
+        this.hooks.send({ kind: 'pick', id: c.id, ...this.at() });
+      }
+    }
+    for (const g of this.gold.values()) {
+      if (Math.hypot(g.x - m.x, g.y - m.y) < 0.75 && this.now - (m.picks.get(`g${g.id}`) || -1e9) > 600) {
+        m.picks.set(`g${g.id}`, this.now);
+        this.hooks.send({ kind: 'gold', id: g.id, ...this.at() });
+      }
+    }
+    // recharge
+    if (m.reload && t >= m.reload.until) {
+      const a = m.ammo[m.reload.w];
+      const W2 = WEAPONS[m.reload.w];
+      if (a) { const n = Math.min(W2.mag - a.mag, a.res); a.mag += n; a.res -= n; }
+      m.reload = null;
+      sfx('snap');
+    }
+    if (inp.reload) this.startReload();
+    // dynamite (G, ou tir avec la dynamite en main)
+    if ((inp.throw || (m.w === 'dynamite' && inp.firePressed)) && m.dyn > 0 && t - m.throwAt > 700 && !mods.melee) this.throwDyn(t);
+    if (m.w === 'dynamite' && m.dyn <= 0) this.select(m.prevW && this.has(m.prevW) ? m.prevW : m.lo.l);
+    // tir
+    if (m.w !== 'dynamite' && (inp.fire && (W8?.auto || W8?.melee) || inp.firePressed)) this.fire(t);
+    if (m.swing && !m.swing.done && t >= m.swing.at + 140) this.meleeHit(t);
+    this.autoSwitch();
+  }
+
+  slotOf(id) {
+    const W8 = WEAPONS[id];
+    return id === 'dynamite' ? 4 : W8 ? W8.slot : 3;
+  }
+
+  nearMount() {
+    const m = this.my;
+    if (m.m) return null;
+    let best = null, bd = 1e9;
+    for (const h of this.horses) {
+      if (h.dead || h.rider >= 0) continue;
+      const d = Math.hypot(h.x - m.x, h.y - m.y);
+      if (d < 1.6 && d < bd && !roofed(this.world, h.x, h.y)) { bd = d; best = { m: `h${h.id}`, kind: 'horse' }; }
+    }
+    for (const c of this.carts) {
+      if (c.rider >= 0) continue;
+      const p = railAt(this.world, c.s);
+      const d = Math.hypot(p.x - m.x, p.y - m.y);
+      if (d < 1.7 && d < bd) { bd = d; best = { m: `c${c.id}`, kind: 'cart' }; }
+    }
+    return best;
+  }
+
+  dismountLocal() {
+    this.hooks.send({ kind: 'dismount' });
+  }
+
+  // à cheval et lancé : on renverse les bandits et les rivaux sur son passage
+  trample(t) {
+    const m = this.my;
+    const hit = (key, tg, id, x, y) => {
+      if (Math.hypot(x - m.x, y - m.y) > 0.8) return;
+      if (this.now - (m.trample.get(key) || -1e9) < 900) return;
+      m.trample.set(key, this.now);
+      this.hooks.send({ kind: 'hit', tg, id, dmg: FPS.horse.trample, w: 'horse' });
+      sfx('thud');
+      this.hit = { at: this.now, kill: false };
+    };
+    for (const n of this.npcs.values()) if (n.alive) hit(`n${n.id}`, 'n', n.id, n.x, n.y);
+    for (const [i, r] of Object.entries(this.remote)) if (r.alive) hit(`p${i}`, 'p', +i, r.x, r.y);
+  }
+
+  throwDyn(t) {
+    const m = this.my;
+    m.dyn--;
+    m.throwAt = t;
+    this.hooks.send({ kind: 'throw', x: Math.round(m.x * 100) / 100, y: Math.round(m.y * 100) / 100, a: Math.round(m.a * 1000) / 1000, pow: 1 });
+    sfx('fuse');
+    sfx('swish', 0.05);
+  }
+
+  fire(t) {
+    const m = this.my;
+    const W8 = WEAPONS[m.w];
+    if (!W8 || t - m.lastFire < W8.rate || (m.drawAt && t - m.drawAt < 180)) return;
+    if (this.mods.melee && !W8.melee) return;
+    if (W8.melee) {
+      m.lastFire = t;
+      m.swing = { at: t, done: false };
+      sfx(W8.sfx, 0, true);
+      return;
+    }
+    if (m.reload) return;
+    const a = W8.temp ? m.temp : m.ammo[m.w];
+    if (!a || a.mag <= 0) {
+      m.lastFire = t;
+      sfx('dry');
+      this.startReload();
+      return;
+    }
+    m.lastFire = t;
+    a.mag -= W8.dual ? Math.min(2, a.mag) : 1;
+    m.f++;
+    this.flash = Math.max(this.flash, 0.25);
+    this.shake = Math.max(this.shake, W8.pellets ? 4 : 1.5);
+    sfx(W8.sfx, 0, true);
+    this.hooks.send({ kind: 'shot' });
+    // les balles : un rayon par plomb (deux par clic avec deux colts)
+    const n = (W8.pellets || 1) * (W8.dual ? 2 : 1);
+    const spread = W8.spread * (m.v > 1 ? 1.6 : 1) * (m.zoom ? 0.2 : 1) * (m.m ? 1.4 : 1);
+    const dmg = new Map();
+    let missed = false;
+    for (let k = 0; k < n; k++) {
+      const ang = m.a + (Math.random() - 0.5) * 2 * spread + (W8.dual ? (k % 2 ? 0.012 : -0.012) : 0);
+      if (this.bullet(ang, W8, dmg)) missed = true;
+    }
+    if (dmg.size) sfx('hitmark', 0.02);
+    // une balle perdue sur trois chante en ricochant
+    if (missed && Math.random() < 0.33) sfx('ricochet', 0.05 + Math.random() * 0.1);
+    for (const [key, v] of dmg) {
+      const tg = key[0], id = +key.slice(1);
+      this.hooks.send({ kind: 'hit', tg, id, dmg: Math.round(v), w: m.w });
+      if (tg === 'n') { const q = this.npcs.get(id); if (q) q.hurtAt = this.now; }
+      else if (this.remote[id]) this.remote[id].hurtAt = this.now;
+    }
+    if (dmg.size) this.hit = { at: this.now, kill: false };
+    if (!W8.temp && a.mag <= 0) this.startReload();
+  }
+
+  // Une balle : la cible la plus proche avant le premier mur (la winchester dorée traverse tout).
+  // Renvoie vrai si elle a fini dans un mur pas trop loin, sans toucher personne (ricochet possible).
+  bullet(ang, W8, dmg) {
+    const m = this.my;
+    const wall = rayWall(this.world, m.x, m.y, ang, 60);
+    const hits = [];
+    for (const n of this.npcs.values()) {
+      if (!n.alive) continue;
+      const d = rayCircle(m.x, m.y, ang, n.x, n.y, NPCS[n.kind]?.r || 0.3);
+      if (d != null && d < wall) hits.push({ d, key: `n${n.id}`, x: n.x, y: n.y });
+    }
+    for (const [i, r] of Object.entries(this.remote)) {
+      if (!r.alive) continue;
+      const d = rayCircle(m.x, m.y, ang, r.x, r.y, r.m ? 0.42 : 0.3);
+      if (d != null && d < wall) hits.push({ d, key: `p${i}`, x: r.x, y: r.y });
+    }
+    hits.sort((a, b) => a.d - b.d);
+    const take = W8.pierce ? hits : hits.slice(0, 1);
+    for (const h of take) {
+      const v = W8.dmg * (h.d > W8.range ? 0.5 : 1);
+      dmg.set(h.key, (dmg.get(h.key) || 0) + v);
+      this.fx.push({ kind: 'blood', x: h.x - Math.cos(ang) * 0.3, y: h.y - Math.sin(ang) * 0.3, z: 0.5, at: this.now });
+    }
+    if (!take.length || W8.pierce) {
+      const d = Math.min(wall, 40) - 0.05;
+      if (d < 30) {
+        this.fx.push({ kind: 'dust', x: m.x + Math.cos(ang) * d, y: m.y + Math.sin(ang) * d, z: this.eye() + (Math.random() - 0.5) * 0.1, at: this.now });
+        return !take.length;
+      }
+    }
+    return false;
+  }
+
+  // Le coup d'arme blanche porte un instant après le début du geste.
+  meleeHit() {
+    const m = this.my;
+    const W8 = WEAPONS[m.w];
+    m.swing.done = true;
+    if (!W8?.melee) return;
+    let best = null, bd = 1e9;
+    const consider = (key, x, y) => {
+      const d = Math.hypot(x - m.x, y - m.y);
+      const da = Math.abs(wrapA(Math.atan2(y - m.y, x - m.x) - m.a));
+      if (d < W8.range + 0.3 && da < 0.6 && d < bd && los(this.world, m.x, m.y, x, y)) { bd = d; best = { key, x, y }; }
+    };
+    for (const n of this.npcs.values()) if (n.alive) consider(`n${n.id}`, n.x, n.y);
+    for (const [i, r] of Object.entries(this.remote)) if (r.alive) consider(`p${i}`, r.x, r.y);
+    if (!best) return;
+    const tg = best.key[0], id = +best.key.slice(1);
+    this.hooks.send({ kind: 'hit', tg, id, dmg: W8.dmg, w: m.w });
+    this.fx.push({ kind: 'blood', x: best.x, y: best.y, z: 0.55, at: this.now });
+    this.hit = { at: this.now, kill: false };
+    sfx('chop');
+  }
+
+  eye() {
+    const m = this.my;
+    if (!m.alive) return m.deadAt > -1e8 ? Math.max(0.12, FPS.eye - (this.t - m.deadAt) / 1500) : FPS.eye;
+    const base = m.m ? (m.m[0] === 'h' ? FPS.eyeHorse : FPS.eyeCart) : FPS.eye;
+    return base + Math.sin(m.bob) * (m.m ? 0.03 : 0.018) * clamp(m.v / 3, 0, 1);
+  }
+
+  // ---------------------------------------------------------- rendu
+  ensureBuffers() {
+    const s = this.res.scale || 1;
+    const RW = Math.round(W * s), RH = Math.round(H * s);
+    if (this.RW === RW && this.RH === RH && this.img) return;
+    this.RW = RW; this.RH = RH;
+    this.off = S.makeCanvas(RW, RH);
+    this.offCtx = this.off.getContext('2d');
+    this.img = this.offCtx.createImageData(RW, RH);
+    this.buf = new Uint32Array(this.img.data.buffer);
+    this.zb = new Float32Array(RW * RH);
+    this.sky = null;
+  }
+
+  // ciel panoramique (soleil, nuages, mesas) d'après l'ambiance, sur 360°
+  buildSky() {
+    const PH = this.RH >> 1;
+    const PW = Math.round(this.RW * (TAU / FOV));
+    const c = S.makeCanvas(PW, PH);
+    const ctx = c.getContext('2d');
+    S.drawDesert(ctx, 0, 0, PW, Math.round(PH / 0.6) + 1, { ...desertOpts(this.env, { sunX: 0.3, sunY: 0.32 }), cacti: false });
+    this.sky = { w: PW, h: PH, d: pix(c).d };
+  }
+
+  render(ctx) {
+    if (!this.world) return;
+    this.ensureBuffers();
+    if (!this.sky) this.buildSky();
+    const { RW, RH, buf, zb } = this;
+    const m = this.my;
+    const w = this.world;
+    const C = w.cells;
+    const MWd = w.w;
+    // point de vue : celui du joueur, ou la caméra de la cinématique d'ouverture (fpscut.js)
+    const cel = this.cutEl();
+    const shot = cel != null && this.cut.camera ? this.cut.camera(cel, this.now) : null;
+    const v = this.vp = shot || { x: m.x, y: m.y, a: m.a, eye: this.eye(), fov: m.zoom ? FOV_ZOOM : FOV };
+    const eye = v.eye;
+    const fov = v.fov;
+    const tanH = Math.tan(fov / 2);
+    const P = (RW / 2) / tanH;
+    const hor = RH / 2;
+    const dirX = Math.cos(v.a), dirY = Math.sin(v.a);
+    const plX = -dirY * tanH, plY = dirX * tanH;
+    const posX = v.x, posY = v.y;
+    zb.fill(0);
+    // lumière et brouillard de l'image
+    const L = this.light;
+    const mods = this.mods;
+    const dark = mods.dark;
+    const boost = 1 + this.flash * 0.6 + this.lightning * 0.5;
+    const far = L.far * (mods.fog ?? 1) * (dark ? 0.55 : 1);
+    const near = far * 0.25;
+    const fogC = dark ? [0.03, 0.03, 0.06] : L.fog;
+    const fr = fogC[0] * 255, fg = fogC[1] * 255, fb = fogC[2] * 255;
+    const lightK = (dark ? 0.4 : 1) * boost;
+    const outK = L.out.map((v) => Math.min(1, v * lightK));
+    const inK = L.in.map((v) => Math.min(1, v * (dark ? 0.7 : 1) * boost));
+    const fogAt = (d) => (d <= near ? 0 : d >= far ? 1 : (d - near) / (far - near));
+    // écrit un pixel ombré : k = multiplicateurs, f = brouillard
+    let kr = 1, kg = 1, kb = 1, ar = 0, ag = 0, ab = 0;
+    const shadeSet = (K, f, side) => {
+      const s = (1 - f) * side;
+      kr = K[0] * s; kg = K[1] * s; kb = K[2] * s;
+      ar = fr * f; ag = fg * f; ab = fb * f;
+    };
+    const put = (o, c) => {
+      buf[o] = 0xff000000 | (((((c >>> 16) & 255) * kb + ab) | 0) << 16) | (((((c >>> 8) & 255) * kg + ag) | 0) << 8) | (((c & 255) * kr + ar) | 0);
+    };
+    const maxD = far + 2;
+    const walls = this.walls, flats = this.flats, tops = this.tops;
+    // ------------------------------------------------ murs, sols, plafonds (colonne par colonne)
+    for (let x = 0; x < RW; x++) {
+      const cam = (2 * x) / RW - 1;
+      const rdx = dirX + plX * cam, rdy = dirY + plY * cam;
+      let mx = Math.floor(posX), my = Math.floor(posY);
+      const ddx = Math.abs(1 / (rdx || 1e-9)), ddy = Math.abs(1 / (rdy || 1e-9));
+      const stx = rdx < 0 ? -1 : 1, sty = rdy < 0 ? -1 : 1;
+      let sdx = (rdx < 0 ? posX - mx : mx + 1 - posX) * ddx;
+      let sdy = (rdy < 0 ? posY - my : my + 1 - posY) * ddy;
+      let dIn = 0;
+      let ci = my * MWd + mx;
+      let side = 0;
+      let prevRoof = C.ceil[ci] > 0;
+      for (let step = 0; step < 140; step++) {
+        // sortie de la case courante
+        let dOut;
+        let nside;
+        if (sdx < sdy) { dOut = sdx; nside = 0; } else { dOut = sdy; nside = 1; }
+        const h = C.h[ci];
+        const bcell = C.b[ci];
+        const roofHere = C.ceil[ci] > 0;
+        // sol et plafond de la case traversée (ou dessus d'un mur bas, dessous d'un linteau)
+        // (un mur bas sous un toit : comptoir, piano, foin... garde son plafond au-dessus)
+        const flr = h === 0 || bcell > 0;
+        if (flr || (roofHere && h < CEIL)) {
+          const ft = flats[C.floor[ci]];
+          const K = roofHere ? inK : outK;
+          // sol : rangées entre dOut et dIn
+          const yA = Math.max(Math.ceil(hor + (eye * P) / dOut), Math.ceil(hor + 0.5)), yB = dIn > 1e-4 ? Math.min(RH - 1, Math.floor(hor + (eye * P) / dIn)) : RH - 1;
+          for (let y = yA; flr && y <= yB; y++) {
+            const o = y * RW + x;
+            if (zb[o]) continue;
+            const d = (eye * P) / (y - hor);
+            const wx = posX + rdx * d, wy = posY + rdy * d;
+            shadeSet(K, fogAt(d), 1);
+            put(o, ft ? ft[(((wy * 64) & 63) << 6) | ((wx * 64) & 63)] : 0xff406080);
+            zb[o] = d;
+          }
+          // plafond (bâtiments, galeries)
+          if (roofHere) {
+            const ct = flats[C.ceil[ci]];
+            const yC = dIn > 1e-4 ? Math.max(0, Math.ceil(hor - ((CEIL - eye) * P) / dIn)) : 0;
+            const yD = Math.min(Math.floor(hor - 0.5), Math.floor(hor - ((CEIL - eye) * P) / dOut));
+            for (let y = yC; y <= yD; y++) {
+              const o = y * RW + x;
+              if (zb[o]) continue;
+              const d = ((CEIL - eye) * P) / (hor - y);
+              const wx = posX + rdx * d, wy = posY + rdy * d;
+              shadeSet(K, fogAt(d), 0.9);
+              put(o, ct ? ct[(((wy * 64) & 63) << 6) | ((wx * 64) & 63)] : 0xff203040);
+              zb[o] = d;
+            }
+          }
+          // dessous du linteau (quand on passe sous une porte)
+          if (bcell > eye && h > 0) {
+            const yU0 = dIn > 1e-4 ? Math.max(0, Math.ceil(hor - ((bcell - eye) * P) / dIn)) : 0;
+            const yU1 = Math.floor(hor - ((bcell - eye) * P) / dOut);
+            shadeSet(roofHere ? inK : outK, fogAt(dIn), 0.55);
+            for (let y = yU0; y <= Math.min(RH - 1, yU1); y++) { const o = y * RW + x; if (!zb[o]) { put(o, tops[C.wall[ci]]); zb[o] = dIn + 0.01; } }
+          }
+        }
+        if (h > 0 && bcell === 0 && h < eye && dIn > 1e-4) {
+          // dessus d'un mur bas (comptoir, barrière, foin) vu d'en haut
+          const yT0 = Math.ceil(hor - ((h - eye) * P) / dOut), yT1 = Math.floor(hor - ((h - eye) * P) / dIn);
+          shadeSet(roofHere ? inK : outK, fogAt(dIn), 0.95);
+          const c = tops[C.wall[ci]];
+          for (let y = Math.max(0, yT0); y <= Math.min(RH - 1, yT1); y++) { const o = y * RW + x; if (!zb[o]) { put(o, c); zb[o] = dIn; } }
+        }
+        if (dOut > maxD) break;
+        // case suivante
+        if (nside === 0) { sdx += ddx; mx += stx; } else { sdy += ddy; my += sty; }
+        side = nside;
+        dIn = dOut;
+        prevRoof = roofHere || (h > 0 && prevRoof);
+        if (mx < 0 || my < 0 || mx >= MWd || my >= w.h) break;
+        const pci = ci;
+        ci = my * MWd + mx;
+        const h2 = C.h[ci];
+        if (h2 <= 0) continue;
+        // face d'un mur à la distance dIn
+        const b2 = C.b[ci];
+        const inside = prevRoof && C.inn[ci];
+        let top = h2;
+        if (prevRoof) top = Math.min(h2, CEIL + 0.02);
+        const tid = inside ? C.inn[ci] : C.wall[ci];
+        // barreaux de cellule : côté cellule (la case d'où vient le rayon est adossée à un autre mur, une cellule n'a
+        // qu'une rangée), on voit le bureau au travers (cell v1) ; côté bureau, la couchette (v0)
+        const tx0 = tid === this.cellIn[0] && C.h[2 * pci - ci] > 0 && C.inn[2 * pci - ci] !== tid ? this.cellIn[1] : walls[tid];
+        const upT = !prevRoof && C.up[ci] ? walls[C.up[ci]] : null;
+        let wx = side === 0 ? posY + dIn * rdy : posX + dIn * rdx;
+        wx -= Math.floor(wx);
+        let tx = (wx * 64) | 0;
+        if ((side === 0 && rdx < 0) || (side === 1 && rdy > 0)) tx = 63 - tx;
+        // embrasure de porte vue du dehors : traverse en bois sous le linteau (fr = 1) et montants sur les côtés
+        // qui touchent un mur (fr = 2, k = colonne du montant) ; pas de montant entre deux portes voisines
+        let fr = 0, k = 0;
+        if (b2 > 0 && C.b[pci] === 0) {
+          const u = (wx * 64) | 0, st = side === 0 ? MWd : 1;
+          fr = 1;
+          if (u < 4 && !C.b[ci - st]) { fr = 2; k = u; } else if (u > 59 && !C.b[ci + st]) { fr = 2; k = 63 - u; }
+        }
+        const yTop = hor - ((top - eye) * P) / dIn, yBot = hor + ((eye - (fr ? 0 : b2)) * P) / dIn;
+        const y0 = Math.max(0, Math.ceil(yTop)), y1 = Math.min(RH - 1, Math.floor(yBot));
+        shadeSet(prevRoof ? inK : outK, fogAt(dIn), side ? 0.82 : 1);
+        const upH = top - 1;
+        // un mur bas (comptoir, barrière, foin) montre toute sa texture, étirée sur sa hauteur
+        const low = top < 1 && b2 === 0 ? top : 0;
+        for (let y = y0; y <= y1; y++) {
+          const o = y * RW + x;
+          if (zb[o]) continue;
+          const z = eye + ((hor - y) * dIn) / P;
+          let c;
+          if (z < b2) {
+            const hd = z >= b2 - 0.07;
+            if (!hd && fr < 2) continue; // l'ouverture : on voit au travers
+            c = hd ? (z > b2 - 0.012 || z < b2 - 0.058 ? 0xff0e1a2a : z > b2 - 0.025 ? 0xff3e6894 : 0xff2c4c6e)
+              : k === 0 || k === 3 ? 0xff0e1a2a : k === 1 ? 0xff3e6894 : 0xff2c4c6e;
+          } else if (upT && z >= 1 && upH > 0.05) c = upT[((((1 - (z - 1) / upH) * 64) | 0) & 63) << 6 | tx];
+          else if (low) c = tx0 ? tx0[((((1 - z / low) * 64) | 0) & 63) << 6 | tx] : 0xffff00ff;
+          else { const fz = z - Math.floor(z); c = tx0 ? tx0[((((1 - fz) * 64) | 0) & 63) << 6 | tx] : 0xffff00ff; }
+          if (c === SEE) continue; // ciel peint entre les pointes de la palissade : on voit à travers
+          put(o, c);
+          zb[o] = dIn;
+        }
+      }
+    }
+    // ------------------------------------------------ ciel (et brouillard en bas, au-delà de tout)
+    const sky = this.sky;
+    const skyDark = dark ? 0.35 : 1;
+    for (let x = 0; x < RW; x++) {
+      const cam = (2 * x) / RW - 1;
+      const ang = v.a + Math.atan(cam * tanH);
+      let sx = Math.floor(((ang / TAU) % 1 + 1) % 1 * sky.w);
+      if (sx >= sky.w) sx = 0;
+      for (let y = 0; y < RH; y++) {
+        const o = y * RW + x;
+        if (zb[o]) continue;
+        if (y < hor) {
+          const c = sky.d[Math.min(sky.h - 1, y) * sky.w + sx];
+          const f = (1 - (mods.fog ?? 1)) * 0.7;
+          kr = kg = kb = skyDark * (1 - f) * (1 + this.lightning * 0.6);
+          if (kr > 1) kr = kg = kb = 1;
+          ar = fr * f; ag = fg * f; ab = fb * f;
+          put(o, c);
+        } else buf[o] = 0xff000000 | ((fb | 0) << 16) | ((fg | 0) << 8) | (fr | 0);
+        zb[o] = 1e9;
+      }
+    }
+    // ------------------------------------------------ sprites
+    const invDet = 1 / (plX * dirY - dirX * plY);
+    const sprite = (sx, sy, z, cv, o = {}) => {
+      if (!cv) return;
+      const dx = sx - posX, dy = sy - posY;
+      const ty = invDet * (-plY * dx + plX * dy);
+      if (ty < 0.12 || ty > maxD) return;
+      const txs = invDet * (dirY * dx - dirX * dy);
+      const sp = pix(cv);
+      const wh = o.wh ?? sp.h / 64;
+      const ww = o.ww ?? sp.w / 64;
+      const scx = (RW / 2) * (1 + txs / ty);
+      const ph = (wh * P) / ty, pw = (ww * P) / ty;
+      const yb = hor + ((eye - z) * P) / ty;
+      const ya = yb - ph;
+      const xa = scx - pw / 2;
+      const x0 = Math.max(0, Math.ceil(xa)), x1 = Math.min(RW - 1, Math.floor(xa + pw));
+      const y0 = Math.max(0, Math.ceil(ya)), y1 = Math.min(RH - 1, Math.floor(yb));
+      if (x0 > x1 || y0 > y1) return;
+      const K = roofed(w, sx, sy) ? inK : outK;
+      if (o.full) { kr = kg = kb = 1; ar = ag = ab = 0; } else shadeSet(K, fogAt(ty), o.dim ?? 1); // lampes allumées : en pleine lumière
+      const red = o.red;
+      for (let X = x0; X <= x1; X++) {
+        let u = Math.floor(((X - xa) / pw) * sp.w);
+        if (o.flip) u = sp.w - 1 - u;
+        if (u < 0 || u >= sp.w) continue;
+        for (let Y = y0; Y <= y1; Y++) {
+          const off = Y * RW + X;
+          const zv = zb[off];
+          if (zv && zv < ty) continue;
+          const v = Math.floor(((Y - ya) / ph) * sp.h);
+          const c = sp.d[v * sp.w + u];
+          if (!(c >>> 24)) continue;
+          if (red) buf[off] = 0xff3030e0; // touché : un éclair rouge
+          else put(off, c);
+          zb[off] = ty;
+        }
+      }
+    };
+    this.drawSprites(sprite);
+    // ------------------------------------------------ image finale
+    this.offCtx.putImageData(this.img, 0, 0);
+    ctx.drawImage(this.off, 0, 0, W, H);
+    this.drawWeather(ctx);
+    if (!shot) {
+      this.drawNames(ctx, { posX, posY, dirX, dirY, plX, plY, P, hor, eye, RW });
+      this.drawWanted(ctx, { posX, posY, dirX, dirY, plX, plY, P, hor, eye, RW });
+      this.drawViewModel(ctx);
+    }
+    if (this.lightning > 0.5) { ctx.fillStyle = `rgba(255,255,255,${(this.lightning - 0.5) * 0.6})`; ctx.fillRect(0, 0, W, H); }
+    if (shot) return; // cinématique : ni HUD ni arme en main
+    if (!m.alive && m.deadAt > -1e8) { ctx.fillStyle = 'rgba(120,10,0,0.28)'; ctx.fillRect(0, 0, W, H); }
+    drawHud(ctx, this.hud());
+    this.drawMap(ctx);
+    if (this.menu && this.t >= 0 && !this.over) this.drawMenu(ctx, this.t);
+  }
+
+  // Tout ce qui se dessine en sprite : décor, caisses, bandits, joueurs, montures, dynamite, effets.
+  drawSprites(sprite) {
+    const w = this.world;
+    const now = this.now;
+    const m = this.my;
+    const v = this.vp || m; // point de vue de l'image (le joueur, ou la caméra de la cinématique)
+    const lit = !!(this.env.lights || this.mods.dark);
+    const PK = new Set(['gold', 'crate', 'ammo', 'whisky', 'bandage', 'vest', 'dynamite', 'star', 'gatling', 'akimbo', 'goldwin']);
+    for (const o of w.deco) {
+      if (Math.abs(o.x - v.x) > 30 || Math.abs(o.y - v.y) > 30) continue;
+      let f = 0;
+      if (o.spin) f = Math.floor(now / 140) % 4;
+      else if (o.id === 'cow' || o.id === 'chicken') f = Math.floor(now / 700 + o.k) % 2;
+      else if (o.batwing) f = this.batwingFrame(o, now);
+      else if (o.lamp || o.id === 'lantern') f = lit || roofed(w, o.x, o.y) ? 1 : 0;
+      const cv = o.pk || PK.has(o.id) ? A.pickupSprite(o.id) : A.decoSprite(o.id, f);
+      const z = o.hang ? CEIL - cv.height / 64 : o.z || 0;
+      sprite(o.x, o.y, z, cv, { full: f === 1 && (o.lamp || o.id === 'lantern'), ...(o.sc && { wh: (cv.height / 64) * o.sc, ww: (cv.width / 64) * o.sc }) }); // sc : échelle (bouteille du comptoir)
+    }
+    // caisses (elles tombent du ciel en apparaissant) et sacs d'or (ils flottent)
+    for (const c of this.crates.values()) {
+      const k = clamp((now - (c.at || 0)) / 500, 0, 1);
+      sprite(c.x, c.y, (1 - k) * 2, A.pickupSprite('crate'));
+    }
+    for (const g of this.gold.values()) sprite(g.x, g.y, 0.08 + Math.sin(now / 250 + g.id) * 0.05, A.pickupSprite('gold'));
+    // chevaux (avec ou sans cavalier) et wagonnets
+    for (const h of this.horses) {
+      if (h.rider === this.me && m.m === `h${h.id}`) continue;
+      if (h.dead && now - h.deadAt > 6000) continue;
+      const look = h.rider >= 0 ? this.looks[h.rider] : null;
+      const view = this.angleView(h.x, h.y, h.a);
+      const moving = h.rider >= 0 && this.remote[h.rider] && now - this.remote[h.rider].moveAt < 200;
+      const fr = h.dead ? 0 : moving ? Math.floor(h.gait) % 4 : 0;
+      sprite(h.x, h.y, 0, A.horseFrame(h.coat, fr, view.angle, look), { flip: view.flip, red: h.dead ? false : undefined, dim: h.dead ? 0.5 : 1 });
+    }
+    for (const c of this.carts) {
+      if (c.rider === this.me && m.m === `c${c.id}`) continue;
+      const p = railAt(w, c.s);
+      const view = this.angleView(p.x, p.y, p.a);
+      sprite(p.x, p.y, 0, A.cartFrame(view.angle, c.rider >= 0 ? this.looks[c.rider] : null), { flip: view.flip });
+    }
+    // bandits
+    for (const n of this.npcs.values()) {
+      const back = Math.cos(n.a - Math.atan2(v.y - n.y, v.x - n.x)) < 0;
+      let pose = 'idle', fr = 0;
+      if (!n.alive) { pose = 'die'; fr = Math.min(3, Math.floor((now - n.dieAt) / 150)); }
+      else if (now - n.hurtAt < 150) pose = 'hurt';
+      else if (now - n.fireAt < 160) { pose = n.kind === 'dynamiter' ? 'throw' : 'shoot'; fr = 1; }
+      else if (n.st === 2) { pose = n.kind === 'dynamiter' ? 'throw' : 'shoot'; fr = 0; }
+      else if (n.st === 1) { pose = 'walk'; fr = Math.floor(n.walk) % 4; }
+      const cv = A.banditFrame(n.kind, n.look, pose, fr, back && n.alive);
+      sprite(n.x, n.y, 0, cv, { red: n.alive && now - n.hurtAt < 70 });
+    }
+    // les autres joueurs
+    for (const [i, r] of Object.entries(this.remote)) {
+      if (!r.seen && !r.alive) continue;
+      if (r.m && r.alive) continue; // dessiné avec sa monture
+      if (!r.alive && (r.dieAt == null || now - r.dieAt > 6000)) continue;
+      const back = Math.cos(r.a - Math.atan2(v.y - r.y, v.x - r.x)) < 0;
+      let pose = 'idle', fr = 0;
+      if (!r.alive) { pose = 'die'; fr = Math.min(3, Math.floor((now - r.dieAt) / 150)); }
+      else if (now - r.hurtAt < 140) pose = 'hurt';
+      else if (now - r.flashAt < 140) { pose = WEAPONS[r.w]?.melee ? 'melee' : 'shoot'; fr = now - r.flashAt < 70 ? 1 : 0; }
+      else if (now - r.moveAt < 160) { pose = 'walk'; fr = Math.floor(now / 130) % 4; }
+      sprite(r.x, r.y, 0, A.cowboyFrame(this.looks[i], pose, fr, back), { red: r.alive && now - r.hurtAt < 60 });
+    }
+    // dynamite : en vol, puis la mèche grésille au sol
+    for (const d of this.dyns.values()) {
+      const fly = 650;
+      const k = clamp((this.t - d.at) / fly, 0, 1);
+      const x = d.x0 + (d.x1 - d.x0) * k, y = d.y0 + (d.y1 - d.y0) * k;
+      const z = 0.5 * (1 - k) + Math.sin(Math.PI * k) * 0.8;
+      sprite(x, y, z, A.fxSprite('dynFly', Math.floor(now / 80) % 4), { wh: 0.2, ww: 0.2 });
+    }
+    for (const f of this.fx) {
+      const el = now - f.at;
+      if (f.kind === 'boom') sprite(f.x, f.y, -0.1, A.fxSprite('boom', Math.min(4, Math.floor(el / 130))), { wh: 1.6, ww: 1.6 });
+      else sprite(f.x, f.y, (f.z || 0.5) - 0.08, A.fxSprite(f.kind, Math.min(2, Math.floor(el / 120))), { wh: 0.22, ww: 0.22 });
+    }
+    // le train de l'événement : il traverse la gare à toute allure
+    if (this.mods.train) {
+      const ev = w.events.find((e) => e.id === 'train' && this.t >= e.t0 && this.t < e.t1);
+      if (ev) {
+        const x0 = -20 + (((this.t - ev.t0) / 1000) * 16) % (w.w + 40);
+        const cars = ['loco', 'trainCar', 'freightCar', 'trainCar', 'freightCar'];
+        cars.forEach((id, k) => sprite(x0 - k * 4.4, 3.5, 0, A.wallTex(id, k % 2), { wh: 1.5, ww: 4.2 }));
+      }
+    }
+    // les acteurs de la cinématique d'ouverture
+    for (const s of v.actors || []) sprite(s.x, s.y, s.z || 0, s.cv, s.o);
+  }
+
+  // Nom (à sa couleur) au-dessus de chaque rival qu'on voit vraiment : pas à travers les murs ni les autres sprites
+  drawNames(ctx, v) {
+    if (!this.state) return;
+    const inv = 1 / (v.plX * v.dirY - v.dirX * v.plY), k = W / v.RW, zb = this.zb;
+    const wanted = this.mods.bounty === 'leader' ? bountyLeader(this.state.players) : -1;
+    for (const [i, r] of Object.entries(this.remote)) {
+      if (!r.alive || !r.seen) continue;
+      const dx = r.x - v.posX, dy = r.y - v.posY;
+      const ty = inv * (-v.plY * dx + v.plX * dy);
+      if (ty < 0.3 || ty > 18) continue;
+      const tx = inv * (v.dirY * dx - v.dirX * dy);
+      const X = Math.round((v.RW / 2) * (1 + tx / ty));
+      if (X < 0 || X >= v.RW) continue;
+      const top = r.m ? (r.m[0] === 'h' ? 1.4 : 0.95) : 1.05;
+      // visible si le corps ou la tête n'est pas caché par quelque chose de plus proche
+      const seen = [0.5, top - 0.15].some((z) => {
+        const Y = Math.round(v.hor + ((v.eye - z) * v.P) / ty);
+        if (Y < 0 || Y >= this.RH) return false;
+        const d = zb[Y * v.RW + X];
+        return !d || d >= ty - 0.3;
+      });
+      if (!seen) continue;
+      const lift = +i === wanted ? A.pickupSprite('star').height + 12 : 0; // au-dessus de l'étoile de la prime
+      const p = this.state.players[i];
+      canvasText(ctx, String(p?.name || '').slice(0, 14), X * k, (v.hor - ((top - v.eye) * v.P) / ty) * k - 9 - lift, { color: this.color(+i) });
+    }
+  }
+
+  // Avis de recherche : une étoile au-dessus du joueur mis à prix, visible à travers les murs
+  drawWanted(ctx, v) {
+    if (this.mods.bounty !== 'leader' || !this.state) return;
+    const r = this.remote[bountyLeader(this.state.players)];
+    if (!r || !r.alive) return;
+    const dx = r.x - v.posX, dy = r.y - v.posY;
+    const inv = 1 / (v.plX * v.dirY - v.dirX * v.plY);
+    const ty = inv * (-v.plY * dx + v.plX * dy);
+    if (ty < 0.3) return;
+    const tx = inv * (v.dirY * dx - v.dirX * dy);
+    const k = W / v.RW;
+    const sx = (v.RW / 2) * (1 + tx / ty) * k, sy = (v.hor - ((1.25 - v.eye) * v.P) / ty) * k;
+    const star = A.pickupSprite('star');
+    const bob = Math.sin(this.now / 200) * 2;
+    ctx.drawImage(star, Math.round(sx - star.width / 2), Math.round(sy - star.height + bob));
+    canvasText(ctx, 'PRIME', sx, sy + 2 + bob, { color: '#f8d070' });
+  }
+
+  // Portes battantes : elles s'ouvrent quand quelqu'un passe (0 fermées, 1 entrouvertes, 2 grandes ouvertes),
+  // restent ouvertes tant qu'on est dans l'embrasure, puis battent une fois avant de se refermer.
+  batwingFrame(o, now) {
+    const m = this.my;
+    const near = (x, y) => Math.abs(x - o.x) < 0.6 && Math.abs(y - o.y) < 0.85;
+    const busy = (m.alive && near(m.x, m.y))
+      || Object.values(this.remote).some((r) => r.alive && near(r.x, r.y))
+      || [...this.npcs.values()].some((n) => n.alive && near(n.x, n.y));
+    if (busy) {
+      if (!o.openAt || now - o.held > 300) o.openAt = now;
+      o.held = now;
+    }
+    if (!o.openAt) return 0;
+    const el = now - Math.max(o.openAt + 120, o.held);
+    if (now - o.openAt < 120) return 1;
+    return el < 0 || el < 450 ? 2 : el < 750 ? 1 : el < 950 ? 2 : el < 1200 ? 1 : 0;
+  }
+
+  // Radar (en haut à gauche) et grande carte (M) : caisses, or, chevaux et wagonnets libres, dynamite, El Diablo, et
+  // les bandits s'ils sont en vue (à moins de 12 cases) ou viennent de tirer. Jamais les autres joueurs.
+  drawMap(ctx) {
+    const m = this.my;
+    if (!this.map || !m.alive || this.menu || this.over) return;
+    const now = this.now;
+    const w = this.world;
+    const seen = (x, y, firedAt) => now - firedAt < 2000 || (Math.hypot(x - m.x, y - m.y) < 12 && los(w, m.x, m.y, x, y));
+    const marks = [];
+    for (const c of this.crates.values()) marks.push({ x: c.x, y: c.y, kind: 'crate' });
+    for (const g of this.gold.values()) marks.push({ x: g.x, y: g.y, kind: 'gold' });
+    for (const h of this.horses) if (!h.dead && h.rider < 0) marks.push({ x: h.x, y: h.y, kind: 'horse' });
+    for (const c of this.carts) if (c.rider < 0) { const p = railAt(w, c.s); marks.push({ x: p.x, y: p.y, kind: 'cart' }); }
+    for (const d of this.dyns.values()) {
+      const k = clamp((this.t - d.at) / 650, 0, 1);
+      marks.push({ x: d.x0 + (d.x1 - d.x0) * k, y: d.y0 + (d.y1 - d.y0) * k, kind: 'dyn' });
+    }
+    for (const n of this.npcs.values()) {
+      if (!n.alive) continue;
+      if (n.kind === 'diablo') marks.push({ x: n.x, y: n.y, col: '#f0405a', kind: 'skull' });
+      else if (seen(n.x, n.y, n.fireAt)) marks.push({ x: n.x, y: n.y, col: '#e8604c', kind: 'dot' });
+    }
+    if (this.map.big) this.map.drawFull(ctx, m, marks, now, W, H);
+    else this.map.drawRadar(ctx, m, marks, now);
+  }
+
+  // Côté vu d'un objet orienté (cheval, wagonnet) : de face, de dos ou de profil (miroir selon le sens).
+  angleView(x, y, a) {
+    const v = this.vp || this.my;
+    const toMe = Math.atan2(v.y - y, v.x - x);
+    const rel = wrapA(a - toMe);
+    if (Math.abs(rel) < Math.PI / 4) return { angle: 'front', flip: false };
+    if (Math.abs(rel) > (3 * Math.PI) / 4) return { angle: 'back', flip: false };
+    // de profil : le sprite regarde à droite ; miroir quand il va vers la gauche de l'écran
+    return { angle: 'side', flip: Math.sin(a - v.a) < 0 };
+  }
+
+  drawWeather(ctx) {
+    const env = this.env;
+    const v = this.vp || this.my;
+    if ((env.weather === 'snow' || this.mods.snow) && !roofed(this.world, v.x, v.y)) { // sous un toit, il ne neige pas
+      ctx.fillStyle = '#f4f6ff';
+      for (let k = 0; k < 70; k++) {
+        const x = (k * 97 + this.now * 0.02 * (1 + (k % 3)) + Math.sin(this.now / 900 + k) * 8) % W;
+        const y = (k * 53 + this.now * 0.03 * (1 + (k % 2))) % H;
+        ctx.fillRect(Math.round(x), Math.round(y), k % 4 ? 1 : 2, k % 4 ? 1 : 2);
+      }
+    }
+    if (env.haze) { ctx.fillStyle = env.haze; ctx.fillRect(0, 0, W, H); }
+  }
+
+  drawViewModel(ctx) {
+    const m = this.my;
+    if (!m.alive || m.zoom) return;
+    const t = this.t;
+    const id = m.w === 'dynamite' ? 'dynamite' : m.w;
+    const W8 = WEAPONS[id];
+    let state = 'idle', fr = 0, recoil = 0;
+    const since = t - m.lastFire;
+    if (m.reload) { state = 'reload'; fr = Math.min(2, Math.floor(((t - m.reload.at) / (m.reload.until - m.reload.at)) * 3)); }
+    else if (W8?.melee && m.swing && t - m.swing.at < Math.min(W8.rate, 420)) { state = 'swing'; fr = Math.min(2, Math.floor((t - m.swing.at) / 110)); }
+    else if (id === 'dynamite') { state = t - m.throwAt < 250 ? 'throw' : 'lit'; fr = Math.floor(this.now / 90) % 2; }
+    else if (W8 && since < 170) { state = 'fire'; fr = id === 'gatling' ? Math.floor(this.now / 40) % 4 : since < 70 ? 0 : 1; recoil = since < 70 ? 4 : 2; }
+    else if (id === 'gatling' && since < 400) { state = 'fire'; fr = Math.floor(this.now / 70) % 4; }
+    const cv = A.viewModel(id === 'akimbo' ? 'colt' : id, state, fr, this.skin, this.cloth); // deux colts : le colt, dessiné deux fois
+    if (!cv) return;
+    const draw = m.drawAt ? clamp((t - m.drawAt) / 180, 0, 1) : 1;
+    const bx = Math.sin(m.bob * 0.5) * 4 * clamp(m.v / 3, 0, 1);
+    const by = Math.abs(Math.cos(m.bob * 0.5)) * 3 * clamp(m.v / 3, 0, 1) + (1 - draw) * 40 + recoil;
+    const dark = this.mods.dark ? 0.55 : 1;
+    if (dark < 1) ctx.filter = 'brightness(0.55)';
+    if (W8?.dual) {
+      ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + 52 + bx), Math.round(H - cv.height + by));
+      ctx.save();
+      ctx.scale(-1, 1);
+      // la main gauche tire en alternance (petit décalage)
+      ctx.drawImage(cv, Math.round(-(W / 2 + cv.width / 2 - 52) - bx), Math.round(H - cv.height + by + (since < 170 ? 2 : 0)));
+      ctx.restore();
+    } else ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + VM_X + bx), Math.round(H - cv.height + by));
+    ctx.filter = 'none';
+  }
+
+  // ---------------------------------------------------------- HUD (dessiné par fpshud.js)
+  hud() {
+    const m = this.my;
+    const t = this.t;
+    const W8 = WEAPONS[m.w];
+    const a = this.ammoOf(m.w);
+    const players = this.state.players.map((p, i) => ({ name: p.name, color: this.color(i), score: p.score, k: p.k || 0, d: p.d || 0, alive: i === this.me ? m.alive : !!this.remote[i]?.alive, me: i === this.me, bot: p.bot }));
+    if (this.mods.bounty === 'leader') {
+      const best = bountyLeader(this.state.players);
+      if (best >= 0) players[best].bounty = true;
+    }
+    const rank = 1 + players.filter((p) => !p.me && p.score > (players[this.me]?.score || 0)).length;
+    const near = m.alive ? this.nearMount() : null;
+    const prompt = !m.alive ? null : m.m ? (this.touch ? 'DESCENDRE' : 'E : DESCENDRE') : near ? (near.kind === 'horse' ? 'E : MONTER À CHEVAL' : 'E : MONTER DANS LE WAGONNET') : null;
+    let mount = null;
+    if (m.m && m.m[0] === 'h') mount = { kind: 'horse', hp: clamp((this.horses[+m.m.slice(1)]?.hp ?? FPS.horse.hp) / FPS.horse.hp, 0, 1) };
+    else if (m.m) mount = { kind: 'cart', hp: 1 };
+    return {
+      t, now: this.now, touch: this.touch, hp: m.hp, maxHp: FPS.hp, armor: m.armor, maxArmor: FPS.maxArmor,
+      weapon: m.w === 'dynamite'
+        ? { id: 'dynamite', name: 'DYNAMITE', mag: m.dyn, magMax: m.dyn, reserve: 0, inf: false, reloading: null, melee: false }
+        : { id: m.w, name: W8?.name || '', mag: a.mag, magMax: W8?.mag || 0, reserve: a.res, inf: false, reloading: m.reload ? clamp((t - m.reload.at) / (m.reload.until - m.reload.at), 0, 1) : null, melee: !!W8?.melee },
+      temp: m.temp ? { id: m.temp.id, name: WEAPONS[m.temp.id].name, left: clamp((m.temp.until - t) / WEAPONS[m.temp.id].ms, 0, 1) } : null,
+      slots: [1, 2, 3, 4, 5].map((n) => { const id = this.slotWeapon(n); return { n, id, name: id ? (id === 'dynamite' ? 'DYNAMITE' : WEAPONS[id].name) : '', has: !!id, active: !!id && id === m.w }; }),
+      equip: { id: m.lo.e, name: EQUIP[m.lo.e]?.name || '', count: m.lo.e === 'dynamite' || m.dyn ? m.dyn : null },
+      shield: t < m.shieldUntil ? clamp((m.shieldUntil - t) / FPS.shield, 0, 1) : null,
+      score: this.state.players[this.me]?.score || 0, kills: this.state.players[this.me]?.k || 0, deaths: this.state.players[this.me]?.d || 0, place: rank, players,
+      dead: !m.alive && m.deadAt > -1e8 ? { by: m.killer, byColor: m.killerCol, respawnIn: Math.max(0, FPS.respawn - (t - m.deadAt)) } : null,
+      mount,
+      hurt: this.hurts.map((h) => ({ ang: h.ang, age: this.now - h.at })),
+      hit: this.hit && this.now - this.hit.at < 400 ? { age: this.now - this.hit.at, kill: this.hit.kill } : null,
+      feed: this.feed.map((f) => ({ a: f.a, aCol: f.aCol, b: f.b, bCol: f.bCol, w: f.w, age: this.now - f.at })),
+      banner: fpsBanner(this.world.events, Math.max(0, t)),
+      pickup: this.toast && this.now - this.toast.at < 2200 ? { text: this.toast.text, age: this.now - this.toast.at } : null,
+      prompt, spread: Math.round((W8?.spread || 0) * 300 + (m.v > 1 ? 3 : 0) + 3), zoom: m.zoom,
+      board: !!this.inp?.board, character: this.state.players[this.me]?.character, color: this.color(this.me),
+      lockHint: this.input.needsLock && !this.menu && m.alive,
+      menu: !!this.menu, // armurerie ouverte : le HUD s'efface (sauf le tableau des scores)
+      mods: { ...this.mods, rain: (this.mods.rain || this.env.weather === 'rain') && !roofed(this.world, m.x, m.y), dust: this.mods.dust || this.env.weather === 'dust' },
+    };
+  }
+
+  hudStats() {
+    const p = this.state?.players[this.me];
+    return [['FRAGS', p?.k || 0, 'yellow'], ['MORTS', p?.d || 0, 'salmon']];
+  }
+
+  mood() {
+    const base = super.mood();
+    if (this.npcs?.size && [...this.npcs.values()].some((n) => n.kind === 'diablo' && n.alive)) return { ...base, level: Math.max(base.level, 0.9) };
+    return base;
+  }
+}
+
+// « Mort ou vif » : la même scène, sans bandits ; seuls les frags comptent (fpsgame.js)
+export class FpsDmScene extends FpsScene {
+  constructor(canvas, hooks) {
+    super(canvas, hooks);
+    this.kind = 'fpsdm';
+  }
+}
