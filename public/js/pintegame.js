@@ -38,7 +38,11 @@ export const PINTE = {
   CM: 2,
   dirMs: 1800, powMs: 1400, // aller-retour de l'aiguille et de la jauge
 };
+// 10 à 18 lancers en tout (5 manches à deux, 3 de quatre à six : il faut au moins une manche à surprises avant la dernière)
 export const pinteRounds = (n) => (n <= 2 ? 5 : n === 3 ? 4 : 3);
+// décalage de l'ordre de passage d'une manche à l'autre : un cran, ou plus quand il y a moins de manches que de
+// joueurs, pour que la dernière place (l'avantage) tombe chaque fois sur quelqu'un de différent et bien réparti
+export const pinteShift = (n, rounds) => Math.max(1, Math.round(n / rounds));
 
 // vitesse de départ pour une puissance 0..1 (distance parcourue sur bois sec proportionnelle à la puissance).
 // La sciure freine dur : la jauge donne de quoi la traverser, pour qu'à fond on dépasse toujours le bout.
@@ -442,8 +446,9 @@ export class PinteGame {
       key: pl.key, name: pl.name, character: pl.character, bot: !!pl.bot,
       score: 0, left: false, stats: { throws: 0, falls: 0, knocks: 0, best: null, coins: 0, mats: 0 },
     }));
-    // ordre de passage tiré au sort, puis décalé d'un cran à chaque manche (le dernier à lancer a l'avantage)
+    // ordre de passage tiré au sort, puis décalé à chaque manche (le dernier à lancer a l'avantage) : voir pinteShift
     this.base = this.p.map((_, i) => i).sort(() => Math.random() - 0.5);
+    this.shift = pinteShift(this.p.length, this.rounds);
     this.cur = null;
     this.phase = 'playing';
     this.winner = null;
@@ -553,7 +558,7 @@ export class PinteGame {
 
   newRound(t) {
     const n = (this.cur?.n || 0) + 1;
-    const k = (n - 1) % this.base.length;
+    const k = ((n - 1) * this.shift) % this.base.length;
     const order = [...this.base.slice(k), ...this.base.slice(0, k)].filter((i) => !this.p[i].left);
     const mods = modsFor(this.seed, n, this.rounds);
     const beers = order.map((_, k) => beerFor(this.seed, n, k));

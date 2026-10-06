@@ -54,6 +54,13 @@ function blob(R, cx, cy, rx, ry, col) {
     R(rd(cx) - half, rd(cy) + dy, half * 2 + 1, 1, col);
   }
 }
+// Hauteur d'une étiquette de nom (8 lettres au plus, ≈ 46 px) qui ne chevauche pas celles déjà posées (tags) :
+// on essaie les décalages dys dans l'ordre, le premier libre l'emporte (sinon le dernier).
+function placeTag(tags, x, y, dys) {
+  const dy = dys.find((d) => !tags.some((q) => Math.abs(q.x - x) < 46 && Math.abs(q.y - y - d) < 8)) ?? dys[dys.length - 1];
+  tags.push({ x, y: y + dy });
+  return y + dy;
+}
 // petit générateur pseudo-aléatoire pour les textures (identiques à chaque partie)
 const lcg = (s) => () => ((s = (s * 9301 + 49297) % 233280) / 233280);
 
@@ -1169,14 +1176,14 @@ export class MineScene extends MiniScene {
 
   drawNames(ctx, L, cam, p) {
     // les noms des fantômes s'empilent à gauche de leur wagonnet pour rester lisibles
-    const rows = {};
+    // (jusqu'à cinq fantômes au même endroit, au départ : deux lignes en dessous, puis on monte)
+    const tags = [];
     for (const [i, r] of Object.entries(this.remote)) {
       if (r.left || r.outAt != null) continue;
       const sx = rd(r.x - cam);
       if (sx < -10 || sx > W + 10) continue;
-      const lane = Math.round(r.l);
-      const k = (rows[lane] = (rows[lane] ?? 0) + 1) - 1;
-      canvasText(ctx, this.name(+i).slice(0, 8).toUpperCase(), clamp(sx - 18, 30, W - 4), rd(laneYf(L, r.l)) - 26 + k * 8, { color: this.color(+i), align: 'right' });
+      const x = clamp(sx - 18, 30, W - 4);
+      canvasText(ctx, this.name(+i).slice(0, 8).toUpperCase(), x, placeTag(tags, x, rd(laneYf(L, r.l)) - 26, [0, 8, -8, -16, -24]), { color: this.color(+i), align: 'right' });
     }
     canvasText(ctx, 'TOI', p.x - 2, rd(p.y) - 42, { color: this.color(this.me) });
   }
@@ -1287,6 +1294,7 @@ export class MineScene extends MiniScene {
       items.push({ d: r.x - wx, lane: r.l, spr: cartBackSprite(this.riders[+i], frame), alpha: 0.5, lift: r.air ? 16 : 0, name: +i });
     }
     items.sort((a, b) => b.d - a.d);
+    const tags = []; // noms des fantômes, qui s'empilent vers le haut quand ils roulent ensemble
     for (const it of items) {
       if (it.lamp) { this.backLamp(ctx, it.lamp, now); continue; }
       if (it.timber) { this.backTimber(ctx, it.timber, now); continue; }
@@ -1309,7 +1317,7 @@ export class MineScene extends MiniScene {
         ctx.fillRect(p.x - r, gy - r, r * 2, r * 2);
         ctx.restore();
       }
-      if (it.name != null && it.d < 320) canvasText(ctx, this.name(it.name).slice(0, 8).toUpperCase(), rd(p.x), rd(p.y - 44 * k), { color: this.color(it.name) });
+      if (it.name != null && it.d < 320) canvasText(ctx, this.name(it.name).slice(0, 8).toUpperCase(), rd(p.x), placeTag(tags, rd(p.x), rd(p.y - 44 * k), [0, -8, -16, -24, -32]), { color: this.color(it.name) });
     }
     // ton wagonnet, de dos
     const p = this.cartScreen();
@@ -1427,23 +1435,26 @@ export class MineScene extends MiniScene {
       canvasText(o, 'SORTIE', 153, 96, { color: '#f8d070' });
     }
     ctx.drawImage(this.outside, 0, 0);
-    // les wagonnets sortis, rangés par ordre d'arrivée (le premier tout au bout)
+    // les wagonnets sortis, rangés par ordre d'arrivée (le premier tout au bout) ; à 5 ou 6, ils se serrent
+    // pour que le dernier reste sous la ligne d'arrivée
     const players = this.state?.players || [];
     const frame = Math.floor(now / 90) % 2;
+    const gap = Math.min(56, Math.floor(180 / Math.max(1, players.length - 1)));
     players.forEach((pl, i) => {
       const r = i === this.me ? null : this.remote[i];
       const out = i === this.me ? this.finishNow : r?.outAt;
       if (!pl.rank || out == null) return;
-      const slot = W - 40 - (pl.rank - 1) * 56;
+      const slot = W - 40 - (pl.rank - 1) * gap;
       const k = smooth(clamp((now - out) / 1600, 0, 1));
       const x = rd(60 + (slot - 60) * k);
       const spr = cartSprite(this.riders[i], k < 1 ? frame : 0);
       ctx.drawImage(spr, x - spr.ox, 179 - spr.oy);
       if (k >= 1) canvasText(ctx, `${pl.rank}`, x, 128, { size: 16, color: this.color(i) });
     });
-    // classement de l'arrivée
+    // classement de l'arrivée (lignes plus serrées à 5 ou 6, pour ne pas cacher le panneau SORTIE)
+    const row = players.length > 4 ? 10 : 11;
     ctx.fillStyle = 'rgba(26,15,10,0.72)';
-    ctx.fillRect(W / 2 - 110, 10, 220, 22 + players.length * 11);
+    ctx.fillRect(W / 2 - 110, 10, 220, 22 + players.length * row);
     canvasText(ctx, 'ARRIVÉE', W / 2, 14, { color: '#f8d070' });
     const order = players.map((p, i) => i).sort((a, b) => (players[a].rank || 99) - (players[b].rank || 99));
     order.forEach((i, k) => {
@@ -1453,7 +1464,7 @@ export class MineScene extends MiniScene {
       const txt = pl.rank
         ? `${pl.rank}. ${pl.name.toUpperCase()}  ${this.fmt(pl.time ?? (i === this.me ? this.finishT : 0))}  +${MINE.arrival[pl.rank - 1] || 0}`
         : `-  ${pl.name.toUpperCase()}  EN ROUTE ${rd(prog * 100)} %`;
-      canvasText(ctx, txt, W / 2, 26 + k * 11, { color: this.color(i) });
+      canvasText(ctx, txt, W / 2, 26 + k * row, { color: this.color(i) });
     });
     if (!this.over && players.some((p) => !p.rank && !p.left)) canvasText(ctx, 'EN ATTENTE DES AUTRES WAGONNETS…', W / 2, H - 12, { color: '#fdf6e0' });
   }

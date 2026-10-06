@@ -15,13 +15,15 @@ export class MiniGame {
     this.seed = Math.floor(Math.random() * 2 ** 31);
     this.duration = MODES[kind].duration;
     const n = players.length;
+    // au-delà de 3 bots, chacun ralentit un peu : à 4 ou 5 bots, la bande ne rafle pas plus que 3 bots
+    this.botPace = Math.max(1, (players.filter((pl) => pl.bot).length + 1) / 4);
     this.p = players.map((pl, i) => ({
       key: pl.key, name: pl.name, character: pl.character, bot: !!pl.bot,
       score: 0, left: false, stats: { throws: 0, catches: 0, hits: 0, hurt: 0 },
       power: null, powerUntil: 0, sandUntil: 0, gunAmmo: 0, // bonus de la fusillade
       ai: pl.bot ? this.newBot(i, n) : null,
     }));
-    this.world = kind === 'shooter' ? shooterWorld(this.seed, n) : kind === 'lasso' ? lassoWorld(this.seed) : null;
+    this.world = kind === 'shooter' ? shooterWorld(this.seed, n) : kind === 'lasso' ? lassoWorld(this.seed, n) : null;
     this.hp = new Map(); // fusillade : PV restants des cibles touchées
     this.claimed = new Map(); // id -> joueur (cible abattue ou bête attrapée)
     this.fires = kind === 'shooter'
@@ -360,7 +362,8 @@ export class MiniGame {
     // la première manche démarre au GO, les suivantes après l'annonce de la manche
     const at = n === 1 ? 0 : t + 2600;
     const bots = {};
-    this.p.forEach((p, i) => { if (p.ai) bots[i] = at + Math.round(rnd(13000, 42000)); });
+    // le plus rapide des bots trouve Charlie vers 20 s en moyenne, qu'ils soient 3 ou 5
+    this.p.forEach((p, i) => { if (p.ai) bots[i] = at + Math.round(rnd(13000, 13000 + 29000 * this.botPace)); });
     this.cur = { n, at, end: at + CHARLIE.round, world: charlieWorld(this.seed, n), bots, done: false, nextAt: 0 };
     this.push({ type: 'cRound', round: this.publicRound() });
   }
@@ -448,7 +451,7 @@ export class MiniGame {
     if (this.kind === 'shooter') return { next: rnd(900, 1800), aim: null, cx: 192, cy: 120 };
     const s = lassoStart(i, n);
     // chaque bot garde son couloir et sa distance, pour ne pas galoper tous au même endroit
-    return { x: s.x, y: s.y, lane: s.y, back: 55 + (i % 3) * 28, target: null, cd: 0, pending: null };
+    return { x: s.x, y: s.y, lane: s.y, back: 55 + (i % 3) * 28 + (i % 6 >= 3 ? 14 : 0), target: null, cd: 0, pending: null };
   }
 
   botThink(i, t) {
@@ -473,7 +476,7 @@ export class MiniGame {
       const tg = this.world.targets[b.aim];
       if (t < b.aimAt) return;
       b.aim = null;
-      b.next = t + (gun ? rnd(gun.rate * 2, gun.rate * 4) : rnd(1000, 2200));
+      b.next = t + (gun ? rnd(gun.rate * 2, gun.rate * 4) : rnd(1000, 2200) * this.botPace);
       if (!tg || this.claimed.has(tg.id) || t > tg.t1) return;
       const p = screenOf(tg);
       this.liveOut.push({ key: this.p[i].key, d: { c: [p.x, p.y], s: 1 } });
@@ -507,7 +510,7 @@ export class MiniGame {
       if (b.pending.ok) this.catch(i, b.pending.id, t, b.pending.bet);
       else this.lassoMiss(i, b.pending.bet);
       b.pending = null;
-      b.cd = t + rnd(1100, 2000);
+      b.cd = t + rnd(1100, 2000) * this.botPace;
     }
     const giant = lassoTrailing(this.p, i);
     const range = LASSO.range + (giant ? LASSO_CATCHUP.range : 0);

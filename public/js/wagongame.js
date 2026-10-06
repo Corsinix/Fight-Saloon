@@ -84,9 +84,10 @@ export const BONUS = {
 const CARRIERS = new Set(['walker', 'rider', 'brute', 'dyn', 'climber', 'sniper', 'chaser', 'zigzag', 'crosser', 'thrower', 'ambush']);
 
 // Les assaillants de la partie : même graine, mêmes bandits aux mêmes endroits, partout.
-// Plus il y a de défenseurs, plus la bande est nombreuse (n = nombre de joueurs).
+// Plus il y a de défenseurs, plus la bande est nombreuse (n = nombre de joueurs, jusqu'à 6).
+// Au-delà de 4, elle grossit un peu plus vite : sinon chaque tireur aurait moins à faire qu'à 4.
 export function wagonWorld(seed, n = 4) {
-  const density = (n + 1) / 5;
+  const density = (n + 1) / 5 + Math.max(0, n - 4) * 0.05; // 0,4 seul ; 1 à 4 ; 1,25 à 5 ; 1,5 à 6
   const R = rng((seed ^ 0x2c1b3c6d) >>> 0);
   const between = (a, b) => a + R() * (b - a);
   const sign = () => (R() < 0.5 ? -1 : 1);

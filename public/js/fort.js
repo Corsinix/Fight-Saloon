@@ -11,7 +11,7 @@ import { skyDeco } from './env.js';
 import { W, H, rng } from './worlds.js';
 import {
   FORT, FORT_MAPS, FORT_BONUS, TEAM_NAMES, TEAM_COLORS, COVERS, PARA_TOP, fortTeam, fortHalf, fortHalfStart, fortAttacking,
-  fortSpawn, fortWorld, coverFor, blocked, groundSpeed, onGate, inGateway, dynTarget, blastOf, crateLive, wallTop, defFeet,
+  fortSpawn, fortWorld, fortMaxHp, fortGateMul, fortTeamSize,coverFor, blocked, groundSpeed, onGate, inGateway, dynTarget, blastOf, crateLive, wallTop, defFeet,
 } from './fortgame.js';
 
 const HORIZON = 66;
@@ -437,8 +437,12 @@ export class FortScene extends MiniScene {
   title() { return 'ASSAUT DU FORT'; }
   help() {
     const team = fortTeam(this.me);
+    // équipe en infériorité numérique : on annonce son avantage
+    const mine = fortTeamSize(this.me, this.n);
+    const odds = fortGateMul(this.me, this.n) > 1 ? ' - SEUL : DYNAMITE X2'
+      : mine < this.n - mine ? ` - ${mine} CONTRE ${this.n - mine} : ${fortMaxHp(this.me, this.n)} PV` : '';
     return [
-      `CARTE : ${this.mapInfo.name}`,
+      `CARTE : ${this.mapInfo.name}${odds}`,
       `TU ES CHEZ LES ${TEAM_NAMES[team]} : ${team ? 'DÉFENSE' : 'ATTAQUE'} D'ABORD`,
       'ATTAQUE : FAIS SAUTER LA PORTE ET ENTRE',
       ...(this.touch
@@ -466,7 +470,7 @@ export class FortScene extends MiniScene {
   }
 
   setup(seed) {
-    this.world = fortWorld(seed, this.state.map);
+    this.world = fortWorld(seed, this.state.map, this.n);
     this.pl = this.state.players.map((p) => ({
       x: 0, y: 0, tx: 0, ty: 0, c: 0, hp: p.hp ?? FORT.hp, maxHp: p.maxHp ?? FORT.hp, dead: 0, safe: 0, left: p.left,
       power: null, powerUntil: 0, keg: 0, dynFast: 0, shotAt: -1e9, throwAt: -1e9, hurtAt: -1e9, moving: false,

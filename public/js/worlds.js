@@ -7,33 +7,33 @@ export const W = 384, H = 216;
 export const CUT_MS = 5000;
 export const HELP_MS = 3500;
 export const COUNTDOWN = CUT_MS + HELP_MS;
-export const PLAYER_COLORS = ['#f0705a', '#7ab0f0', '#b8e070', '#f8d070'];
-export const MAX_PLAYERS = 4;
+export const PLAYER_COLORS = ['#f0705a', '#7ab0f0', '#b8e070', '#f8d070', '#c890f0', '#60d8c8'];
+export const MAX_PLAYERS = 6;
 
 export const MODES = {
   roulette: { name: 'Roulette', sub: 'Le duel au fusil à pompe', min: 2, max: 2 },
-  shooter: { name: 'Fusillade', sub: 'Rail shooter : la gare, les abords, la ville puis le saloon', min: 2, max: 4, duration: 150000 },
-  lasso: { name: 'Rodéo au lasso', sub: 'Au galop, attrape le plus de bêtes', min: 2, max: 4, duration: 60000 },
+  shooter: { name: 'Fusillade', sub: 'Rail shooter : la gare, les abords, la ville puis le saloon', min: 2, max: 6, duration: 150000 },
+  lasso: { name: 'Rodéo au lasso', sub: 'Au galop, attrape le plus de bêtes', min: 2, max: 6, duration: 60000 },
   duel: { name: 'Duel', sub: 'Le plus rapide à dégainer gagne', min: 2, max: 2, duration: 180000, unit: 'manches' },
-  charlie: { name: 'Où est Charlie ?', sub: 'Repère-le dans la foule de la ville', min: 2, max: 4, duration: 260000 },
+  charlie: { name: 'Où est Charlie ?', sub: 'Repère-le dans la foule de la ville', min: 2, max: 6, duration: 260000 },
   // 2 manches de 45 s + 4 s de changement de camp (fortgame.js)
-  fort: { name: 'Assaut du fort', sub: 'En équipes : attaque le fort, puis défends-le', min: 2, max: 4, duration: 94000 },
+  fort: { name: 'Assaut du fort', sub: 'En équipes : attaque le fort, puis défends-le', min: 2, max: 6, duration: 94000 },
   // règles et arbitre dans wagongame.js
-  wagon: { name: 'Défends la roulotte', sub: 'Escorte le chariot jusqu’à Red Rock malgré les hors-la-loi', min: 2, max: 4, duration: 90000 },
+  wagon: { name: 'Défends la roulotte', sub: 'Escorte le chariot jusqu’à Red Rock malgré les hors-la-loi', min: 2, max: 6, duration: 90000 },
   // en manches, chacun son tour : la partie s'arrête après la dernière manche (pintegame.js)
-  pinte: { name: 'La pinte', sub: 'Fais glisser ta chope au ras du bout du comptoir', min: 2, max: 4, duration: 900000 },
+  pinte: { name: 'La pinte', sub: 'Fais glisser ta chope au ras du bout du comptoir', min: 2, max: 6, duration: 900000 },
   // règles, parcours et arbitre dans minegame.js
   // course de 8 étapes ; s'arrête quand tout le monde est sorti, ou au bout de 2 min 15
-  mine: { name: 'La mine', sub: 'Course en wagonnet : accélère, aiguille, sors le premier', min: 2, max: 4, duration: 135000 },
+  mine: { name: 'La mine', sub: 'Course en wagonnet : accélère, aiguille, sors le premier', min: 2, max: 6, duration: 135000 },
   // règles, piste et arbitre dans coursegame.js ; s'arrête quand tout le monde est arrivé, ou au bout de 90 s
-  course: { name: 'La course de chevaux', sub: 'Saute les obstacles, cravache… sans épuiser ton cheval', min: 2, max: 4, duration: 90000 },
+  course: { name: 'La course de chevaux', sub: 'Saute les obstacles, cravache… sans épuiser ton cheval', min: 2, max: 6, duration: 90000 },
   // mini-RTS : carte, règles, arbitre et bots dans rtsgame.js
   // pas de limite de temps : la partie dure jusqu'au dernier fort debout (ou à la dernière alliance) ; 24 h pour l'horloge commune
-  rts: { name: 'Conquête de l’Ouest', sub: 'Bâtis ton fort, recrute, fais et défais les alliances', min: 2, max: 4, duration: 86400000 },
+  rts: { name: 'Conquête de l’Ouest', sub: 'Bâtis ton fort, recrute, fais et défais les alliances', min: 2, max: 6, duration: 86400000 },
   // FPS façon Doom dans la ville (fausse 3D) : carte, armes, règles, arbitre et bots dans fpsgame.js
-  fps: { name: 'Règlement de comptes', sub: 'FPS en ville : choisis tes armes, abats bandits et rivaux', min: 2, max: 4, duration: 240000 },
+  fps: { name: 'Règlement de comptes', sub: 'FPS en ville : choisis tes armes, abats bandits et rivaux', min: 2, max: 6, duration: 240000 },
   // la même ville sans bandits, entre joueurs (ou contre les bots) : seuls les frags comptent
-  fpsdm: { name: 'Mort ou vif', sub: 'FPS entre joueurs, sans bandits : seuls les frags comptent', min: 2, max: 4, duration: 240000, unit: 'frags' },
+  fpsdm: { name: 'Mort ou vif', sub: 'FPS entre joueurs, sans bandits : seuls les frags comptent', min: 2, max: 6, duration: 240000, unit: 'frags' },
 };
 
 export function rng(seed) {
@@ -405,6 +405,9 @@ export function shooterWorld(seed, n) {
   const targets = [];
   const busy = {};
   const dur = MODES.shooter.duration;
+  // à 5 ou 6 tireurs, les vagues sont un peu plus serrées et plus fournies (rien ne change jusqu'à 4)
+  const crowd = Math.max(0, n - 4);
+  const gapK = 1 - 0.07 * crowd;
 
   const onScreen = (spot, t) => {
     const c = camAt(t);
@@ -434,7 +437,7 @@ export function shooterWorld(seed, n) {
     });
     if (!ok.length) return null;
     const active = targets.filter((x) => x.t0 <= t0 && x.t1 > t0 && x.kind !== 'boss' && !x.arc).length;
-    if (!force && kind !== 'supply' && active >= (kind === 'crate' ? 8 : 6)) return null;
+    if (!force && kind !== 'supply' && active >= (kind === 'crate' ? 8 : 6 + crowd)) return null;
     const spot = ok[Math.floor(R() * ok.length)];
     if (spot.kind === 'roof' && kind === 'bandit') { fire[0] -= 200; t1 -= 200; }
     (busy[spot.id] ||= []).push([t0, t1]);
@@ -465,7 +468,7 @@ export function shooterWorld(seed, n) {
         if (r2 < 0.3) tryAdd('bottle', t + 100, progress);
         else if (r2 < 0.36) tryAdd('crate', t + 150, progress); // caisse posée sur un abri ou une étagère
       }
-      t += moving ? ri(slow[0], slow[1]) : ri(fast[0], fast[1]) - Math.round(progress * 150);
+      t += Math.round((moving ? ri(slow[0], slow[1]) : ri(fast[0], fast[1]) - Math.round(progress * 150)) * gapK);
     }
   };
   wave(STATION_START + 1500, STATION_END - 2000, [420, 740], [650, 1000]);
@@ -683,7 +686,8 @@ export const LASSO = {
   range: 130, rope: 0.55, horse: 0.11,
 };
 export const lassoHand = (x, y) => ({ x: x + 3, y: y - 38 });
-export const lassoStart = (i, n) => ({ x: [120, 66, 156, 96][i % 4], y: Math.round(LASSO.top + 12 + ((i + 0.5) * (LASSO.bottom - LASSO.top - 12)) / n) });
+// départ en quinconce : deux couloirs voisins ne partent jamais du même x (jusqu'à 6 chevaux)
+export const lassoStart = (i, n) => ({ x: [120, 66, 156, 96, 140, 74][i % 6], y: Math.round(LASSO.top + 12 + ((i + 0.5) * (LASSO.bottom - LASSO.top - 12)) / n) });
 
 // bx / fx : petites accélérations d'avant en arrière (zigzags du lièvre, de la poule)
 export const ANIMALS = {
@@ -722,10 +726,12 @@ export const biomeAt = (biomes, t) => {
   return b;
 };
 
-export function lassoWorld(seed) {
+export function lassoWorld(seed, n = 4) {
   const R = rng(seed);
   const between = (a, b) => a + R() * (b - a);
   const dur = MODES.lasso.duration;
+  // à 5 ou 6 cavaliers, les bêtes arrivent un peu plus serrées (rien ne change jusqu'à 4)
+  const gapK = 1 - 0.08 * Math.max(0, n - 4);
   const kinds = Object.entries(ANIMALS);
   const total = kinds.reduce((s, [, k]) => s + k.w, 0);
   const animals = [];
@@ -741,7 +747,7 @@ export function lassoWorld(seed) {
       ph: R() * Math.PI * 2, t1: Math.round(t + (W + 48 + 2 * bx) / Math.abs(vx)), pts: k.pts, r: k.r,
       bx, fx: k.fx || 0, v: Math.floor(R() * 4), // v : variante de robe
     });
-    t += between(450, 820) * (1 - (0.35 * t) / dur);
+    t += between(450, 820) * (1 - (0.35 * t) / dur) * gapK;
   }
   const order = Object.keys(LASSO_BIOMES);
   for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }

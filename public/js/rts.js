@@ -25,7 +25,7 @@ import {
 
 const TS = RTS.tile, MW = RTS.mapW, MH = RTS.mapH, COLS = RTS.cols, ROWS = RTS.rows;
 // écran : barre des ressources (0-12), vue sur la carte (12-178), panneau de commandes (178-216)
-const TOP = 12, PY = 178, VH = PY - TOP;
+const TOP = 12, PY = 178, VH = PY - TOP, PW = 257;
 const MM = { x: 323, y: 180, w: 60, h: 34 }; // mini-carte
 const OUT = S.OUT;
 const rd = Math.round;
@@ -788,7 +788,11 @@ export class RtsScene extends MiniScene {
   centerOn(x, y) { this.cam.x = 0; this.cam.y = 0; this.scroll(x - this.vw / 2, y - this.vh / 2); }
   get cx() { return rd(this.cam.x); }
   get cy() { return rd(this.cam.y); }
-  inView(m) { return m.y >= TOP && m.y < PY && m.x >= 0 && m.x < W; }
+  // haut du panneau : celui des pactes (une ligne par joueur) déborde sur la vue au-delà de 3 lignes (5 et 6 joueurs),
+  // à gauche seulement (PW : sa largeur), la mini-carte et les ordres restent en place
+  get panelY() { return this.diplo ? PY - Math.max(0, this.others().length - 3) * 12 : PY; }
+  inPanel(m) { return m.y >= PY || (m.y >= this.panelY && m.x < PW); }
+  inView(m) { return m.y >= TOP && m.y < PY && m.x >= 0 && m.x < W && !this.inPanel(m); }
   toWorld(m) { return { x: m.x / this.zoom + this.cx, y: (m.y - TOP) / this.zoom + this.cy }; }
   toScreen(x, y) { return { x: (x - this.cx) * this.zoom, y: (y - this.cy) * this.zoom + TOP }; }
   inMini(m) { return m.x >= MM.x && m.x < MM.x + MM.w && m.y >= MM.y && m.y < MM.y + MM.h; }
@@ -813,7 +817,7 @@ export class RtsScene extends MiniScene {
   // au doigt : glisser fait défiler la carte (pas depuis le panneau, ni en pinçant)
   onDrag(dx) {
     const d = this.drag;
-    if (!d || d.y0 < TOP || d.y0 >= PY) return;
+    if (!d || d.y0 < TOP || this.inPanel({ x: d.x0, y: d.y0 })) return;
     const py = d.py ?? d.y0;
     d.py = this.mouse.y;
     if (this.touches.size >= 2) return;
@@ -828,7 +832,9 @@ export class RtsScene extends MiniScene {
     const units = new Map(s.U.map(([id, owner, k, x, y, hp, face, rank = 0, xp = 0]) => [id, { id, owner, kind: UNIT_IDS[k], x: x / 2, y: y / 2, hp, face, rank, xp }]));
     const prev = this.snapB;
     this.snapA = prev;
-    this.snapB = { t: s.t, P: s.P, blds, units, at: this.now };
+    // écart entre deux instantanés (500 ms, plus à 5 et 6 joueurs) : on lisse les déplacements sur cette durée
+    const span = prev && s.t > prev.t ? clamp(s.t - prev.t, 100, 2000) : prev?.span || RTS.snapMs;
+    this.snapB = { t: s.t, P: s.P, blds, units, at: this.now, span };
     this.pending = (this.pending || []).filter((p) => this.now - p.at < 1500 && !blds.some((b) => b.x === p.x && b.y === p.y));
     this.pendingTrain = {};
     if (this.pendingUp && (this.now - this.pendingUp.at > 1500 || blds.some((b) => b.id === this.pendingUp.id && (b.up > 0 || b.lv > this.pendingUp.lv)))) this.pendingUp = null;
@@ -876,7 +882,7 @@ export class RtsScene extends MiniScene {
       if (+t1[i] > +t0[i] && this.playing) { sfx('power'); this.say(`${UNITS[k].tech[+t1[i] - 1].toUpperCase()} : ${PLURAL[k]} PLUS FORTS !`, '#8ad870', 2400); }
     });
     // tirs depuis l'instantané précédent, étalés dans le temps
-    for (const sh of s.S || []) this.pendingShots.push({ at: this.now + Math.random() * RTS.snapMs, sh });
+    for (const sh of s.S || []) this.pendingShots.push({ at: this.now + Math.random() * span, sh });
     // alerte : mes bâtiments perdent des PV
     let hurt = null;
     for (const b of blds) {
@@ -1135,7 +1141,7 @@ export class RtsScene extends MiniScene {
     } else if (mode === 'diplo') {
       // une ligne par joueur : nom et état (dessinés à part), alliance, dons, message
       others.forEach((j, k) => {
-        const y = PY + 2 + k * 12, st = this.dState(j);
+        const y = this.panelY + 2 + k * 12, st = this.dState(j);
         if (st === 'gone') return;
         if (st === 'in') {
           list.push({ type: 'pact', op: 'accept', to: j, x: 110, y, w: 23, h: 11 });
@@ -1167,7 +1173,7 @@ export class RtsScene extends MiniScene {
   // menu des messages tout faits, au-dessus du panneau
   sayItems() {
     if (this.sayTo == null) return [];
-    const w = 118, x = 254 - w, y0 = PY - 2 - WORDS.length * 10;
+    const w = 118, x = 254 - w, y0 = this.panelY - 2 - WORDS.length * 10;
     return WORDS.map((wd, k) => ({ w: k, x, y: y0 + k * 10, bw: w, h: 10 }));
   }
 
@@ -1377,11 +1383,11 @@ export class RtsScene extends MiniScene {
       // menu des messages : un choix l'envoie, un clic ailleurs le ferme
       const it = this.sayItems().find((s) => m.x >= s.x && m.x < s.x + s.bw && m.y >= s.y && m.y < s.y + s.h);
       if (it) { this.sayWord(it.w); return; }
-      const b = m.y >= PY && this.btnAt(m);
-      if (!(b && b.type === 'say')) { this.sayTo = null; if (m.y < PY) return; }
+      const b = this.inPanel(m) && this.btnAt(m);
+      if (!(b && b.type === 'say')) { this.sayTo = null; if (!this.inPanel(m)) return; }
     }
     if (this.inMini(m)) { this.miniDrag = true; const w = this.fromMini(m); this.centerOn(w.x, w.y); return; }
-    if (m.y >= PY || m.y < TOP) { const b = this.btnAt(m); if (b) this.press(b); return; }
+    if (this.inPanel(m) || m.y < TOP) { const b = this.btnAt(m); if (b) this.press(b); return; }
     if (!this.inView(m) || !this.can) return;
     const w = this.toWorld(m);
     if (e?.pointerType === 'touch') { if (!this.pinching) this.clickMap(w, false, true); return; }
@@ -1539,7 +1545,7 @@ export class RtsScene extends MiniScene {
   render(out) {
     const now = this.now;
     if (!this.world || !this.snapB) { out.fillStyle = OUT; out.fillRect(0, 0, W, H); return; }
-    const k = this.snapA ? clamp((now - this.snapB.at) / RTS.snapMs, 0, 1) : 1;
+    const k = this.snapA ? clamp((now - this.snapB.at) / this.snapB.span, 0, 1) : 1;
     const units = [];
     for (const u of this.snapB.units.values()) {
       const a = this.snapA?.units.get(u.id);
@@ -1597,8 +1603,8 @@ export class RtsScene extends MiniScene {
     this.drawBanner(out, now);
     if (now - (this.zoomShown ?? -1e9) < 900) {
       const txt = `ZOOM X${fmt(this.zoom)}`, w = rd(tw(txt)) + 8;
-      out.fillStyle = 'rgba(26,15,10,0.75)'; out.fillRect(W - w - 3, PY - 26, w, 11);
-      canvasText(out, txt, W - 3 - w / 2, PY - 24, { color: '#fdf6e0' });
+      out.fillStyle = 'rgba(26,15,10,0.75)'; out.fillRect(W - w - 3, this.panelY - 26, w, 11);
+      canvasText(out, txt, W - 3 - w / 2, this.panelY - 24, { color: '#fdf6e0' });
     }
   }
 
@@ -2096,17 +2102,24 @@ export class RtsScene extends MiniScene {
 
   // panneau de commandes
   drawPanel(ctx, now) {
-    const y0 = PY;
+    const y0 = PY, top = this.panelY;
+    if (top < y0) {
+      // pactes à 5 et 6 joueurs : le panneau monte sur la vue, à gauche
+      ctx.fillStyle = '#3a2416'; ctx.fillRect(0, top, PW, y0 - top);
+      ctx.fillStyle = '#6a4426'; ctx.fillRect(0, top, PW, 1);
+      ctx.fillStyle = OUT; ctx.fillRect(0, top + 1, PW, 1); ctx.fillRect(PW, top, 1, y0 - top);
+      for (let x = 0; x < PW; x += 31) { ctx.fillStyle = '#331f12'; ctx.fillRect(x, top + 2, 1, y0 - top); }
+    }
     ctx.fillStyle = '#3a2416'; ctx.fillRect(0, y0, W, H - y0);
-    ctx.fillStyle = '#6a4426'; ctx.fillRect(0, y0, W, 1);
-    ctx.fillStyle = OUT; ctx.fillRect(0, y0 + 1, W, 1);
+    ctx.fillStyle = '#6a4426'; ctx.fillRect(top < y0 ? PW : 0, y0, W, 1);
+    ctx.fillStyle = OUT; ctx.fillRect(top < y0 ? PW : 0, y0 + 1, W, 1);
     for (let x = 0; x < W; x += 31) { ctx.fillStyle = '#331f12'; ctx.fillRect(x, y0 + 2, 1, H - y0 - 2); }
     ctx.fillStyle = '#5e3a1e'; ctx.fillRect(256, y0 + 3, 1, 33); ctx.fillRect(321, y0 + 3, 1, 33);
     const mode = this.mode;
     if (mode === 'none') ctx.fillRect(153, y0 + 3, 1, 33);
     const [gold, food] = this.my;
     const can = this.can;
-    const hov = !this.touch && this.mouse.in && (this.mouse.y >= PY || this.mouse.y < TOP) ? this.btnAt(this.mouse) : null;
+    const hov = !this.touch && this.mouse.in && (this.inPanel(this.mouse) || this.mouse.y < TOP) ? this.btnAt(this.mouse) : null;
     this.hoverBtn = hov;
     const o = this.my[4];
     const site = this.site();
@@ -2197,6 +2210,12 @@ export class RtsScene extends MiniScene {
       } else if (b.type === 'say') {
         ctx.drawImage(icon('talk'), b.x + 2, b.y + 1);
         canvasText(ctx, 'MOT', b.x + b.w - 3, b.y + 2, { align: 'right', color: on ? '#fdf6e0' : '#e8d8b8' });
+      } else if (b.type === 'attack' && b.w < 18) {
+        // 4 ou 5 adversaires (5 et 6 joueurs) : bouton étroit, un trait à sa couleur, ses sabres (allié : la poignée de main)
+        ctx.fillStyle = OUT; ctx.fillRect(b.x + 2, b.y + 1, b.w - 4, 3);
+        ctx.fillStyle = this.color(b.target); ctx.fillRect(b.x + 3, b.y + 2, b.w - 6, 1);
+        if (this.allied(this.me, b.target)) ctx.drawImage(icon('pact'), b.x + Math.floor((b.w - 9) / 2), b.y + 2);
+        else swords(ctx, b.x + Math.floor((b.w - 5) / 2), b.y + 4, this.color(b.target));
       } else if (b.type === 'attack' && this.allied(this.me, b.target)) {
         // allié : la poignée de main à la place des sabres
         ctx.drawImage(icon('pact'), b.x + 1, b.y + 1);
@@ -2232,8 +2251,8 @@ export class RtsScene extends MiniScene {
     this.info = null;
     if (!this.alive && this.t >= 0) info = 'TON FORT EST TOMBÉ : TU REGARDES LA FIN DE LA PARTIE';
     if (info) {
-      ctx.fillStyle = 'rgba(26,15,10,0.8)'; ctx.fillRect(0, PY - 11, W, 11);
-      canvasText(ctx, info, W / 2, PY - 9, { color: '#fdf6e0' });
+      ctx.fillStyle = 'rgba(26,15,10,0.8)'; ctx.fillRect(0, top - 11, W, 11);
+      canvasText(ctx, info, W / 2, top - 9, { color: '#fdf6e0' });
     }
     // terrain survolé : petite étiquette discrète en haut à droite de la vue
     if (this.terrHint && !info) {
@@ -2300,7 +2319,7 @@ export class RtsScene extends MiniScene {
   drawDiploRows(ctx) {
     const others = this.others();
     others.forEach((j, k) => {
-      const y = PY + 2 + k * 12, st = this.dState(j), col = this.color(j);
+      const y = this.panelY + 2 + k * 12, st = this.dState(j), col = this.color(j);
       ctx.fillStyle = OUT; ctx.fillRect(2, y + 2, 7, 7);
       ctx.fillStyle = col; ctx.fillRect(3, y + 3, 5, 5);
       canvasText(ctx, this.name(j).toUpperCase().slice(0, 7), 11, y + 2, { align: 'left', color: st === 'gone' ? '#7a6a5a' : col });
@@ -2519,7 +2538,7 @@ export class RtsScene extends MiniScene {
     const segW = (s) => (typeof s === 'string' ? tw(s) + 3 : 11);
     const w = rd(Math.max(tw(title), ...lines.map((l) => l.reduce((a, s) => a + segW(s), 0)))) + 10;
     const h = 13 + lines.length * 9;
-    const x = clamp(rd(b.x + b.w / 2 - w / 2), 1, W - w - 1), y = b.y < TOP ? TOP + 2 : PY - h - 2;
+    const x = clamp(rd(b.x + b.w / 2 - w / 2), 1, W - w - 1), y = b.y < TOP ? TOP + 2 : this.panelY - h - 2;
     ctx.fillStyle = OUT; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
     ctx.fillStyle = '#2a1a10'; ctx.fillRect(x, y, w, h);
     ctx.fillStyle = '#6a4426'; ctx.fillRect(x, y, w, 1);

@@ -587,8 +587,8 @@ function renderSeats(l, isHost) {
   const seats = $('seats');
   seats.innerHTML = '';
   const canEdit = isHost && !l.spinning;
-  // toujours 4 places affichées ; les vides servent à inviter (ou à asseoir un bot)
-  const nSeats = Math.max(l.players.length, l.max || 4);
+  // toujours 6 places affichées ; les vides servent à inviter (ou à asseoir un bot)
+  const nSeats = Math.max(l.players.length, l.max || 6);
   for (let i = 0; i < nSeats; i++) {
     const p = l.players[i];
     const d = document.createElement('div');

@@ -134,8 +134,12 @@ export const FPS_EV = {
   fade: 400, // le bandeau apparaît et disparaît en fondu
 };
 
+// Taille de la table pour régler la bande de bandits : chaque joueur compte pour un jusqu'à 4, pour un demi au-delà
+// (à 6, la ville déborderait de bandits). fpsgame.js s'en sert aussi pour le nombre de bandits en temps normal.
+export const fpsCrowd = (n) => Math.min(n, 4) + Math.max(0, n - 4) / 2;
+
 // Calendrier des événements : [{ k, id, t0, t1, seed, mods }], trié, sans chevauchement.
-// n : nombre de joueurs (bots compris : la bande grossit à 3 ou 4) ; zones : quartiers de la carte
+// n : nombre de joueurs (bots compris : la bande grossit de 3 à 6) ; zones : quartiers de la carte
 // (world.zones), pour ne pas faire passer de train sans gare. seed : de quoi placer les sacs d'or, les points
 // de chute de la tornade, etc., de la même façon dans chaque navigateur ; mods : effets, ajustés à la table.
 export function fpsEvents(seed, duration, n = 2, zones = null) {
@@ -151,7 +155,7 @@ export function fpsEvents(seed, duration, n = 2, zones = null) {
       const t0 = Math.round(a + R() * (b - a));
       if (!free(t0, t0 + def.ms)) continue;
       const mods = { ...def.mods };
-      if (mods.npcMax) mods.npcMax += Math.max(0, n - 2) * 2;
+      if (mods.npcMax) mods.npcMax += Math.max(0, fpsCrowd(n) - 2) * 2;
       if (mods.gold) mods.gold += Math.max(0, n - 2) * 2;
       events.push({ id, t0, t1: t0 + def.ms, seed: Math.floor(R() * 0x7fffffff), mods });
       return true;

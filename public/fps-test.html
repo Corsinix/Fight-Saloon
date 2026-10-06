@@ -5,7 +5,9 @@
 import { FpsScene, FpsDmScene } from './js/fps.js';
 import { FpsGame } from './js/fpsgame.js';
 window.onerror = (m, s, l, c, e) => { (window.errs ||= []).push(String(e?.stack || m)); };
-const players = [{ key: 'me', name: 'Moi', character: {} }, { key: 'b1', name: 'Bot1', bot: true, character: { hat: 'sombrero' } }, { key: 'b2', name: 'Bot2', bot: true, character: {} }, { key: 'b3', name: 'Bot3', bot: true, character: {} }];
+// &bots=5 : nombre de bots (3 par défaut, jusqu'à 5 : six à table)
+const nBots = Math.max(1, Math.min(5, +new URLSearchParams(location.search).get('bots') || 3));
+const players = [{ key: 'me', name: 'Moi', character: {} }, ...Array.from({ length: nBots }, (_, i) => ({ key: `b${i + 1}`, name: `Bot${i + 1}`, bot: true, character: i ? {} : { hat: 'sombrero' } }))];
 const dm = new URLSearchParams(location.search).has('dm');
 // &seed=123 : toujours la même carte (plan, décor, retournement), pour des captures qu'on peut refaire
 const seed = new URLSearchParams(location.search).get('seed');

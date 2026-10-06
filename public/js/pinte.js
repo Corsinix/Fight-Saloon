@@ -854,17 +854,17 @@ export class PinteScene extends MiniScene {
       canvasText(ctx, 'TOUTES LES CHOPES SONT TOMBÉES !', W / 2, 46, { size: 16, color: '#f0705a' });
       return;
     }
-    const names = [...new Set(best.map((r) => (r.o === this.me ? 'TOI' : this.name(r.o).toUpperCase())))].join(' ET ');
+    const names = [...new Set(best.map((r) => (r.o === this.me ? 'TOI' : this.name(r.o).slice(0, 10).toUpperCase())))].join(' ET ');
     canvasText(ctx, `${names} : LA PLUS PROCHE !`, W / 2, 46, { size: names.length > 12 ? 8 : 16, color: '#f8d070' });
-    // une colonne par joueur : son écart (ou TOMBÉE) et ses points de la manche
-    const players = this.state.players, cw = W / players.length;
+    // une colonne par joueur : son écart (ou TOMBÉE) et ses points de la manche (à six, 64 px chacune : noms plus courts)
+    const players = this.state.players, cw = W / players.length, nl = cw < 70 ? 8 : 10;
     players.forEach((p, i) => {
       const mine = c.res.filter((r) => r.o === i);
       const x = cw * (i + 0.5);
       const threw = c.order.includes(i);
       const cm = mine.length ? `${Math.min(...mine.map((r) => r.cm))} CM` : threw ? 'TOMBÉE' : '—';
       const pts = mine.reduce((s, r) => s + r.pts, 0);
-      canvasText(ctx, i === this.me ? 'TOI' : p.name.slice(0, 10).toUpperCase(), x, 66, { color: this.color(i) });
+      canvasText(ctx, i === this.me ? 'TOI' : p.name.slice(0, nl).toUpperCase(), x, 66, { color: this.color(i) });
       canvasText(ctx, cm, x, 77, { color: mine.length ? '#fdf6e0' : '#f0705a' });
       canvasText(ctx, `+${pts}`, x, 88, { color: mine.some((r) => r.best) ? '#f8d070' : '#a89880' });
     });

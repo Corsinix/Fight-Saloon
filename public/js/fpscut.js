@@ -10,14 +10,15 @@ import { sfx } from './audio.js';
 import * as S from './sprites.js';
 import { W, H, rng } from './worlds.js';
 import { CUT_FADE } from './cutscene.js';
-import { FPS_CUT, cellAt } from './fpsgame.js';
+import { FPS_CUT, fpsCutLen, cellAt } from './fpsgame.js';
 import * as A from './fpsart.js';
 
-// début de chaque plan (ms) ; la cinématique dure FPS_CUT
-const T = { station: 0, street: 1600, gang: 3200, faces: 4500, standoff: 8500 };
+// début de chaque plan (ms) ; la cinématique dure FPS_CUT jusqu'à 4 joueurs. Au-delà, elle s'allonge (fpsCutLen) :
+// les présentations durent plus longtemps, et le face-à-face arrive d'autant plus tard (this.T)
+const T0 = { station: 0, street: 1600, gang: 3200, faces: 4500, standoff: 8500 };
 const BAR = 22; // bandes noires du format cinéma
 const INK = '#0a0503', CREAM = '#fdf6e0', GOLD = '#f8d070';
-const NUM = ['', 'UN', 'DEUX', 'TROIS', 'QUATRE'];
+const NUM = ['', 'UN', 'DEUX', 'TROIS', 'QUATRE', 'CINQ', 'SIX'];
 const TOWNS = ['SILVER CREEK', 'RED ROCK', 'COYOTE SPRINGS', 'BUZZARD GULCH', 'SAN LORENZO', 'DRY BONES', 'TUMBLE FLATS', 'PIEDRA NEGRA'];
 const EPITHETS = ['LE BON', 'LA BRUTE', 'LE TRUAND', 'L\'ÉTRANGER', 'LE SANS-NOM', 'LA GÂCHETTE', 'LE CROQUE-MORT', 'LE PRÉDICATEUR',
   'LE JOUEUR', 'LE CHASSEUR DE PRIMES', 'LE PIED-TENDRE', 'LE HORS-LA-LOI'];
@@ -32,11 +33,12 @@ const smooth = (k) => { k = clamp01(k); return k * k * (3 - 2 * k); };
 export class FpsCut {
   constructor(scene, seed) {
     this.sc = scene;
-    this.len = FPS_CUT;
     const w = scene.world;
     const players = scene.state.players;
     const R = rng((seed ^ 0x51ed27) >>> 0);
     this.n = players.length;
+    this.len = fpsCutLen(this.n);
+    const T = this.T = { ...T0, standoff: T0.standoff + this.len - FPS_CUT };
     this.me = scene.me;
     this.names = players.map((p) => (p.name || '???').toUpperCase());
     this.colors = players.map((_, i) => scene.color(i));
@@ -94,19 +96,22 @@ export class FpsCut {
       { kind: 'bandit', dy: 0, ahead: 0.3 },
       { kind: 'brute', dy: 0.85, ahead: -0.2 },
     ].map((b) => ({ ...b, look: Math.floor(R() * 6) }));
-    // les joueurs : chacun à un endroit de la rue, la caméra arrive tantôt de l'est, tantôt de l'ouest
+    // les joueurs : chacun à un endroit de la rue (de x = 20 à 38, plus serrés au-delà de 4 joueurs),
+    // la caméra arrive tantôt de l'est, tantôt de l'ouest
     this.per = (T.standoff - T.faces) / Math.max(1, this.n);
+    const step = 18 / Math.max(3, this.n - 1);
     this.spots = players.map((_, i) => {
       const dir = i % 2 ? 1 : -1; // sens du regard de la caméra (+1 : vers l'est)
-      for (const x of [20 + i * 6, 23 + i * 6, 17 + i * 6, 29, 35, 26, 32, 38].map((x) => x + ox)) {
+      const x0 = 20 + i * step;
+      for (const x of [x0, x0 + 3, x0 - 3, 29, 35, 26, 32, 38].map((x) => x + ox)) {
         const camX = x - dir * 3.7;
         const y = LANES.find((yy) => free(x, yy) && clearX(x - dir * 0.6, camX, yy, 0.25));
         if (y != null) return { x, y, dir };
       }
-      return { x: 26 + i * 4 + ox, y: 23.5 + oy, dir };
+      return { x: x0 + ox, y: 23.5 + oy, dir };
     });
-    // le face-à-face : un cercle dégagé au milieu de la rue, et l'arc de cercle que suit la caméra
-    this.ring = this.n <= 2 ? 1.2 : 1.45;
+    // le face-à-face : un cercle dégagé au milieu de la rue (plus large à 5 ou 6), et l'arc de cercle que suit la caméra
+    this.ring = this.n <= 2 ? 1.2 : this.n <= 4 ? 1.45 : 1.7;
     const arc = (x, y) => {
       for (let k = 0; k <= 1; k += 0.1) { const [cx, cy] = this.orbit(x, y, k); if (!free(cx, cy, 0.25)) return false; }
       return true;
@@ -159,6 +164,7 @@ export class FpsCut {
   // ---------------------------------------------------------- caméra et acteurs (dessinés par fps.js)
   // null pendant le fondu de sortie : on revoit alors la vue du jeu, sous l'armurerie.
   camera(el, now) {
+    const T = this.T;
     if (el >= this.len - CUT_FADE) return null;
     if (el < T.street) return this.station(el / (T.street - T.station), now);
     if (el < T.gang) return this.street((el - T.street) / (T.gang - T.street), now);
@@ -245,6 +251,7 @@ export class FpsCut {
     // les sons déjà passés (reconnexion en pleine cinématique) ne sont pas rejoués
     if (!this.fired) this.fired = new Set(this.cues.filter(([at]) => at < el - 150));
     for (const c of this.cues) if (el >= c[0] && !this.fired.has(c)) { this.fired.add(c); sfx(c[1]); }
+    const T = this.T;
     const L = this.len;
     const black = (a) => { if (a > 0) { ctx.fillStyle = `rgba(10,5,3,${Math.min(1, a)})`; ctx.fillRect(0, 0, W, H); } };
     // fin : le noir se lève sur l'armurerie

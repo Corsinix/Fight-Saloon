@@ -30,7 +30,7 @@ export const MINE = {
   // l'embranchement, prend l'aiguillage vers l'autre voie et s'y renverse (le temps que l'on parcoure 130 px)
   runaway: { start: 70, wake: 300, roll: 130 },
   tolerance: 70, // écart (px) toléré par l'hôte entre la position annoncée et l'objet touché
-  arrival: [150, 100, 60, 30], // bonus d'arrivée selon le rang
+  arrival: [150, 100, 60, 30, 15, 5], // bonus d'arrivée selon le rang (jusqu'à 6 joueurs)
 };
 
 // Les étapes (début en fraction du parcours) et leur caméra (mine.js)

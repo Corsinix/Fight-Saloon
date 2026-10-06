@@ -9,15 +9,17 @@
 import { MODES, HELP_MS, rng } from './worlds.js';
 import { mapKit, MW, MH } from './fpskit.js';
 import { EXTRA_MAPS } from './fpsmaps/index.js';
-import { fpsEvents, fpsMods, fpsStarted, fpsSpot, fpsSpots, FpsEventLedger, FPS_GOLD, FPS_DIABLO } from './fpsevents.js';
+import { fpsEvents, fpsMods, fpsStarted, fpsSpot, fpsSpots, fpsCrowd, FpsEventLedger, FPS_GOLD, FPS_DIABLO } from './fpsevents.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 
-// cinématique d'ouverture tournée dans le moteur (fpscut.js) : plus longue que celle des autres mini-jeux
+// cinématique d'ouverture tournée dans le moteur (fpscut.js) : plus longue que celle des autres mini-jeux,
+// et un peu plus encore au-delà de 4 joueurs (chacun garde le temps d'être présenté) ; n : joueurs, bots compris
 export const FPS_CUT = 11000;
-const FPS_COUNTDOWN = FPS_CUT + HELP_MS;
+const FPS_CUT_EXTRA = 800; // ms de plus par joueur au-delà de 4
+export const fpsCutLen = (n) => FPS_CUT + Math.max(0, n - 4) * FPS_CUT_EXTRA;
 
 export const FPS = {
   hp: 100, maxArmor: 50,
@@ -36,6 +38,7 @@ export const FPS = {
   fire: { life: 6000, r: 0.8, dmg: 8, every: 450, hay: 8000, lamp: 3500 }, // flaques de feu : dégâts toutes les 450 ms
   prop: { back: 45000, fall: 380, crush: 70, loot: 0.3 }, // décor détruit : il revient au bout de 45 s
   bar: { hp: 25, every: 25000 }, // un whisky au comptoir du saloon ou de la cantina (E), toutes les 25 s
+  // bandits simultanés : base + per par joueur (au-delà de 4 joueurs, la moitié : voir fpsCrowd)
   npc: { base: 4, per: 2, every: [2200, 3600], first: 4000 },
 };
 
@@ -964,6 +967,7 @@ export class FpsGame {
     this.dm = isDm(kind); // « Mort ou vif » : pas de bandits, seuls les frags comptent
     this.seed = seed >>> 0;
     this.duration = MODES[kind].duration;
+    this.countdown = fpsCutLen(players.length) + HELP_MS; // la cinématique, puis le panneau des règles
     this.world = fpsWorld(this.seed, players.length, kind);
     this.p = players.map((pl, i) => ({
       key: pl.key, name: pl.name, character: pl.character, bot: !!pl.bot,
@@ -1001,8 +1005,8 @@ export class FpsGame {
   mods(t = this.t) { return fpsMods(this.world.events, t); }
 
   start() {
-    this.startAt = Date.now() + FPS_COUNTDOWN;
-    this.push({ type: 'mgStart', kind: this.kind, seed: this.seed, countdown: FPS_COUNTDOWN, duration: this.duration });
+    this.startAt = Date.now() + this.countdown;
+    this.push({ type: 'mgStart', kind: this.kind, seed: this.seed, countdown: this.countdown, duration: this.duration });
     return this.flush();
   }
 
@@ -1063,7 +1067,7 @@ export class FpsGame {
     if (!a || typeof a !== 'object') return { error: 'Action invalide.' };
     const t = this.t;
     const p = this.p[i];
-    if (t < -FPS_COUNTDOWN || t > this.duration + 600 || p.left) return { events: [] };
+    if (t < -this.countdown || t > this.duration + 600 || p.left) return { events: [] };
     const num = (...k) => k.every((x) => Number.isFinite(a[x]));
     if (a.kind === 'spawn') {
       this.spawn(i, a.lo, t);
@@ -1682,17 +1686,18 @@ export class FpsGame {
       for (const ev of fpsStarted(this.world.events, prev, t)) this.startEvent(ev, t);
       // bandits
       const alive = this.npcs.filter((n) => n.alive && n.kind !== 'diablo').length;
-      const max = FPS.npc.base + FPS.npc.per * this.p.filter((p) => !p.left).length + (mods.npcMax || 0);
+      const crowd = fpsCrowd(this.p.filter((p) => !p.left).length);
+      const max = FPS.npc.base + FPS.npc.per * crowd + (mods.npcMax || 0);
       if (t >= this.nextNpc && !this.dm) {
         if (alive < max) this.spawnNpc(t);
         this.nextNpc = t + rnd(...FPS.npc.every) / (mods.npcRate || 1);
       }
       for (const n of this.npcs) if (n.alive) this.npcTick(n, t, dt);
       if (this.npcs.length > 80) this.npcs = this.npcs.filter((n) => n.alive);
-      // caisses
+      // caisses (à 5 ou 6 joueurs, elles tombent un peu plus souvent : il y a plus de monde pour se les disputer)
       if (t >= this.nextCrate) {
         this.spawnCrate(t);
-        this.nextCrate = t + rnd(...FPS.crateEvery) / (mods.crateRate || 1);
+        this.nextCrate = t + rnd(...FPS.crateEvery) / ((mods.crateRate || 1) * Math.max(1, crowd / 4));
       }
       for (const c of [...this.crates]) if (t >= c.t1) {
         this.crates.splice(this.crates.indexOf(c), 1);

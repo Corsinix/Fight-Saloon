@@ -12,7 +12,8 @@
 // une cible précise). Les collines allongent la portée des tireurs, les bois protègent des balles.
 // La carte vient d'une graine (chaque navigateur la recalcule) : un décor tiré au hasard parmi plusieurs
 // (prairie et rivière, canyon, sierra enneigée, bayou, salines), chacun avec ses terrains et sa disposition.
-// L'hôte simule tout (économie, unités, combats) et envoie un instantané de la partie 2 fois par seconde.
+// L'hôte simule tout (économie, unités, combats) et envoie un instantané de la partie 2 fois par seconde
+// (un peu moins souvent à 5 et 6 joueurs, pour rester sous la limite d'envois de Supabase).
 // Même interface que MiniGame (mini.js) pour net.js.
 import { MODES, COUNTDOWN, rng } from './worlds.js';
 
@@ -22,7 +23,8 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 export const RTS = {
   tile: 8, cols: 96, rows: 54, // la carte fait 768 × 432 px : l'écran n'en montre qu'une partie (caméra, rts.js)
   mapW: 768, mapH: 432,
-  snapMs: 500, // un instantané toutes les 500 ms (un message par joueur : Supabase limite à ~10 envois par seconde)
+  snapMs: 500, // un instantané toutes les 500 ms (un message par joueur : Supabase limite à ~10 envois par seconde) ;
+  snapPer: 150, // au-delà de 3 joueurs à distance, 150 ms de plus par joueur à distance (6 joueurs : 750 ms, moins de 7 envois par seconde)
   territory: 76, // rayon constructible autour du fort (px) ; les mines et les tours l'étendent (BUILDINGS.reach)
   popCap: 40, popBase: 10, popRanch: 5, // population : 10, +5 par ranch terminé (+2 par niveau du ranch), 40 au plus
   regen: { fort: 3, other: 1.5, calm: 8000 }, // PV/s regagnés après 8 s sans dégâts
@@ -32,6 +34,7 @@ export const RTS = {
   counter: 1.6, // dégâts d'une unité contre celle qu'elle contre (UNITS.strong)
   leash: 64, // une unité postée poursuit un ennemi jusqu'à cette distance de son poste
   maxSel: 80, // unités par ordre
+  flowCache: 320, flowBudget: 16, // cartes des distances gardées en mémoire ; calculées au plus par tick (~0,6 ms chacune)
 };
 
 // Terrains : vitesse de déplacement (0 = infranchissable), constructible ou non ;
@@ -180,7 +183,14 @@ export function fortSpots(n, R = Math.random) {
     return v === 0 ? [[7, 27], [88, 27]] : v === 1 ? [[8, 9], [87, 44]] : [[8, 44], [87, 9]];
   }
   if (n === 3) return R() < 0.5 ? [[7, 27], [88, 9], [88, 45]] : [[88, 27], [7, 9], [7, 45]];
-  return [[8, 8], [87, 8], [8, 45], [87, 45]];
+  if (n === 4) return [[8, 8], [87, 8], [8, 45], [87, 45]];
+  // à 5 et 6 : en hexagone, de part et d'autre de la bande du milieu (x 38-58 : rivière, torrents, lacs),
+  // chaque fort à 30 cases au moins de ses voisins
+  if (n === 5) {
+    const s = [[7, 27], [32, 7], [32, 46], [87, 9], [87, 45]];
+    return R() < 0.5 ? s : s.map(([x, y]) => [COLS - 1 - x, y]); // trois à gauche, ou trois à droite
+  }
+  return [[7, 27], [32, 7], [63, 7], [88, 27], [63, 46], [32, 46]]; // (pas de fort au centre : il aurait trop de voisins)
 }
 
 const COLS = RTS.cols, ROWS = RTS.rows;
@@ -338,12 +348,16 @@ export function rtsWorld(seed, n) {
   }
   const world = { seed, n, biome, tiles, forts, veins: [] };
   // tous les forts doivent être reliés au premier : sinon on taille un passage (pont sur l'eau, rocher dégagé)
-  for (let pass = 0; pass < 3; pass++) {
-    const reach = flowField(world, [forts[0][1] * COLS + forts[0][0]]);
-    const cut = forts.filter(([fx, fy]) => !Number.isFinite(reach[fy * COLS + fx]));
+  // vers le plus proche des forts déjà reliés
+  let reach = null;
+  for (let pass = 0; pass <= forts.length; pass++) {
+    reach = flowField(world, [forts[0][1] * COLS + forts[0][0]]);
+    const linked = forts.filter(([fx, fy]) => Number.isFinite(reach[fy * COLS + fx]));
+    const cut = forts.filter((f) => !linked.includes(f));
     if (!cut.length) break;
     for (const [fx, fy] of cut) {
-      const [gx, gy] = forts[0], steps = Math.ceil(Math.hypot(gx - fx, gy - fy) * 2);
+      const [gx, gy] = linked.reduce((a, g) => (Math.hypot(g[0] - fx, g[1] - fy) < Math.hypot(a[0] - fx, a[1] - fy) ? g : a));
+      const steps = Math.ceil(Math.hypot(gx - fx, gy - fy) * 2);
       for (let s = 0; s <= steps; s++) {
         const c = Math.round(fx + ((gx - fx) * s) / steps), r = Math.round(fy + ((gy - fy) * s) / steps);
         for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
@@ -355,73 +369,90 @@ export function rtsWorld(seed, n) {
     }
   }
 
+  reach = flowField(world, [forts[0][1] * COLS + forts[0][0]]);
+
   // filons : un d'or et un de minerai près de chaque fort (départ équitable), d'autres au hasard, plus disputés
-  const free2 = (c, r) => [[0, 0], [1, 0], [0, 1], [1, 1]].every(([dx, dy]) => buildable(world, c + dx, r + dy))
+  const sq = [[0, 0], [1, 0], [0, 1], [1, 1]];
+  const free2 = (c, r) => sq.every(([dx, dy]) => buildable(world, c + dx, r + dy) && Number.isFinite(reach[(r + dy) * COLS + c + dx]))
     && !world.veins.some((v) => Math.abs(v.x - c) < 4 && Math.abs(v.y - r) < 4)
     && !forts.some(([fx, fy]) => Math.abs(c + 0.5 - fx) < 3 && Math.abs(r + 0.5 - fy) < 3);
-  const place = (kind, test, tries = 400) => {
+  const add = (kind, c, r) => world.veins.push({ id: world.veins.length, x: c, y: r, kind });
+  // box : [c0, r0, c1, r1], la zone où l'on cherche (toute la carte par défaut)
+  const place = (kind, test, box = [0, 0, COLS - 2, ROWS - 2], tries = 400) => {
+    const [c0, r0, c1, r1] = [Math.max(0, box[0]), Math.max(0, box[1]), Math.min(COLS - 2, box[2]), Math.min(ROWS - 2, box[3])];
     for (let k = 0; k < tries; k++) {
-      const c = K.ri(0, COLS - 2), r = K.ri(0, ROWS - 2);
-      if (free2(c, r) && test(c, r)) { world.veins.push({ id: world.veins.length, x: c, y: r, kind }); return true; }
+      const c = K.ri(c0, c1), r = K.ri(r0, r1);
+      if (free2(c, r) && test(c, r)) { add(kind, c, r); return true; }
     }
     return false;
   };
-  for (const [fx, fy] of forts) {
-    for (const kind of ['gold', 'ore']) place(kind, (c, r) => { const d = Math.hypot(c + 1 - fx, r + 1 - fy); return d > 4.5 && d < 8; });
-  }
+  // autour d'un fort, entre dmin et dmax cases ; si le terrain ne s'y prête pas (marais, bois…), on dégage la place
+  const ring = (kind, fx, fy, dmin, dmax) => {
+    const test = (c, r) => { const d = Math.hypot(c + 1 - fx, r + 1 - fy); return d > dmin && d < dmax; };
+    const box = [fx - dmax - 1, fy - dmax - 1, fx + dmax - 1, fy + dmax - 1];
+    if (place(kind, test, box)) return;
+    for (let k = 0; k < 400; k++) {
+      const c = K.ri(Math.max(0, box[0]), Math.min(COLS - 2, box[2])), r = K.ri(Math.max(0, box[1]), Math.min(ROWS - 2, box[3]));
+      if (!test(c, r) || world.veins.some((v) => Math.abs(v.x - c) < 4 && Math.abs(v.y - r) < 4)) continue;
+      if (!sq.every(([dx, dy]) => K.dry(K.get(c + dx, r + dy))) || !sq.some(([dx, dy]) => Number.isFinite(reach[(r + dy) * COLS + c + dx]))) continue;
+      for (const [dx, dy] of sq) K.set(c + dx, r + dy, base);
+      add(kind, c, r);
+      return;
+    }
+  };
+  for (const [fx, fy] of forts) for (const kind of ['gold', 'ore']) ring(kind, fx, fy, 4.5, 8);
   // plus loin, des filons à conquérir : il faut étendre son territoire (mines, tours) pour les atteindre
-  for (const [fx, fy] of forts) place('ore', (c, r) => { const d = Math.hypot(c + 1 - fx, r + 1 - fy); return d > 11 && d < 16; });
-  const extra = K.ri(8, 11);
-  for (let k = 0; k < extra; k++) place(k < 5 ? 'gold' : 'ore', (c) => c > 22 && c < COLS - 24);
+  for (const [fx, fy] of forts) ring('ore', fx, fy, 11, 16);
+  // les filons disputés : loin de tous les forts (entre deux voisins, ou au milieu de la carte) ; davantage à 5 et 6
+  const far = (c, r) => forts.every(([fx, fy]) => Math.hypot(c + 1 - fx, r + 1 - fy) > 13);
+  const extra = K.ri(8, 11) + Math.max(0, n - 4) * 2;
+  for (let k = 0; k < extra; k++) place(k < 5 + Math.max(0, n - 4) ? 'gold' : 'ore', (c, r) => (n > 4 || (c > 22 && c < COLS - 24)) && far(c, r));
   for (let k = 0; k < 4; k++) place('ore', () => true);
   return world;
 }
 
 // ------------------------------------------------------------ chemins
 // Distance (en secondes de marche, terrain compris) de chaque case jusqu'au but : les unités descendent la pente.
+// Dijkstra sur un tas en tableaux typés (réutilisés d'un appel à l'autre) : à 6 armées, beaucoup de buts à calculer.
 const DIRS = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414]];
+const FF = { speed: new Float32Array(COLS * ROWS), dist: new Float64Array(COLS * ROWS), hk: new Float64Array(COLS * ROWS * 9), hv: new Int32Array(COLS * ROWS * 9) };
 export function flowField(world, goals) {
-  const N = COLS * ROWS;
-  const dist = new Float64Array(N).fill(Infinity);
-  const heap = [];
+  const N = COLS * ROWS, { speed, dist, hk, hv } = FF;
+  for (let i = 0; i < N; i++) speed[i] = TERRAIN[world.tiles[i]].speed;
+  dist.fill(Infinity);
+  let n = 0;
   const push = (d, i) => {
-    heap.push([d, i]);
-    let k = heap.length - 1;
-    while (k > 0) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; }
-  };
-  const pop = () => {
-    const top = heap[0], last = heap.pop();
-    if (heap.length) {
-      heap[0] = last;
-      let k = 0;
-      for (;;) {
-        const l = 2 * k + 1, r = l + 1;
-        let m = k;
-        if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
-        if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
-        if (m === k) break;
-        [heap[m], heap[k]] = [heap[k], heap[m]];
-        k = m;
-      }
-    }
-    return top;
+    let k = n++;
+    while (k > 0) { const p = (k - 1) >> 1; if (hk[p] <= d) break; hk[k] = hk[p]; hv[k] = hv[p]; k = p; }
+    hk[k] = d; hv[k] = i;
   };
   for (const g of goals) { dist[g] = 0; push(0, g); }
-  while (heap.length) {
-    const [d, i] = pop();
+  while (n) {
+    const d = hk[0], i = hv[0];
+    // on retire la tête : le dernier élément redescend
+    const ld = hk[--n], li = hv[n];
+    let k = 0;
+    for (;;) {
+      const l = 2 * k + 1;
+      if (l >= n) break;
+      const m = l + 1 < n && hk[l + 1] < hk[l] ? l + 1 : l;
+      if (hk[m] >= ld) break;
+      hk[k] = hk[m]; hv[k] = hv[m]; k = m;
+    }
+    hk[k] = ld; hv[k] = li;
     if (d > dist[i]) continue;
     const c = i % COLS, r = (i - c) / COLS;
-    for (const [dx, dy, len] of DIRS) {
-      const nc = c + dx, nr = r + dy;
-      const sp = speedAt(world, nc, nr);
+    for (let e = 0; e < 8; e++) {
+      const dx = DIRS[e][0], dy = DIRS[e][1], nc = c + dx, nr = r + dy;
+      if (nc < 0 || nr < 0 || nc >= COLS || nr >= ROWS) continue;
+      const j = nr * COLS + nc, sp = speed[j];
       if (!sp) continue;
-      if (dx && dy && (!speedAt(world, c + dx, r) || !speedAt(world, c, r + dy))) continue; // pas de coin coupé
-      const nd = d + len / sp;
-      const j = nr * COLS + nc;
+      if (dx && dy && (!speed[r * COLS + nc] || !speed[nr * COLS + c])) continue; // pas de coin coupé
+      const nd = d + DIRS[e][2] / sp;
       if (nd < dist[j]) { dist[j] = nd; push(nd, j); }
     }
   }
-  return dist;
+  return Float32Array.from(dist); // la moitié de la mémoire (rts garde jusqu'à 200 de ces cartes)
 }
 
 // ------------------------------------------------------------ règles de construction
@@ -485,6 +516,7 @@ export class RtsGame {
     this.shots = [];
     this.veinsTaken = new Map(); // filon -> bâtiment
     this.flows = new Map();
+    this.flowBudget = RTS.flowBudget;
     this.phase = 'playing';
     this.winner = null;
     this.ranking = null;
@@ -493,6 +525,7 @@ export class RtsGame {
     this.startAt = 0;
     this.lastT = 0;
     this.lastSnap = -1e9;
+    this.snapMs = Math.max(RTS.snapMs, RTS.snapPer * (players.filter((pl) => !pl.bot).length - 1));
   }
 
   get t() { return Date.now() - this.startAt; }
@@ -782,12 +815,14 @@ export class RtsGame {
   }
 
   // ---------------------------------------------------------- simulation
+  // carte des distances vers une case ; null si le budget du tick est épuisé (6 armées qui reçoivent un ordre en même temps)
   flowTo(c, r) {
     c = clamp(c, 0, COLS - 1); r = clamp(r, 0, ROWS - 1);
     const key = r * COLS + c;
     let f = this.flows.get(key);
     if (!f) {
-      if (this.flows.size > 200) this.flows.delete(this.flows.keys().next().value); // les plus anciens buts partent
+      if (this.flowBudget-- <= 0) return null;
+      if (this.flows.size > RTS.flowCache) this.flows.delete(this.flows.keys().next().value); // les plus anciens buts partent
       f = flowField(this.world, [key]);
       this.flows.set(key, f);
     } else { this.flows.delete(key); this.flows.set(key, f); } // les buts servis restent en tête
@@ -816,11 +851,16 @@ export class RtsGame {
   step(u, tx, ty, dt, speed) {
     const c = Math.floor(u.x / RTS.tile), r = Math.floor(u.y / RTS.tile);
     const sp = speed * Math.max(0.35, speedAt(this.world, c, r) || 0.35) * dt;
-    const gc = Math.floor(tx / RTS.tile), gr = Math.floor(ty / RTS.tile);
+    let gc = Math.floor(tx / RTS.tile), gr = Math.floor(ty / RTS.tile);
     let nx = tx, ny = ty;
-    if (Math.abs(gc - c) + Math.abs(gr - r) > 1) {
-      // on suit la pente de la carte des distances vers la case du but
-      const f = this.flowTo(gc, gr);
+    // de loin, on vise le centre d'un carré de 4 × 4 cases : une formation partage la même carte des distances
+    if (Math.abs(gc - c) + Math.abs(gr - r) > 12) {
+      const bc = (gc & ~3) + 2, br = (gr & ~3) + 2;
+      if (speedAt(this.world, bc, br)) { gc = bc; gr = br; }
+    }
+    // on suit la pente de la carte des distances vers la case du but (sans carte ce tick-ci : tout droit)
+    const f = Math.abs(gc - c) + Math.abs(gr - r) > 1 ? this.flowTo(gc, gr) : null;
+    if (f) {
       let best = f[r * COLS + c], bc = c, br = r;
       for (const [dx, dy] of DIRS) {
         const nc = c + dx, nr = r + dy;
@@ -847,12 +887,13 @@ export class RtsGame {
     const dt = Math.min(0.25, Math.max(0, (t - this.lastT) / 1000));
     this.lastT = t;
     for (const [k, until] of this.offers) if (t > until) this.offers.delete(k);
+    this.flowBudget = RTS.flowBudget;
     this.economy(dt);
     this.production(dt * 1000);
     this.combat(dt, t);
     this.repair(dt, t);
     this.p.forEach((p, i) => { if (p.ai && p.alive && !p.left && t >= p.ai.next) this.botThink(i, t); });
-    if (t - this.lastSnap >= RTS.snapMs) { this.lastSnap = t; this.push(this.snap()); this.shots = []; }
+    if (t - this.lastSnap >= this.snapMs) { this.lastSnap = t; this.push(this.snap()); this.shots = []; }
     // pas de limite de temps : la partie s'arrête quand il ne reste qu'un fort debout (un seul gagnant)
     const alive = this.aliveIdx();
     if (this.p.length > 1 && alive.length <= 1) this.finish();
@@ -930,8 +971,9 @@ export class RtsGame {
     let best = null, bd = look;
     if (!preferBld) {
       for (const v of this.units) {
-        if (!this.foe(v.owner, u.owner)) continue;
-        const d = Math.hypot(v.x - u.x, v.y - u.y);
+        const dx = v.x - u.x, dy = v.y - u.y;
+        if (dx >= bd || dx <= -bd || dy >= bd || dy <= -bd || !this.foe(v.owner, u.owner)) continue;
+        const d = Math.hypot(dx, dy);
         if (d < bd) { bd = d; best = v; }
       }
       if (best) return best;
@@ -1021,7 +1063,9 @@ export class RtsGame {
       const u = this.units[a];
       for (let b = a + 1; b < this.units.length; b++) {
         const v = this.units[b];
-        const dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy);
+        const dx = v.x - u.x, dy = v.y - u.y;
+        if (dx >= 5 || dx <= -5 || dy >= 5 || dy <= -5) continue; // 240 unités à 6 armées : on écarte vite les paires lointaines
+        const d = Math.hypot(dx, dy);
         if (d > 0 && d < 5) {
           const k = (5 - d) / 2 / d;
           const tryMove = (w, sx, sy) => {
@@ -1263,8 +1307,10 @@ export class RtsGame {
     else if (army.length >= b.wave && t > 150000) { // 2 min 30 de répit pour s'installer
       const foes = this.p.map((q, j) => j).filter((j) => this.foe(i, j) && this.p[j].alive);
       if (foes.length) {
-        // le fort le plus proche, ou un fort déjà bien entamé (pas tous sur le même joueur)
-        const cost = (j) => { const f = bCenter(this.fortOf(j)); return Math.hypot(f.x - fc.x, f.y - fc.y) + this.fortOf(j).hp * 0.15 + Math.random() * 60; };
+        // le fort le plus proche, ou un fort déjà bien entamé (pas tous sur le même joueur : à 5 et 6, les forts
+        // du milieu ont beaucoup de voisins, on évite d'y aller si d'autres l'assiègent déjà)
+        const piled = (j) => this.p.reduce((n2, q, k) => n2 + (k !== i && q.alive && q.order.mode === 'attack' && q.order.target === j ? 1 : 0), 0);
+        const cost = (j) => { const f = bCenter(this.fortOf(j)); return Math.hypot(f.x - fc.x, f.y - fc.y) + this.fortOf(j).hp * 0.15 + piled(j) * 60 + Math.random() * 60; };
         const target = foes.sort((a, c) => cost(a) - cost(c))[0];
         if (p.order.mode !== 'attack') { p.order = { mode: 'attack', target }; b.wave = 8 + Math.floor(Math.random() * 5) + Math.floor(t / 90000); }
       }

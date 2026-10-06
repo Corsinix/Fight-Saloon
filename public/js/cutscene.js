@@ -14,6 +14,8 @@ const SHOT1 = 2000; // fin du plan d'ensemble
 const SHOT2 = 3500; // fin des gros plans ; ensuite le titre jusqu'à CUT_MS
 const BAR = 22; // bandes noires du format cinéma
 const INK = '#1a0f0a', CREAM = '#fdf6e0', GOLD = '#f8d070';
+// robes des chevaux de course, une par cavalier (6 au plus)
+const ROBES = ['#8a4a24', '#3a2c26', '#e8dcc8', '#d8a850', '#b0582a', '#8a8c90'];
 
 const clamp01 = (k) => (k < 0 ? 0 : k > 1 ? 1 : k);
 const ease = (k) => 1 - (1 - clamp01(k)) ** 3;
@@ -273,8 +275,9 @@ function saloonBar(ctx, el, players, o) {
   R(ctx, 0, 186, 354, 3, '#c89a40'); R(ctx, 0, 186, 354, 1, '#f4d47a');
   for (let x = 25; x < 354; x += 50) R(ctx, x, 182, 2, 5, '#a87a28');
   // les clients au comptoir, de dos : les joueurs d'abord ; le premier réclame à boire
-  for (let i = 0; i < 4; i++) {
-    const px = 74 + i * 62;
+  const nb = Math.max(4, players.length);
+  for (let i = 0; i < nb; i++) {
+    const px = 74 + i * (nb > 4 ? 46 : 62);
     const lk = i < players.length ? looks(players[i].character) : crowdLook(i + 21);
     const turn = m && Math.abs(m.x - px) < 34 && m.moving ? Math.sign(m.x - px) || 1 : i === 0 && o.bubble ? 1 : 0;
     patronBack(ctx, px, 168, lk, turn, i === 0 ? (o.grab ? 3 : o.slam || 0) : 0);
@@ -716,19 +719,20 @@ const SHOTS = {
       R(ctx, 0, 115, W, 2, '#f4f0e4');
       // stalles de départ : les portes s'ouvrent au coup de pistolet
       const open = el > 700;
-      for (let i = 0; i < 4; i++) {
-        const y = 140 + i * 15;
+      const nh = Math.max(4, players.length), gap = nh > 4 ? 11 : 15, y0 = nh > 4 ? 136 : 140;
+      for (let i = 0; i < nh; i++) {
+        const y = y0 + i * gap;
         R(ctx, 34, y - 26, 36, 3, '#7a8a9a');
         if (!open) R(ctx, 68, y - 24, 2, 22, '#c9ced6');
         else R(ctx, 68, y - 24, 8, 2, '#c9ced6');
       }
       // les chevaux (ceux des joueurs, puis des chevaux de course)
-      for (let i = 0; i < 4; i++) {
-        const y = 140 + i * 15;
+      for (let i = 0; i < nh; i++) {
+        const y = y0 + i * gap;
         const run = Math.max(0, el - 720 - i * 40);
         const x = 54 + run * (0.15 + hash(i + 3) * 0.04) + (run * run) * 0.00003;
         if (run > 0) puffs(ctx, 3, 110, 330, (el % 330) + 330, () => ({ x: x - 12, y: y - 2 }), { vx: -0.03, vy: -0.01, r0: 2, col: '214,170,120', a0: 0.5 });
-        horse(ctx, x, y, ['#8a4a24', '#3a2c26', '#e8dcc8', '#d8a850'][i], run > 0 ? el + i * 37 : 0, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 11));
+        horse(ctx, x, y, ROBES[i], run > 0 ? el + i * 37 : 0, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 11));
       }
       // le starter et son pistolet, de la fumée au coup de feu
       person(ctx, 96, 128, { coat: '#3a2a22', hat: '#1a0f0a', skin: SKIN[1] });
@@ -753,11 +757,12 @@ const SHOTS = {
         else outlined(ctx, x, y, [[0, -22, 5, 22, '#4a7a3a'], [-3, -15, 3, 2, '#4a7a3a'], [-3, -20, 2, 6, '#4a7a3a'], [5, -12, 3, 2, '#4a7a3a'], [6, -18, 2, 7, '#4a7a3a']]);
       }
       // les cavaliers, qui louvoient entre les obstacles
-      for (let i = 0; i < 4; i++) {
+      const nh = Math.max(4, players.length), gap = nh > 4 ? 11 : 16;
+      for (let i = 0; i < nh; i++) {
         const x = -40 + el * (0.16 + hash(i + 3) * 0.03) - i * 22;
-        const y = 150 + i * 16 + Math.sin(el / 260 + i * 1.7) * 7;
+        const y = 150 + i * gap + Math.sin(el / 260 + i * 1.7) * 7;
         puffs(ctx, 3, 110, 330, (el % 330) + 330, () => ({ x: x - 12, y: y - 2 }), { vx: -0.03, vy: -0.01, r0: 2, col: '214,170,120', a0: 0.5 });
-        horse(ctx, x, y, ['#8a4a24', '#3a2c26', '#e8dcc8', '#d8a850'][i], el + i * 37, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 11));
+        horse(ctx, x, y, ROBES[i], el + i * 37, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 11));
       }
       // un virevoltant traverse le plan
       S.tumbleweed(ctx, Math.round(W - el * 0.09), Math.round(196 - Math.abs(Math.sin(el / 160)) * 6), el);
@@ -769,10 +774,11 @@ const SHOTS = {
     caption: 'QUELQUE PART DANS L\'OUEST',
     cues: [[200, 'neigh'], [1200, 'neigh']],
     draw(ctx, el, players) {
+      const gap = Math.min(14, 52 / Math.max(1, players.length - 1));
       players.forEach((p, i) => {
-        const x = -30 + el * (0.17 - i * 0.012) - i * 26, y = 158 + i * 14;
+        const x = -30 + el * (0.17 - i * 0.012) - i * 26, y = 158 + Math.round(i * gap);
         puffs(ctx, 3, 120, 360, (el % 360) + 360, () => ({ x: x - 12, y: y - 3 }), { vx: -0.02, vy: -0.012, r0: 3, col: '214,170,110', a0: 0.5 });
-        horse(ctx, x, y, ['#8a5228', '#5a3a20', '#a8703c', '#3a2a22'][i % 4], el + i * 50, 1, looks(p.character));
+        horse(ctx, x, y, ['#8a5228', '#5a3a20', '#a8703c', '#3a2a22', '#e8dcc8', '#6a4a3a'][i % 6], el + i * 50, 1, looks(p.character));
       });
     },
   },
@@ -868,33 +874,37 @@ export class Cutscene {
     if (!shot.indoor && this.kind !== 'mine') this.amb?.weather(ctx, now);
   }
 
-  // Gros plans des joueurs, côte à côte, chacun sur un fond à sa couleur
+  // Gros plans des joueurs, côte à côte, chacun sur un fond à sa couleur (sur deux rangées à 5 ou 6)
   faces(ctx, el, now) {
     const n = this.players.length;
     R(ctx, 0, 0, W, H, INK);
-    const cw = W / n;
-    const scale = n >= 4 ? 3 : 4;
+    const cols = n >= 5 ? Math.ceil(n / 2) : n, rows = Math.ceil(n / cols);
+    const ch = (H - BAR * 2) / rows;
+    const scale = rows > 1 ? 2 : n >= 4 ? 3 : 4;
     const sw = 28, sh = 36, sx = 10, sy = 4; // cadrage du visage dans le sprite 48×56
     this.players.forEach((p, i) => {
       const k = ease((el + this.s1 - this.faceAt[i]) / 260);
       if (k <= 0) return;
-      const x0 = Math.round(i * cw), x1 = Math.round((i + 1) * cw);
+      const r = Math.floor(i / cols), c = i - r * cols, cw = W / Math.min(cols, n - r * cols);
+      const x0 = Math.round(c * cw), x1 = Math.round((c + 1) * cw);
+      const y0 = Math.round(BAR + r * ch), y1 = Math.round(BAR + (r + 1) * ch);
       const dir = i % 2 ? -1 : 1;
       const off = Math.round((1 - k) * 60 * dir);
       ctx.save();
       ctx.beginPath();
-      ctx.rect(x0, BAR, x1 - x0, H - BAR * 2);
+      ctx.rect(x0, y0, x1 - x0, y1 - y0);
       ctx.clip();
       const bands = [-0.75, -0.62, -0.5, -0.4];
-      bands.forEach((a, b) => R(ctx, x0, BAR + off + (b * (H - BAR * 2)) / 4, x1 - x0, (H - BAR * 2) / 4 + 1, S.shade(p.color, a)));
+      bands.forEach((a, b) => R(ctx, x0, y0 + off + (b * (y1 - y0)) / 4, x1 - x0, (y1 - y0) / 4 + 1, S.shade(p.color, a)));
       const spr = S.characterSprite(p.character || {}, { blink: (now + i * 900) % 3100 < 130, t: now });
       const fw = sw * scale, fh = sh * scale;
-      const fx = Math.round((x0 + x1) / 2 - fw / 2), fy = BAR + 6 + off;
+      const fx = Math.round((x0 + x1) / 2 - fw / 2), fy = y0 + (rows > 1 ? 2 : 6) + off;
       ctx.drawImage(spr, sx, sy, sw, sh, fx, fy, fw, fh);
       ctx.restore();
       const label = i === this.me ? `${p.name} (TOI)` : p.name;
-      canvasText(ctx, label.toUpperCase(), (x0 + x1) / 2, H - BAR - 14 + Math.round((1 - k) * 20), { color: p.color });
-      if (i) R(ctx, x0 - 1, BAR, 2, H - BAR * 2, INK);
+      canvasText(ctx, label.toUpperCase(), (x0 + x1) / 2, y1 - 14 + Math.round((1 - k) * 20 / rows), { color: p.color });
+      if (c) R(ctx, x0 - 1, y0, 2, y1 - y0, INK);
+      if (r && !c) R(ctx, 0, y0 - 1, W, 2, INK);
     });
     if (n === 2 && el > 600) {
       const k = ease((el - 600) / 200);

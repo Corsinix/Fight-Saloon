@@ -12,7 +12,8 @@ import {
 } from './worlds.js';
 
 const HORIZON = LASSO_HORIZON;
-const COATS = [['#8a4a24', '#2e1a10'], ['#3a2c26', '#120c08'], ['#e8dcc8', '#8a7a68'], ['#d8a850', '#f4ecd8']];
+// une robe par cavalier (6 au plus) : bai, noir, blanc, palomino, gris, rouan
+const COATS = [['#8a4a24', '#2e1a10'], ['#3a2c26', '#120c08'], ['#e8dcc8', '#8a7a68'], ['#d8a850', '#f4ecd8'], ['#9a948c', '#3a3632'], ['#a85a48', '#3a1a12']];
 const MUSTANGS = [['#b0602a', '#4a2010'], ['#a8a49c', '#4a4640'], ['#d8a850', '#f4ecd8'], ['#3a2c26', '#120c08']];
 const ROPE = '#f4e4b8', ROPE_D = '#5a3a20';
 const CRY = { chicken: 'cluck', pig: 'oink', sheep: 'baa', goat: 'baa', cow: 'moo', rabbit: 'cluck', mustang: 'neigh', goldbull: 'moo', skunk: 'stink', bison: 'moo', outlaw: 'neigh' };
@@ -628,7 +629,7 @@ export class LassoScene extends MiniScene {
   goText() { return 'YEE-HAW !'; }
 
   setup(seed) {
-    this.world = lassoWorld(seed);
+    this.world = lassoWorld(seed, this.n);
     this.caught = new Map(); // id -> { by, at }
     this.pend = new Set();
     this.hitObs = new Set();

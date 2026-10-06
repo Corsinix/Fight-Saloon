@@ -28,9 +28,17 @@ const hash = (n) => {
 
 const HX = 120; // colonne de ton cheval à l'écran
 const TOP = 112; // lisse intérieure : la piste commence dessous
-// sabots de chaque couloir selon le nombre de chevaux
-const LANES = { 1: [172], 2: [152, 192], 3: [142, 170, 198], 4: [136, 157, 178, 199] };
-const COATS = [['#8a4a24', '#2e1a10'], ['#3a2c26', '#120c08'], ['#e8dcc8', '#8a7a68'], ['#d8a850', '#f4ecd8']];
+// sabots de chaque couloir selon le nombre de chevaux (à six, 15 px d'un couloir à l'autre : on voit encore
+// le cavalier et le dos du cheval du fond au-dessus de celui de devant)
+const LANES = {
+  1: [172], 2: [152, 192], 3: [142, 170, 198], 4: [136, 157, 178, 199],
+  5: [134, 152, 170, 188, 206], 6: [132, 147, 162, 177, 192, 207],
+};
+// robes : bai, noir, gris clair, palomino, alezan aux crins lavés, gris pommelé
+const COATS = [
+  ['#8a4a24', '#2e1a10'], ['#3a2c26', '#120c08'], ['#e8dcc8', '#8a7a68'], ['#d8a850', '#f4ecd8'],
+  ['#b0582a', '#ecd8a8'], ['#8a8c90', '#3a3c40'],
+];
 const JUMP_KEYS = [' ', 'arrowup', 'z', 'w'];
 const WHIP_KEYS = ['x', 'arrowright', 'd', 'c', 'shift'];
 // chevauchée sauvage : les flèches dirigent, Espace saute
@@ -124,7 +132,7 @@ export class CourseScene extends MiniScene {
   setup(seed) {
     this.world = courseWorld(seed);
     this.wild = !!this.world.wild;
-    this.lanes = LANES[clamp(this.n, 1, 4)];
+    this.lanes = LANES[clamp(this.n, 1, 6)];
     this.hx = HX; // colonne de ton cheval à l'écran (dans la prairie, il avance quand il galope, recule quand on le retient)
     this.gotBy = this.state.players.map(() => new Set());
     this.got = this.gotBy[this.me];
@@ -695,31 +703,40 @@ export class CourseScene extends MiniScene {
   }
 
   // noms au-dessus des chevaux ; ceux qui sont hors de l'écran sont signalés au bord
-  // (dans la prairie, deux chevaux peuvent être à la même profondeur : leurs signaux au bord s'empilent)
+  // (dans la prairie, deux chevaux peuvent être à la même profondeur : leurs signaux au bord s'empilent, et
+  // remontent s'ils débordent en bas de l'écran)
   drawNames(ctx, cam) {
-    const used = { true: [], false: [] }, tags = [];
+    const edge = { true: [], false: [] }, tags = [];
     const order = [...Array(this.n).keys()].map((i) => [i, this.horsePos(i, cam)]).filter(([, p]) => p).sort((a, b) => a[1].y - b[1].y);
     for (const [i, p] of order) {
       const label = i === this.me ? 'TOI' : this.name(i).slice(0, 8).toUpperCase();
       if (p.x < -20 || p.x > W + 20) {
-        const ahead = p.x > W;
-        const gap = rd(Math.abs(p.x - this.skew(p.y) - this.hx) / M);
+        const ahead = p.x > W, used = edge[ahead];
         let ey = p.y - 20;
-        for (const u of used[ahead]) if (ey < u + 11) ey = u + 11;
-        used[ahead].push(ey);
-        const ex = ahead ? W - 4 : 4;
-        ctx.fillStyle = OUT; ctx.fillRect(ahead ? ex - 6 : ex - 1, ey - 4, 8, 9);
-        ctx.fillStyle = this.color(i);
-        for (let k = 0; k < 4; k++) ctx.fillRect(ahead ? ex - k : ex + k - 1, ey - 3 + k, 1, 7 - 2 * k);
-        canvasText(ctx, `${label} ${ahead ? '+' : '-'}${gap} M`, ahead ? ex - 9 : ex + 9, ey - 3, { color: this.color(i), align: ahead ? 'right' : 'left' });
+        if (used.length && ey < used[used.length - 1].ey + 11) ey = used[used.length - 1].ey + 11;
+        used.push({ i, ey, label, gap: rd(Math.abs(p.x - this.skew(p.y) - this.hx) / M) });
         continue;
       }
       // deux chevaux côte à côte : le nom du plus proche descend d'un cran
       const lx = rd(p.x) - 2;
       let ly = rd(p.y - p.air) - 64;
-      for (let k = 0; k < 3 && tags.some(([x, y]) => Math.abs(x - lx) < 40 && Math.abs(y - ly) < 9); k++) ly += 9;
+      for (let k = 0; k < this.n && tags.some(([x, y]) => Math.abs(x - lx) < 40 && Math.abs(y - ly) < 9); k++) ly += 9;
       tags.push([lx, ly]);
       canvasText(ctx, label, lx, ly, { color: this.color(i) });
+    }
+    for (const ahead of [true, false]) {
+      const used = edge[ahead];
+      for (let k = used.length - 1, lim = H - 7; k >= 0; k--, lim -= 11) {
+        lim = Math.min(lim, used[k].ey);
+        used[k].ey = lim;
+      }
+      const ex = ahead ? W - 4 : 4;
+      for (const { i, ey, label, gap } of used) {
+        ctx.fillStyle = OUT; ctx.fillRect(ahead ? ex - 6 : ex - 1, ey - 4, 8, 9);
+        ctx.fillStyle = this.color(i);
+        for (let k = 0; k < 4; k++) ctx.fillRect(ahead ? ex - k : ex + k - 1, ey - 3 + k, 1, 7 - 2 * k);
+        canvasText(ctx, `${label} ${ahead ? '+' : '-'}${gap} M`, ahead ? ex - 9 : ex + 9, ey - 3, { color: this.color(i), align: ahead ? 'right' : 'left' });
+      }
     }
   }
 

@@ -74,9 +74,9 @@ Par les fenêtres, on voit l'heure et la météo de l'ambiance : soleil, aube, c
 - `public/sw.js` (service worker) : le réseau d’abord pour le code, le cache seulement hors ligne ou si le réseau traîne, ce qui garde l’hôte et les joueurs sur la même version. `public/music` n’est jamais mis en cache. Les polices sont hébergées dans `public/fonts`.
 - Stabilité : animations plafonnées à 60 images/s, bruitages limités, cache du texte pixel borné et canvas libérés dès qu’ils ne servent plus (Safari plante au-delà de sa limite de mémoire canvas). Pas de découpe (`clip`) faite de nombreux rectangles à chaque image : elle figeait des téléphones Android entiers (fond des galeries de la mine, désormais rempli en motif).
 
-## Mini-jeux (2 à 4 joueurs)
+## Mini-jeux (2 à 6 joueurs)
 
-Une table accueille jusqu'à 4 joueurs. Dans le lobby, l'hôte choisit le jeu : la **Roulette** ou le **Duel** (à deux exactement), ou un mini-jeu à plusieurs. En solo, les mini-jeux opposent le joueur à 3 bots (un seul pour le duel).
+Une table accueille jusqu'à 6 joueurs. Dans le lobby, l'hôte choisit le jeu : la **Roulette** ou le **Duel** (à deux exactement), ou un mini-jeu à plusieurs. En solo, les mini-jeux opposent le joueur à 3 bots (un seul pour le duel).
 
 **Ambiances** : la Fusillade, le Lasso, le Duel, « Où est Charlie ? », l'Assaut du fort, la Roulotte, la Course de chevaux et la Conquête de l'Ouest se jouent chaque fois sous une ambiance tirée au hasard, annoncée pendant le compte à rebours et la même pour toute la table (`public/js/env.js`) :
 
@@ -144,11 +144,12 @@ Les armes remplacent le revolver jusqu'à la fin de leur temps ou de leur charge
 - **Prime doublée** : pendant 8 s, aux abords ou dans la rue, chaque bandit, cavalier (et El Diablo) rapporte deux fois plus ; le compte à rebours s'affiche dans le bandeau du haut.
 - **Panne de lumière** : au saloon, 6 s dans le noir ; seule une lueur autour du viseur, et chaque coup de feu éclaire la salle un instant.
 - **Pari sur El Diablo** : à son arrivée, appuie sur **B** pour miser 200 $. Celui qui l'abat empoche 1 000 $ ; les autres parieurs perdent leur mise (et tout le monde la perd s'il s'en sort).
+- **Plus de monde, plus de bandits** : à 5 ou 6 tireurs, les vagues sont plus serrées et plus fournies.
 - **Rattrapage** : quand quelqu'un mène de 150 pts ou plus, les bandits le visent plus souvent (la couleur du cercle montre qui est visé). Le dernier, s'il a au moins 300 pts de retard, reçoit des **renforts** : un barillet de 8 balles qui se recharge plus vite.
 
 ### Rodéo au lasso (60 s)
 
-Au galop à travers l'Ouest, chacun attrape le plus de bêtes possible ; une bête attrapée est perdue pour les autres.
+Au galop à travers l'Ouest, chacun attrape le plus de bêtes possible ; une bête attrapée est perdue pour les autres. À 5 ou 6 cavaliers, les bêtes arrivent plus serrées.
 
 - **ZQSD** / **WASD** / flèches : diriger le cheval (gare aux obstacles : le cheval trébuche) · souris : viser · clic : lancer le lasso
 - Poule 1 · cochon 2 · mouton 2 · chèvre 2 · vache 3 · lièvre 4 (rapide, zigzague) · mustang 5 · taureau d'or 10 · mouffette −3 (et elle empeste)
@@ -189,17 +190,17 @@ Charlie change de tenue à chaque manche (chapeau, vêtements, couleurs, lunette
 
 ### Assaut du fort (en équipes, 2 × 45 s)
 
-Les **Rouges** (joueurs 1 et 3) attaquent le fort pendant que les **Bleus** (joueurs 2 et 4) le défendent du haut de la palissade, puis les camps s'échangent à la mi-temps. En solo, toi et un bot contre deux bots.
+Les **Rouges** (joueurs 1, 3 et 5) attaquent le fort pendant que les **Bleus** (joueurs 2, 4 et 6) le défendent du haut de la palissade, puis les camps s'échangent à la mi-temps. En solo, toi et un bot contre deux bots.
 
 - **Attaque** : avance d'abri en abri (rochers, tonneaux, chariot…) et fais sauter la porte à la dynamite. Accroupi derrière un abri, tu es intouchable, sauf juste après avoir tiré ou lancé. Quand la porte cède, elle reste ouverte 6 s : fonce sous le porche pour **entrer dans le fort**.
 - **Défense** : déplace-toi sur le chemin de ronde (**Q** / **D**), qui passe aussi au-dessus de la porte, et **S** pour te baisser derrière les pieux.
 - Clic : tirer (6 balles, une balle dans la tête retire 2 PV) · **R** : recharger · clic droit ou **Espace** : dynamite (le cercle devient rouge quand elle tombera sur la porte)
 - La dynamite pulvérise les abris fragiles (tonneaux, caisses, foin, chariot, clôtures, cactus) ; les rochers et les murets d'adobe tiennent bon. Tout est remis en place à la mi-temps.
-- 3 PV (5 pour un joueur seul contre deux), retour au point de départ 3 s après être tombé, puis 1,2 s d'invulnérabilité
+- 3 PV (4 pour deux joueurs contre trois), retour au point de départ 3 s après être tombé, puis 1,2 s d'invulnérabilité. Un joueur seul contre deux revient au bout de 2 s, et chacun de ses bâtons de dynamite compte double sur la porte (les points restent ceux d'un bâton)
 - Porte abîmée +60 · brèche +250 pour chaque assaillant · entrée dans le fort +150 · assaillant abattu +60 · défenseur abattu +50 · caisse +20 · en fin de manche, chaque défenseur gagne +20 par planche encore debout
 - L'équipe avec la meilleure moyenne par joueur gagne.
 
-Des **caisses de ravitaillement** tombent en parachute toutes les ~8 s. Les assaillants les ramassent en passant dessus, les défenseurs en tirant dessus :
+Des **caisses de ravitaillement** tombent en parachute toutes les ~8 s (~7 s à 5 joueurs, ~6 s à 6). Les assaillants les ramassent en passant dessus, les défenseurs en tirant dessus :
 
 | Bonus | Effet |
 |---|---|
@@ -210,7 +211,7 @@ Des **caisses de ravitaillement** tombent en parachute toutes les ~8 s. Les assa
 | Éperons | 8 s de vitesse +60 % |
 | Caisse de dynamite | 3 dynamites en rafale |
 
-Cinq **champs de bataille**, tirés au hasard : le désert, la prairie, le canyon, le gué de la rivière (on traverse lentement à gué, ou vite par les deux ponts) et la mission San Rosario, un fort en adobe.
+Cinq **champs de bataille**, tirés au hasard : le désert, la prairie, le canyon, le gué de la rivière (on traverse lentement à gué, ou vite par les deux ponts) et la mission San Rosario, un fort en adobe. À 5 ou 6 joueurs, le champ de bataille compte deux abris de plus.
 
 ### Défends la roulotte (90 s, tous ensemble)
 
@@ -230,7 +231,7 @@ La roulotte, tirée par ses deux chevaux, quitte Dusty Gulch pour Red Rock. Une 
 - **Bandits dorés** : abattus, ils lâchent un bonus qui flotte quelques secondes ; le premier qui tire dessus le ramasse. Barillet d'or (9 s de balles à volonté), escopette (9 s de tir groupé), prime double (9 s de points x2), planches (+8 PV pour la roulotte), caisse de TNT (tous les assaillants de l'étape sautent, Black Bart encaisse).
 - **Série** : toutes les 5 balles au but d'affilée, les points montent d'un cran (x1,5, x2… jusqu'à x3). Une balle perdue remet la série à zéro.
 - Les viseurs des autres défenseurs restent discrets (leur nom n'apparaît que quand ils tirent), et on ne voit que ceux qui regardent du même côté que soi.
-- Un bandit qui atteint le convoi le pille jusqu'à ce qu'on l'abatte. La roulotte a 50 PV ; la bande grossit avec le nombre de défenseurs.
+- Un bandit qui atteint le convoi le pille jusqu'à ce qu'on l'abatte. La roulotte a 50 PV ; la bande grossit avec le nombre de défenseurs (un peu plus vite au-delà de 4), et Black Bart encaisse 5 balles plus 1,5 par défenseur.
 - Si la roulotte arrive à Red Rock : +300 pour chaque défenseur. Si elle tombe en chemin, la partie s'arrête aussitôt.
 
 ### La pinte (chacun son tour, 3 à 5 manches)
@@ -247,7 +248,7 @@ Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour
 - Clic ou **Espace** : bloquer l'aiguille de **direction** (zone verte : la chope reste sur le comptoir jusqu'au bout), puis bloquer la jauge de **puissance**. 15 s pour lancer, sinon le tour passe.
 - Fin de manche : chaque chope encore sur le comptoir rapporte 100 pts moins son écart au bout, en cm. La plus proche offre la tournée : +50. Une chope tombée ne rapporte rien.
 - Une chope trop à gauche ou trop à droite tombe derrière le comptoir ou devant. Celle qui passe le bout s'écrase sur le plancher.
-- Les chopes restent sur le comptoir pendant la manche, et elles s'entrechoquent : on peut pousser celle d'un adversaire dans le vide, ou la sienne un peu plus près du bout. L'ordre de passage tourne à chaque manche, car le dernier à lancer a l'avantage.
+- Les chopes restent sur le comptoir pendant la manche, et elles s'entrechoquent : on peut pousser celle d'un adversaire dans le vide, ou la sienne un peu plus près du bout. L'ordre de passage tourne à chaque manche, car le dernier à lancer a l'avantage (à cinq ou six, il saute deux places pour que ce ne soit jamais le même qui lance en dernier).
 - **Le barman change de bière** à chaque lancer (à partir de la 2e manche), et tout le monde voit ce qu'on te sert :
   - blonde : la classique ;
   - brune : lourde, elle pousse fort les autres chopes ;
@@ -268,7 +269,7 @@ Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour
   - chat endormi : la chope s'enfonce dans sa fourrure et perd presque tout son élan ;
   - sous-bock : +50 pour chaque chope qui s'arrête dessus en fin de manche.
 - **Dernière tournée** : la dernière manche compte double.
-- 5 manches à deux, 4 à trois, 3 à quatre. Les craies sur le comptoir marquent 10, 25, 50 et 100 cm du bout.
+- 5 manches à deux, 4 à trois, 3 de quatre à six. Les craies sur le comptoir marquent 10, 25, 50 et 100 cm du bout.
 
 La glissade est simulée pas à pas, de la même façon dans chaque navigateur (`public/js/pintegame.js`) : seuls la direction et la puissance passent par l'hôte.
 
@@ -309,7 +310,7 @@ De derrière, le tunnel est une voûte irrégulière creusée dans la roche, ave
   - **Tremplin** : le wagonnet saute et passe par-dessus tout ce qui suit sur 140 px (obstacle, rail cassé, or compris).
 - Pépite +10 · grosse pépite +25 · diamant +50.
 - Éboulis, éboulement, poutre tombée, tonneau, wagonnet renversé, cristal géant, cascade, tas de minerai −20 · rail cassé, jet de grisou, wagonnet fou, voie barrée −30 · caisse de TNT −40 (le score ne descend pas sous 0). Après un choc, le wagonnet tangue et freine pendant 0,9 s, et l'aiguillage ne répond plus.
-- Bonus d'arrivée : 1er +150, 2e +100, 3e +60, 4e +30. Le classement final se fait aux points (or, chocs et bonus d'arrivée).
+- Bonus d'arrivée : 1er +150, 2e +100, 3e +60, 4e +30, 5e +15, 6e +5. Le classement final se fait aux points (or, chocs et bonus d'arrivée).
 - Le parcours est tiré de la graine (`public/js/minegame.js`) : chaque navigateur simule son wagonnet et envoie sa position. Les autres joueurs apparaissent en fantômes, et chacun ramasse son or. L'hôte vérifie que les positions annoncées sont possibles. Rien n'est posé près des changements d'étape, et le parcours a toujours une issue : un pilote parfait ne touche rien. Le générateur suit les voies où un pilote parfait peut se trouver. Une voie n'est bouchée que si l'on peut la quitter à cet embranchement, ou si personne ne peut y être sans avoir rien touché.
 
 ### La course de chevaux (environ 45 s)
@@ -325,7 +326,7 @@ Sur le champ de courses de Dusty Gulch, chaque cavalier a son couloir, du dépar
 - **Cravache** : chaque coup ajoute de l'élan (jusqu'à × 1,8), qui retombe en 2,5 s environ si on ne recommence pas.
 - **Résilience** (barre en haut à gauche, un cran par coup de cravache) : chaque coup coûte 12. Elle remonte toute seule (+9 par seconde) et avec les **carottes** (+25). Certaines carottes sont en l'air, au-dessus d'un obstacle : il faut sauter pile au bon moment pour les attraper.
 - **Épuisé !** : si un coup de cravache vide la barre, le cheval perd son élan et n'avance plus qu'à × 0,45 pendant 2,8 s ; la cravache ne répond plus. Cravacher sans arrêt fait donc perdre du temps : il faut doser.
-- Arrivée : 1er +100, 2e +60, 3e +30, 4e +10. Le classement suit l'ordre d'arrivée, puis la distance parcourue. La course s'arrête quand tout le monde est arrivé, ou au bout de 90 s.
+- Arrivée : 1er +100, 2e +60, 3e +30, 4e +10, 5e +5, 6e +2. Le classement suit l'ordre d'arrivée, puis la distance parcourue. La course s'arrête quand tout le monde est arrivé, ou au bout de 90 s.
 - La piste est tirée de la graine (`public/js/coursegame.js`) : chaque navigateur simule son cheval et envoie sa position ; l'hôte vérifie que les positions annoncées sont possibles. Les obstacles se rapprochent au fil de la course, mais laissent toujours le temps de retomber avant le suivant. En solo, les 3 bots visent le milieu des obstacles (et en ratent parfois) et cravachent tant que leur barre reste au-dessus de leur seuil de prudence.
 
 **La chevauchée sauvage** (1 960 m, du départ jusqu'au ranch) : pas de couloirs ni de tribunes, on traverse la prairie et on dirige son cheval librement. Les chevaux partagent tout le terrain et passent les uns devant les autres selon leur profondeur. La cravache, la résilience, les carottes, l'épuisement, le saut parfait et les points d'arrivée sont les mêmes que sur le champ de courses.
@@ -341,7 +342,7 @@ Sur le champ de courses de Dusty Gulch, chaque cavalier a son couloir, du dépar
 
 ### Conquête de l'Ouest (mini-RTS, sans limite de temps, alliances et trahisons)
 
-Chaque joueur tient un **fort** sur une grande carte (768 × 432 px, l'écran en montre une partie). Le **décor** est tiré au hasard à chaque partie, ainsi que la place des forts (face à face ou en diagonale à deux joueurs) ; l'ambiance (heure, météo) est choisie pour aller avec le décor :
+Chaque joueur tient un **fort** sur une grande carte (768 × 432 px, l'écran en montre une partie). Le **décor** est tiré au hasard à chaque partie, ainsi que la place des forts (face à face ou en diagonale à deux joueurs ; en hexagone à 5 et 6, de part et d'autre du milieu de la carte, sans fort au centre) ; l'ambiance (heure, météo) est choisie pour aller avec le décor :
 
 | Décor | Terrains et disposition |
 |---|---|
@@ -361,9 +362,9 @@ Chaque joueur tient un **fort** sur une grande carte (768 × 432 px, l'écran en
 | Gué, pont | Les seuls passages sur l'eau |
 | Rochers, eau | Infranchissables |
 
-Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près de chaque fort, un filon de minerai un peu plus loin, et les plus riches au milieu, là où l'on se bat. Les forts sont toujours reliés (au besoin, un pont ou un défilé est taillé).
+Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près de chaque fort (au besoin, la place est dégagée), un filon de minerai un peu plus loin, et les plus riches loin de tous les forts, là où l'on se bat (davantage à 5 et 6 joueurs). Les forts sont toujours reliés (au besoin, un pont ou un défilé est taillé vers le fort le plus proche).
 
-- **Écran** : en haut, tes ressources avec leurs icônes et leurs revenus (or, vivres, population, PV du fort), le bouton **Pactes** et ton chantier ou l'ordre de ton armée (ou, si l'on vient de te trahir, le temps de malus qui reste). L'horloge du bandeau compte le temps de jeu. En bas, le panneau de commandes suit la sélection : sans sélection, les bâtiments et les recrues ; avec des unités, leurs fiches (nombre, galons, PV et expérience d'une unité seule) et leurs ordres ; avec un bâtiment, sa fiche, son amélioration, ses recrues et ses entraînements. À droite, toujours : **Tous** (choisir toute l'armée), **Défendre**, les boutons d'attaque et la **mini-carte**. Chaque bouton a sa bulle d'aide. Le survol d'une unité, d'un bâtiment ou d'un terrain particulier affiche ce qu'il est.
+- **Écran** : en haut, tes ressources avec leurs icônes et leurs revenus (or, vivres, population, PV du fort), le bouton **Pactes** et ton chantier ou l'ordre de ton armée (ou, si l'on vient de te trahir, le temps de malus qui reste). L'horloge du bandeau compte le temps de jeu. En bas, le panneau de commandes suit la sélection : sans sélection, les bâtiments et les recrues ; avec des unités, leurs fiches (nombre, galons, PV et expérience d'une unité seule) et leurs ordres ; avec un bâtiment, sa fiche, son amélioration, ses recrues et ses entraînements. À droite, toujours : **Tous** (choisir toute l'armée), **Défendre**, les boutons d'attaque (à 5 et 6 joueurs, des boutons étroits : un trait à la couleur du joueur et ses sabres) et la **mini-carte**. Chaque bouton a sa bulle d'aide. Le survol d'une unité, d'un bâtiment ou d'un terrain particulier affiche ce qu'il est.
 - **Caméra** : **glisser** sur la carte (clic gauche ou bouton du milieu maintenu) pour la déplacer, flèches, bords de l'écran (après un court arrêt), mini-carte (clic ou glissé) ; **molette** : zoomer et dézoomer vers le pointeur (5 crans, de × 0,5, presque toute la carte, à × 2), aussi avec **+** / **=** et **)** / **_** (ou Page préc. / Page suiv.) ; Maj + molette : de côté ; **H** : retour au fort (et le choisit) ; **Espace** : là où l'on t'attaque. Au doigt : on glisse sur la carte, on pince à deux doigts pour zoomer.
 - **Choisir ses unités** : clic sur une unité, ou **Maj + glisser** (ou Ctrl + glisser) pour tirer un cadre ; Maj + clic : ajouter ou retirer ; double-clic : toutes celles de ce type à l'écran ; **T** : toute l'armée ; **Échap** : plus rien. Au doigt : toucher ses unités (deux fois : toutes celles de ce type), ou **Tous**.
 - **Ordres à la sélection** : clic droit sur la carte, elles y vont sans s'arrêter (pour se replier ou contourner), puis gardent la place ; clic droit sur un ennemi (unité ou bâtiment), elles s'acharnent sur lui ; sur ton fort, elles rentrent. **Charger** (**C** puis clic, ou Maj + clic droit) : elles y vont en tirant sur tout ce qu'elles croisent. **Tenir** (**S**) : elles ne bougent plus et tirent à portée. **Halte** (**X**) : elles s'arrêtent et gardent la place (en poursuivant un peu les ennemis qui approchent). Défendre et Attaquer valent alors pour la sélection seulement. Au doigt : toucher la carte ou un ennemi. Les unités se rangent en formation, et la portée d'une unité seule s'affiche.
@@ -413,14 +414,14 @@ Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près 
 
 - **Expérience** : les unités gagnent des points en infligeant des dégâts et en abattant des ennemis, et prennent du galon : **vétéran** (6 points), **élite** (15), **légende** (30). Chaque galon : +12 % de PV (et un peu de soin), +15 % de dégâts, un peu plus de vitesse. Les galons s'affichent en carrés dorés au-dessus de la tête ; une élite porte une étoile sur la poitrine, une légende aussi une bande dorée au chapeau ; une unité seule choisie montre sa barre d'expérience.
 - Forts et tours se défendent seuls, et les bâtiments se réparent après 8 s sans dégâts (le fort plus vite).
-- **Diplomatie** : le bouton **Pactes** (en haut, ou **P**) remplace le panneau de commandes par une ligne par joueur : son nom (et des carrés aux couleurs de ses alliés), où vous en êtes (ennemi, allié, proposition, trahi), et ses boutons (`public/js/rtsgame.js`, `DIPLO`) :
+- **Diplomatie** : le bouton **Pactes** (en haut, ou **P**) remplace le panneau de commandes par une ligne par joueur (à 5 et 6 joueurs, le panneau monte un peu sur la carte pour loger toutes les lignes) : son nom (et des carrés aux couleurs de ses alliés), où vous en êtes (ennemi, allié, proposition, trahi), et ses boutons (`public/js/rtsgame.js`, `DIPLO`) :
   - **Alliance** : la proposition tombe sans réponse au bout de 25 s ; l'autre répond **Oui** ou **Non** (le bouton Pactes clignote quand on te propose une alliance). Alliés, vos unités, forts et tours ne se tirent plus dessus et les ordres d'attaque entre vous sont refusés. Il faut au moins 3 joueurs en lice pour s'allier (à deux, un seul fort doit rester debout), et une alliance ne peut pas allier tout le monde : il faut un ennemi commun.
   - **Trahir** (deux appuis, pour éviter les accidents) : l'alliance est rompue sur-le-champ et le joueur trahi est **affaibli pendant 1 min** : ses unités font 30 % de dégâts en moins et en prennent 30 % de plus, ses bâtiments prennent 60 % de dégâts en plus. Un cœur brisé violet clignote au-dessus de ses bâtiments, une petite flèche au-dessus de ses unités.
   - **Dons** : 50 or ou 30 vivres, à un allié comme à un ennemi qu'on veut amadouer.
   - **Mot** : des messages tout faits (au doigt, pas besoin de clavier) : « Au secours ! » (ton fort clignote sur sa mini-carte, Espace y mène), « Attaquons ensemble ! » (nomme le fort que ton armée attaque), « J'arrive ! », « Merci, l'ami ! », « Faisons la paix », « Tu vas le payer ! ». Le chat (Entrée) reste ouvert à côté.
 - **Pas de limite de temps** : un fort rasé élimine son joueur (ses bâtiments et ses unités disparaissent) ; la partie dure jusqu'à ce qu'il ne reste qu'un fort debout : **un seul gagnant**, jamais de victoire en alliance. Quand l'ennemi commun tombe et qu'il ne reste que des alliés, un compte à rebours de 30 s s'affiche en haut, puis leurs alliances se rompent d'elles-mêmes (sans malus) : chacun pour soi. D'ici là, trahir permet de frapper le premier, et les bots ne s'en privent pas. Le score (ennemi abattu +10, bâtiment rasé +40, fort rasé +300, plus 1 point par 10 or produits) départage le classement.
 - En solo, contre 3 bots qui suivent les mêmes règles : ils développent leur économie, s'étendent avec des tours vers les filons, améliorent leur fort et leurs mines, entraînent leurs unités les plus nombreuses et n'attaquent pas avant 2 min 30. Ils font aussi de la diplomatie : un seul allié à la fois, ils refusent souvent le joueur le plus fort et toujours celui qui les a trahis, proposent parfois une alliance, remercient d'un don, répondent à « Au secours ! » et « Attaquons ensemble ! » d'un allié, se vengent d'une trahison, et trahissent parfois un allié affaibli ou bien plus faible qu'eux.
-- Ici l'hôte simule toute la partie (`public/js/rtsgame.js` : décors, carte, chemins, combats, expérience, bots) et envoie 2 instantanés par seconde ; chaque navigateur recalcule la carte depuis la graine et lisse les déplacements (`public/js/rts.js`).
+- Ici l'hôte simule toute la partie (`public/js/rtsgame.js` : décors, carte, chemins, combats, expérience, bots) et envoie 2 instantanés par seconde (un peu moins à 5 et 6 joueurs humains : un toutes les 600 ou 750 ms) ; chaque navigateur recalcule la carte depuis la graine et lisse les déplacements (`public/js/rts.js`).
 
 ### Règlement de comptes (FPS, 4 min, chacun pour soi)
 
@@ -457,7 +458,7 @@ Les murs ont des hauteurs différentes : on tire par-dessus les comptoirs, les b
 
 Plus de balles : l'autre arme à feu prend le relais, puis l'arme blanche.
 
-**Les caisses** tombent au hasard sur la carte (deux ou trois à la fois, environ toutes les 14 s), et un bandit sur six en lâche une. Le contenu est tiré à l'ouverture, sans rien de décisif : munitions, whisky (+35 PV), gilet (+25 d'armure), dynamite, l'étoile du shérif (9 s pendant lesquelles on n'encaisse qu'un tiers des dégâts), et parfois une **arme de caisse**, qui remplace les autres jusqu'à la fin de son temps ou de son chargeur :
+**Les caisses** tombent au hasard sur la carte (trois à cinq à la fois selon le nombre de joueurs, environ toutes les 14 s, un peu plus souvent à 5 ou 6), et un bandit sur six en lâche une. Le contenu est tiré à l'ouverture, sans rien de décisif : munitions, whisky (+35 PV), gilet (+25 d'armure), dynamite, l'étoile du shérif (9 s pendant lesquelles on n'encaisse qu'un tiers des dégâts), et parfois une **arme de caisse**, qui remplace les autres jusqu'à la fin de son temps ou de son chargeur :
 
 | Arme de caisse | Effet |
 |---|---|
@@ -489,7 +490,7 @@ Le feu brûle ceux qui restent dedans (le point est marqué sur la carte), et un
 
 **E** sert aussi à pied : près d'un **canon**, on se met à la pièce (vue de la culasse, à la place de l'arme). La souris (ou **Q**/**D**) la fait pivoter, **Z**/**S** ou la molette règlent la hausse, donc la portée (de 3 à 22 cases ; le boulet passe par-dessus les murs bas, pas à travers un mur plein), une mire rouge et le cercle du souffle marquent le point de chute au sol, le clic fait feu (un coup toutes les 8 s pour chaque canon, 90 dégâts au centre), **E** rend la main. Les bots s'y postent aussi de temps en temps (`public/js/fpscannon.js` pour la vue, `use` et `cannonReach` dans `public/js/fpsgame.js`). Au **comptoir du saloon ou de la cantina**, le patron sert un whisky (+25 PV, un toutes les 25 s).
 
-**Les bandits** arrivent par les bords de la carte : bandit (+100), tireur à la Winchester qui garde ses distances (+150), dynamiteur (+150) et gros bras au fusil de chasse (+200). Ils visent un instant avant de tirer, et ratent plus souvent ceux qui courent ou galopent. Rival abattu +250, mort −50 (le score ne descend pas sous zéro). Au retour, on apparaît loin des autres, avec 1,5 s d'invulnérabilité.
+**Les bandits** arrivent par les bords de la carte : bandit (+100), tireur à la Winchester qui garde ses distances (+150), dynamiteur (+150) et gros bras au fusil de chasse (+200). Ils visent un instant avant de tirer, et ratent plus souvent ceux qui courent ou galopent. Ils sont au plus 4 + 2 par joueur (un seul de plus par joueur au-delà du quatrième : 14 à six), davantage pendant l'attaque de la bande. Rival abattu +250, mort −50 (le score ne descend pas sous zéro). Au retour, on apparaît loin des autres, avec 1,5 s d'invulnérabilité.
 
 **Retournements de situation** (`public/js/fpsevents.js`, tirés de la graine : 4 à 6 par partie) : prime doublée, avis de recherche (le premier au score est mis à prix et marqué d'une étoile visible à travers les murs : +300 pour qui l'abat), la bande attaque la ville, les dynamiteurs, midi sonne (dégâts doublés), bagarre générale (armes blanches seulement), le train entre en gare (sur les rails, c'est la mort), la diligence a versé (sacs d'or à ramasser, +50), le ravitaillement du fort (caisses pleines d'armes), la tournée du patron (soins), la tornade (tout le monde est emporté ailleurs), la tempête de sable, l'orage, la nuit qui tombe, et **El Diablo** en personne (600 PV, +1000 pour celui qui l'abat ; il repart s'il survit).
 
@@ -497,7 +498,7 @@ Le feu brûle ceux qui restent dedans (le point est marqué sur la carte), et un
 - Au doigt : un stick à gauche (poussé à fond vers l'avant, on court), glisser à droite pour tourner la tête, **double tap** à droite pour tirer (doigt gardé posé : on continue de tirer en visant). Boutons ronds à icône sous le pouce droit, en arc autour du gros bouton de tir : arme suivante, recharger, viser, dynamite, et monter / descendre quand c'est possible.
 - **La carte** (`public/js/fpsmap.js`) : un radar rond en haut à gauche, centré sur toi (nord en haut, ta flèche tourne avec ta vue), et la grande carte avec le nom des lieux (**M**, ou au doigt en touchant le radar). Elle est dessinée à 4 pixels par case et copiée pixel pour pixel, sans flou : sols et planchers, rails et traverses, murs, comptoirs et barrières, portes, tombes, cactus, tonneaux, foin, réverbères. On y voit les caisses, les sacs d'or, les chevaux et les wagonnets libres, la dynamite qui vole, El Diablo et les bandits en vue (à moins de 12 cases) ou qui viennent de tirer. Les autres joueurs n'y apparaissent jamais.
 - La résolution interne s'adapte à la machine (pleine, trois quarts ou moitié) pour rester fluide sur téléphone (`public/js/fpsperf.js`).
-- **La cinématique d'ouverture** (11 s, un clic la passe) est tournée dans le moteur du jeu, sur la carte de la partie (`public/js/fpscut.js`) : travelling sur le quai de la gare (la locomotive fume), la caméra s'élève au-dessus de la grand-rue, la bande s'avance au ras du sol et dégaine, chaque joueur est présenté en arrêt sur image sépia avec un surnom à la Leone (« Le Bon », « La Brute »…), puis tout le monde se fait face au milieu de la rue pendant que la cloche sonne et que le titre tombe. Les plans cherchent un passage dégagé sur la carte tirée de la graine.
+- **La cinématique d'ouverture** (11 s, 0,8 s de plus par joueur au-delà de quatre ; un clic la passe) est tournée dans le moteur du jeu, sur la carte de la partie (`public/js/fpscut.js`) : travelling sur le quai de la gare (la locomotive fume), la caméra s'élève au-dessus de la grand-rue, la bande s'avance au ras du sol et dégaine, chaque joueur est présenté en arrêt sur image sépia avec un surnom à la Leone (« Le Bon », « La Brute »…), puis tout le monde se fait face au milieu de la rue pendant que la cloche sonne et que le titre tombe. Les plans cherchent un passage dégagé sur la carte tirée de la graine.
 - Ici, chaque navigateur simule son propre cow-boy et annonce ce qu'il touche ; l'hôte vérifie que c'est plausible (portée, dégâts de l'arme), fait vivre les bandits, les caisses, la dynamite, les chevaux et les bots, et diffuse la position des bandits dix fois par seconde. Rendu dans `public/js/fps.js`, graphismes dans `public/js/fpsart.js`, HUD dans `public/js/fpshud.js`, commandes dans `public/js/fpsinput.js`.
 
 ### Mort ou vif (FPS entre joueurs, 4 min)

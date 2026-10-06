@@ -25,7 +25,7 @@ export const COURSE = {
   perfect: { win: 0.1, gain: 0.3 }, // saut parfait (sommet du saut pile au-dessus de l'obstacle) : élan gratuit
   reach: 14, // une carotte est ramassée si le cheval passe à moins de 14 px de sa hauteur
   tolerance: 80, // écart (px) toléré par l'hôte entre la position annoncée et l'objet touché
-  arrival: [100, 60, 30, 10], // points selon le rang d'arrivée
+  arrival: [100, 60, 30, 10, 5, 2], // points selon le rang d'arrivée (jusqu'à six chevaux)
 };
 
 // Obstacles : largeur au sol (px). La boue ne fait pas tomber : elle freine (slow), comme le ruisseau.

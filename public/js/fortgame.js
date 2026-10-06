@@ -15,7 +15,7 @@ export const FORT = {
   top: 114, bottom: 208, minX: 12, maxX: 372, // champ des assaillants (pieds)
   defMin: 40, defMax: 344, // chemin de ronde
   speed: 0.055, defSpeed: 0.075, // px/ms
-  hp: 3, soloHp: 5, respawn: 3000, safe: 1200, // invulnérable un instant en revenant
+  hp: 3, respawn: 3000, loneRespawn: 2000, safe: 1200, // invulnérable un instant en revenant (infériorité numérique : fortMaxHp, fortGateMul)
   ammo: 6, reload: 1100, rof: 240, rifleRof: 110,
   dynRange: 64, defDynRange: 100, dynCd: 4000, dynFastCd: 1100, dynDmg: 2, blast: 22, big: 1.7,
   expose: 600, // après un tir ou un lancer, l'assaillant reste à découvert
@@ -75,18 +75,32 @@ export const overGate = (x) => Math.abs(x - FORT.gateX) <= FORT.gateW / 2 + 12;
 export const wallTop = (x) => (overGate(x) ? PARA_TOP : FORT.wallY - FORT.stakeH);
 export const defFeet = (x) => wallTop(x) + 16;
 
-export function fortMaxHp(i, n) {
+export function fortTeamSize(i, n) {
   let mine = 0;
   for (let j = 0; j < n; j++) if (fortTeam(j) === fortTeam(i)) mine++;
-  return mine < n - mine ? FORT.soloHp : FORT.hp; // seul contre deux : plus robuste
+  return mine;
+}
+// Joueur seul contre deux : sa dynamite compte double sur la porte (sinon il n'en vient presque jamais à bout)
+// et il revient plus vite au combat (FORT.loneRespawn). Réglé sur des parties entre bots : 51 % / 49 %.
+export function fortGateMul(i, n) {
+  const mine = fortTeamSize(i, n);
+  return Math.max(1, Math.floor((n - mine) / mine));
+}
+// Deux contre trois : un PV de plus suffit (le joueur seul contre deux a déjà fortGateMul).
+export function fortMaxHp(i, n) {
+  const mine = fortTeamSize(i, n);
+  return mine < n - mine && fortGateMul(i, n) === 1 ? FORT.hp + 1 : FORT.hp;
 }
 
-// Point de départ (k = nombre de réapparitions, pour varier un peu)
+// Point de départ (k = nombre de réapparitions, pour varier un peu).
+// Les assaillants s'étalent autour du chemin, les défenseurs au milieu de leur secteur du chemin de ronde.
 export function fortSpawn(i, n, attack, k = 0) {
   const mates = [];
   for (let j = 0; j < n; j++) if (fortTeam(j) === fortTeam(i)) mates.push(j);
   const m = mates.indexOf(i), s = mates.length;
-  const x = FORT.gateX + (m - (s - 1) / 2) * (attack ? 130 : 150) + (k ? ((k * 47) % 90) - 45 : 0);
+  const x = (attack
+    ? FORT.gateX + (m - (s - 1) / 2) * 130
+    : Math.round(FORT.defMin + ((m + 0.5) * (FORT.defMax - FORT.defMin)) / s)) + (k ? ((k * 47) % 90) - 45 : 0);
   return attack
     ? { x: clamp(x, FORT.minX, FORT.maxX), y: FORT.bottom - 2 }
     : { x: clamp(x, FORT.defMin, FORT.defMax), y: FORT.walkY };
@@ -100,7 +114,8 @@ function pick(R, weights) {
 }
 
 // Carte, abris, rivière et caisses de ravitaillement, tirés de la graine.
-export function fortWorld(seed, mapId = null) {
+// n : nombre de joueurs (à 5 ou 6, plus d'abris et des caisses plus fréquentes ; le même monde jusqu'à 4).
+export function fortWorld(seed, mapId = null, n = 4) {
   const R = rng(seed);
   const drawn = pick(R, FORT_MAPS); // toujours tiré, pour que la suite de la graine ne dépende pas d'une carte imposée
   const map = mapId && FORT_MAPS[mapId] ? mapId : drawn;
@@ -113,7 +128,8 @@ export function fortWorld(seed, mapId = null) {
   }
   const inRiver = (y, pad) => river && y > river.y0 - pad && y < river.y1 + pad + 6;
   const covers = [];
-  for (let tries = 0; covers.length < 9 && tries < 400; tries++) {
+  const nCovers = n > 4 ? 11 : 9; // trois assaillants : deux abris de plus
+  for (let tries = 0; covers.length < nCovers && tries < 400; tries++) {
     let kind = pick(R, M.covers);
     if (kind === 'wagon' && covers.some((c) => c.kind === 'wagon')) kind = 'barrels';
     if (!COVERS[kind]) continue;
@@ -124,11 +140,12 @@ export function fortWorld(seed, mapId = null) {
     if (covers.some((c) => Math.abs(c.x - x) < (c.w + w) / 2 + 18 && Math.abs(c.y - y) < 28)) continue;
     covers.push({ id: covers.length, kind, x, y, w, h, fragile: FRAGILE.has(kind) });
   }
-  // une caisse toutes les ~8 s dans chaque manche
+  // une caisse toutes les ~8 s dans chaque manche (~7 s à 5 joueurs, ~6 s à 6)
   const crates = [];
+  const gap = Math.min(1, 5 / (n + 1));
   for (let h = 0; h < 2; h++) {
     const end = fortHalfStart(h) + FORT.half - 4000;
-    for (let at = fortHalfStart(h) + 5000 + R() * 2000; at < end; at += 7000 + R() * 2500) {
+    for (let at = fortHalfStart(h) + 5000 + R() * 2000; at < end; at += (7000 + R() * 2500) * gap) {
       let x = 0, y = 0;
       for (let k = 0; k < 30; k++) {
         x = Math.round(30 + R() * (W - 60));
@@ -186,7 +203,7 @@ export class FortGame {
     this.mapId = mapId;
     this.duration = MODES.fort.duration;
     const n = players.length;
-    this.world = fortWorld(this.seed, mapId);
+    this.world = fortWorld(this.seed, mapId, n);
     this.p = players.map((pl, i) => {
       const maxHp = fortMaxHp(i, n);
       return {
@@ -220,11 +237,11 @@ export class FortGame {
   forceMap(id) {
     if (!FORT_MAPS[id]) return;
     this.mapId = id;
-    this.world = fortWorld(this.seed, id);
+    this.world = fortWorld(this.seed, id, this.n);
   }
 
   start() {
-    this.world = fortWorld(this.seed, this.mapId);
+    this.world = fortWorld(this.seed, this.mapId, this.n);
     this.startAt = Date.now() + COUNTDOWN;
     this.push({ type: 'mgStart', kind: this.kind, seed: this.seed, map: this.world.map, countdown: COUNTDOWN, duration: this.duration });
     return this.flush();
@@ -319,7 +336,7 @@ export class FortGame {
     const kill = p.hp === 0;
     let pts = 0;
     if (kill) {
-      p.deadUntil = t + FORT.respawn;
+      p.deadUntil = t + (fortGateMul(v, this.n) > 1 ? FORT.loneRespawn : FORT.respawn);
       p.power = null;
       p.stats.hurt++;
       pts = fortAttacking(by, h) ? FORT_PTS.kill : FORT_PTS.defKill;
@@ -352,9 +369,10 @@ export class FortGame {
     const r = blastOf(d.big);
     let dmg = 0, breach = false, pts = 0;
     if (attack && !this.gateDownUntil && onGate(d.x, d.y)) {
-      dmg = Math.min(this.gate, d.big ? 3 : 1);
+      const hit = d.big ? 3 : 1;
+      dmg = Math.min(this.gate, hit * fortGateMul(d.by, this.n));
       this.gate -= dmg;
-      pts = FORT_PTS.gate * dmg;
+      pts = FORT_PTS.gate * Math.min(dmg, hit); // les points suivent le bâton, pas le bonus de l'assaillant seul
       this.p[d.by].score += pts;
       if (this.gate <= 0) {
         breach = true;
@@ -546,7 +564,7 @@ export class FortGame {
       const step = FORT.speed * 100 * groundSpeed(this.world, pos.x, pos.y) * (this.powered(p, 'spurs', t) ? 1.6 : 1);
       const minY = this.gateDownUntil && Math.abs(pos.x - FORT.gateX) < FORT.gateW / 2 ? FORT.wallY : FORT.top;
       if (d <= step) {
-        Object.assign(pos, { x: b.wp.x, y: Math.max(minY, b.wp.y) });
+        Object.assign(pos, { x: clamp(b.wp.x, FORT.minX, FORT.maxX), y: clamp(b.wp.y, minY, FORT.bottom) });
         if (b.wp.crate != null) this.grab(i, b.wp.crate, t, h);
         if (b.wp.rush) this.enter(i, t, h);
         b.wp = null;
@@ -556,7 +574,7 @@ export class FortGame {
         const nx = pos.x + (dx / d) * step, ny = pos.y + (dy / d) * step;
         if (!blocked(covers, nx, ny)) Object.assign(pos, { x: nx, y: ny });
         else if (!blocked(covers, nx, pos.y)) pos.x = nx;
-        else b.wp = { x: pos.x + (pos.x < FORT.gateX ? -30 : 30), y: pos.y };
+        else b.wp = { x: clamp(pos.x + (pos.x < FORT.gateX ? -30 : 30), FORT.minX, FORT.maxX), y: pos.y };
         pos.x = clamp(pos.x, FORT.minX, FORT.maxX);
         pos.y = clamp(pos.y, minY, FORT.bottom);
       }
