@@ -82,6 +82,25 @@ function flipped(spr) {
   return spr.flip;
 }
 
+// Trou autour du viseur (panne de lumière, tempête de sable) : disque plein de rayon r0, puis anneau tramé
+// jusqu'à r1 (plein jusqu'à r2). Dessiné une fois, puis découpé dans le voile à chaque image (destination-out).
+const holes = new Map();
+function holeSprite(r0, r1, r2) {
+  const key = `${r0}:${r1}:${r2}`;
+  let c = holes.get(key);
+  if (c) return c;
+  c = S.makeCanvas(r1 * 2 + 1, r1 * 2 + 1);
+  const x = c.getContext('2d');
+  S.disc(x, r1, r1, r0, '#000');
+  x.fillStyle = '#000';
+  for (let dy = -r1; dy <= r1; dy++) for (let dx = -r1; dx <= r1; dx++) {
+    const d = Math.hypot(dx, dy);
+    if (d > r0 && d < r1 && ((dx + dy) & 1 || d < r2)) x.fillRect(r1 + dx, r1 + dy, 1, 1);
+  }
+  holes.set(key, c);
+  return c;
+}
+
 const clamp01 = (k) => (k < 0 ? 0 : k > 1 ? 1 : k);
 const hash = (n) => {
   let t = (n * 0x6d2b79f5) >>> 0;
@@ -1976,12 +1995,7 @@ export class ShooterScene extends MiniScene {
     x.fillRect(0, 0, W, H);
     const mx = Math.round(this.mouse.in ? this.mouse.x : W / 2), my = Math.round(this.mouse.in ? this.mouse.y : H / 2);
     x.globalCompositeOperation = 'destination-out';
-    S.disc(x, mx, my, 22, '#000');
-    x.fillStyle = '#000';
-    for (let dy = -32; dy <= 32; dy++) for (let dx = -32; dx <= 32; dx++) {
-      const d = Math.hypot(dx, dy);
-      if (d > 22 && d < 32 && ((dx + dy) & 1 || d < 26)) x.fillRect(mx + dx, my + dy, 1, 1);
-    }
+    x.drawImage(holeSprite(22, 32, 26), mx - 32, my - 32);
     ctx.drawImage(c, 0, 0);
   }
 
@@ -2002,12 +2016,7 @@ export class ShooterScene extends MiniScene {
     }
     const mx = Math.round(this.mouse.in ? this.mouse.x : W / 2), my = Math.round(this.mouse.in ? this.mouse.y : H / 2);
     x.globalCompositeOperation = 'destination-out';
-    S.disc(x, mx, my, 30, '#000');
-    x.fillStyle = '#000';
-    for (let dy = -42; dy <= 42; dy++) for (let dx = -42; dx <= 42; dx++) {
-      const d = Math.hypot(dx, dy);
-      if (d > 30 && d < 42 && ((dx + dy) & 1 || d < 35)) x.fillRect(mx + dx, my + dy, 1, 1);
-    }
+    x.drawImage(holeSprite(30, 42, 35), mx - 42, my - 42);
     ctx.globalAlpha = a;
     ctx.drawImage(c, 0, 0);
     ctx.globalAlpha = 1;

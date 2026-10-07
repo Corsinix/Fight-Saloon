@@ -95,6 +95,42 @@ const hash = (n) => {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 
+// Halo lumineux : disques concentriques ajoutés les uns aux autres (rings : [[rayon entier, opacité], …]),
+// dessinés une fois dans un petit canvas puis recopiés en mode 'lighter' : un disque coûte une ligne par pixel
+// de hauteur, et il y a des dizaines de halos par image la nuit. Centre du canvas : (c.r, c.r).
+const halos = new Map();
+export function haloSprite(rings, col) {
+  const key = `${col}|${rings.join(';')}`;
+  let c = halos.get(key);
+  if (c) return c;
+  let R = 1;
+  for (const [r] of rings) R = Math.max(R, r);
+  c = S.makeCanvas(R * 2 + 1, R * 2 + 1);
+  const x = c.getContext('2d');
+  x.globalCompositeOperation = 'lighter';
+  for (const [r, a] of rings) S.disc(x, R, R, r, `rgba(${col},${a})`);
+  c.r = R;
+  // (les lampes qui vacillent en font quelques dizaines ; au-delà, on repart de zéro)
+  if (halos.size >= 120) { for (const old of halos.values()) S.freeCanvas(old); halos.clear(); }
+  halos.set(key, c);
+  return c;
+}
+
+// Goutte de pluie (5 pixels en biais) : deux formes selon que son x tombe sur la première ou la seconde
+// moitié d'un pixel, dessinées une fois.
+let drops = null;
+function dropSprites() {
+  if (drops) return drops;
+  drops = [0, 0.5].map((a) => {
+    const c = S.makeCanvas(4, 5);
+    const x = c.getContext('2d');
+    x.fillStyle = 'rgba(190,200,230,0.5)';
+    for (let k = 0; k < 5; k++) x.fillRect(2 + Math.round(a - k * 0.5), k, 1, 1);
+    return c;
+  });
+  return drops;
+}
+
 export class Ambience {
   constructor(env) {
     this.env = env;
@@ -165,7 +201,8 @@ export class Ambience {
     const k = this.env.lights;
     if (!k || !this.tint) return;
     ctx.globalCompositeOperation = 'lighter';
-    for (const [rr, a] of [[r, 0.05], [r * 0.6, 0.07], [r * 0.3, 0.1]]) S.disc(ctx, Math.round(x), Math.round(y), Math.max(1, Math.round(rr)), `rgba(${col},${a * k})`);
+    const h = haloSprite([[r, 0.05], [r * 0.6, 0.07], [r * 0.3, 0.1]].map(([rr, a]) => [Math.max(1, Math.round(rr)), a * k]), col);
+    ctx.drawImage(h, Math.round(x) - h.r, Math.round(y) - h.r);
     ctx.globalCompositeOperation = 'source-over';
   }
 
@@ -186,13 +223,15 @@ export class Ambience {
     if (!outdoor) return;
     if (this.thunder(now)) sfx('thunder', 0.3 + hash(now) * 0.6);
     if (env.weather === 'rain') {
-      ctx.fillStyle = 'rgba(190,200,230,0.5)';
+      const [d0, d1] = dropSprites();
       for (let i = 0; i < 110; i++) {
         const sp = 0.42 + (i % 4) * 0.06;
-        const x = ((i * 97.3 + now * sp * 0.25) % (W + 60)) - 30;
+        const x = W - (((i * 97.3 + now * sp * 0.25) % (W + 60)) - 30);
         const y = ((i * 61.7 + now * sp) % (H + 20)) - 10;
-        for (let k = 0; k < 5; k++) ctx.fillRect(Math.round(W - x - k * 0.5), Math.round(y + k), 1, 1);
+        const fx = Math.floor(x);
+        ctx.drawImage(x - fx < 0.5 ? d0 : d1, fx - 2, Math.round(y));
       }
+      ctx.fillStyle = 'rgba(190,200,230,0.5)';
       for (let i = 0; i < 14; i++) {
         const ph = (now / 300 + i * 0.37) % 1;
         const x = Math.round(hash(i + Math.floor(now / 300 + i * 0.37) * 17) * W), y = 196 + (i % 4) * 5;

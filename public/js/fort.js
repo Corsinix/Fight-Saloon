@@ -495,6 +495,7 @@ export class FortScene extends MiniScene {
         hat: c.hat || 'cowboy', beard: c.beard, color: this.color(i),
       };
     });
+    S.forgetLooks(cache, this.riders.map((r) => r.key)); // tireurs des parties précédentes
     this.place(0);
     this.readState(this.state);
   }

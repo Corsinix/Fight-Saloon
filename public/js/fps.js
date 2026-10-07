@@ -58,9 +58,37 @@ const WEAPON_TIPS = {
   lemat: '9 COUPS - CLIC DROIT : CANON À CHEVROTINE',
   peacemaker: 'PRÉCIS - CLIC DROIT MAINTENU : FANNING',
   bow: 'SILENCIEUX - BANDÉ À FOND : FLÈCHE DE FEU',
-  harpoon: 'DÉGÂTS 70 - MAINTIENS : RAMÈNE LA CIBLE',
+  harpoon: 'DÉGÂTS 45 - MAINTIENS : RAMÈNE LA CIBLE',
 };
 const THROW_MS = 700; // entre deux objets lancés ou posés
+const FOG_DARK = [0.03, 0.03, 0.06]; // brouillard de la nuit noire (mods.dark)
+// options des sprites (voir sprite dans render) : objets partagés plutôt qu'un objet neuf à chaque appel
+const NO_OPT = Object.freeze({});
+const O_RED = Object.freeze({ red: true });
+const O_FLIP = Object.freeze({ flip: true });
+const O_ROPE = Object.freeze({ wh: 0.05, ww: 0.05, full: true });
+const O_AIM_DOT = Object.freeze({ wh: 0.07, ww: 0.07, full: true });
+const O_AIM_MARK = Object.freeze({ wh: 0.42, ww: 0.42, full: true });
+const O_BALL = Object.freeze({ wh: 0.16, ww: 0.16 });
+const O_MOL = Object.freeze({ wh: 0.22, ww: 0.22, full: true });
+const O_DYN = Object.freeze({ wh: 0.2, ww: 0.2 });
+const O_TRAP_SET = Object.freeze({ wh: 0.16, ww: 0.42 });
+const O_TRAP_SHUT = Object.freeze({ wh: 0.16, ww: 0.36 });
+const O_LOOP = Object.freeze({ wh: 0.16, ww: 0.42, full: true });
+const O_BOOM = Object.freeze({ wh: 1.6, ww: 1.6 });
+const O_BOOM_BIG = Object.freeze({ wh: 2.1, ww: 2.1 });
+const O_FX = Object.freeze({ wh: 0.22, ww: 0.22 });
+const O_TRAIN = Object.freeze({ wh: 1.5, ww: 4.2 });
+const NO_LIST = Object.freeze([]);
+// consignes devant un canon ou un comptoir (prêt, pas prêt)
+const HUD_USE = { cannon: ['E : SERVIR LE CANON', 'E : SERVIR LE CANON (IL REFROIDIT)'], bar: [`E : UN WHISKY (+${FPS.bar.hp} PV)`, 'LE PATRON ESSUIE UN VERRE'] };
+// objets à ramasser posés dans le décor (dessinés par pickupSprite)
+const PK = new Set(['gold', 'crate', 'ammo', 'whisky', 'bandage', 'vest', 'dynamite', 'star', 'gatling', 'akimbo', 'goldwin']);
+// côté vu d'un cheval ou d'un wagonnet (angleView) : objets partagés
+const VIEW_FRONT = Object.freeze({ angle: 'front', flip: false });
+const VIEW_BACK = Object.freeze({ angle: 'back', flip: false });
+const VIEW_SIDE = Object.freeze({ angle: 'side', flip: false });
+const VIEW_SIDE_FLIP = Object.freeze({ angle: 'side', flip: true });
 
 // Fond et brouillard selon l'ambiance (heure, météo) : multiplicateurs de couleur dehors et dedans.
 function lightOf(env) {
@@ -84,6 +112,14 @@ const GLYPH5 = {
   9: '111101111001110', $: '011110010011110', '?': '110001010000010', '!': '010010010000010', '.': '000000000000010',
   '-': '000000111000000', "'": '010010000000000', ' ': '000000000000000',
 };
+// Garde en place les éléments de a pour lesquels keep(e) est vrai (sans tableau neuf à chaque image)
+function keepIf(a, keep) {
+  let n = 0;
+  for (let i = 0; i < a.length; i++) if (keep(a[i])) a[n++] = a[i];
+  a.length = n;
+  return a;
+}
+
 // Pixels d'un canvas, gardés en mémoire (relus une seule fois)
 const PIX = new WeakMap();
 function pix(c) {
@@ -94,6 +130,20 @@ function pix(c) {
     PIX.set(c, p);
   }
   return p;
+}
+// Copie assombrie d'un canvas (arme en main, canon, encolure du cheval par nuit noire), faite une fois : un
+// ctx.filter posé à chaque image coûte cher. Sans ctx.filter (vieux Safari), la copie reste telle quelle, comme avant.
+const DIM = new WeakMap();
+function dimmed(c) {
+  let d = DIM.get(c);
+  if (!d) {
+    d = S.makeCanvas(c.width, c.height);
+    const x = d.getContext('2d');
+    x.filter = 'brightness(0.55)';
+    x.drawImage(c, 0, 0);
+    DIM.set(c, d);
+  }
+  return d;
 }
 
 export class FpsScene extends MiniScene {
@@ -195,6 +245,13 @@ export class FpsScene extends MiniScene {
     const w = this.world;
     this.light = lightOf(this.env);
     this.mods = fpsMods(w.events, 0);
+    // les joueurs (leur look), notre peau et notre tenue (armes en main) ; les images des looks d'une partie
+    // précédente qui ne servent plus sont libérées (fpsart.js) avant que rien ne soit dessiné
+    this.looks = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `fps${i}`));
+    const c = this.state.players[this.me]?.character || {};
+    this.skin = SKIN[c.skin] || SKIN[1];
+    this.cloth = CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2];
+    A.forgetLooks?.(this.looks, this.skin, this.cloth);
     // textures (pixels) : murs, sols et plafonds, couleur du dessus des murs bas
     // une texture pas encore dessinée (damier) prend une remplaçante en attendant :
     // porte de brique = mur de brique + la porte en bois de plankDoor (cadre, traverse, battant)
@@ -333,10 +390,6 @@ export class FpsScene extends MiniScene {
     });
     this.flats = w.flats.map((f) => (f ? pix(A.flatTex(f)).d : null));
     this.sky = null;
-    this.looks = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `fps${i}`));
-    const c = this.state.players[this.me]?.character || {};
-    this.skin = SKIN[c.skin] || SKIN[1];
-    this.cloth = CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2];
     this.my = {
       x: 30.5, y: 23.5, a: 0, alive: false, hp: FPS.hp, armor: 0, lo: { ...this.lo }, ammo: {}, w: this.lo.l, prevW: this.lo.l,
       temp: null, dyn: 0, shieldUntil: 0, m: null, s: 0, cartV: 0, horseV: 0, v: 0, lastFire: -1e9, reload: null, swing: null,
@@ -375,26 +428,80 @@ export class FpsScene extends MiniScene {
     this.prewarm();
   }
 
-  // Les armes en main se dessinent à leur première utilisation (quelques ms chacune) : on les prépare pendant le
-  // compte à rebours, une image à la fois, l'équipement choisi d'abord, pour éviter un à-coup au premier tir.
+  // Tout ce qui se dessine à sa première apparition (quelques ms chacun, plus la relecture des pixels) est préparé
+  // pendant le compte à rebours, par tranches d'environ 3 ms toutes les 16 ms pour ne pas faire soi-même d'à-coup :
+  // le décor de la carte, les objets à ramasser, les armes de l'équipement choisi, les autres joueurs debout et en
+  // marche, chevaux et effets, les bandits de face ; puis le reste (chutes, dos des bandits, armes des caisses,
+  // cavaliers).
   prewarm() {
-    const lo = this.lo;
-    const thrown = lo.e === 'molotov' ? 'molotov' : lo.e === 'traps' ? 'trap' : 'dynamite';
-    const ids = [...new Set([lo.l, lo.p, lo.m, thrown, 'dynamite', ...LONGS, ...PISTOLS, ...MELEE, ...TEMPS])];
-    const jobs = [];
-    for (const id of ids) {
-      const melee = MELEE.includes(id);
-      const states = THROWN[id] ? [['idle', 1], ['lit', 2], ['throw', 1]]
-        : melee ? [['idle', id === 'lasso' ? 4 : 1], ['swing', 3]]
-          : id === 'bow' ? [['idle', 1], ['draw', 2], ['fire', 2], ['reload', 3]]
-            : [['idle', id === 'diablo' ? 2 : 1], ['fire', id === 'gatling' ? 4 : 2], ['reload', 3], ...(WEAPONS[id]?.alt ? [['alt', 2], ['shell', 2]] : []), ...(WEAPONS[id]?.fan ? [['fan', 2]] : [])];
-      for (const [st, n] of states) for (let f = 0; f < n; f++) jobs.push([id === 'akimbo' ? 'colt' : id, st, f]);
+    const w = this.world, lo = this.lo, jobs = [];
+    const sprite = (make) => jobs.push(() => { const cv = make(); if (cv?.width) pix(cv); });
+    const weapons = (ids) => {
+      for (const id of ids) {
+        const melee = MELEE.includes(id);
+        const states = THROWN[id] ? [['idle', 1], ['lit', 2], ['throw', 1]]
+          : melee ? [['idle', id === 'lasso' ? 4 : 1], ['swing', 3]]
+            : id === 'bow' ? [['idle', 1], ['draw', 2], ['fire', 2], ['reload', 3]]
+              : [['idle', id === 'diablo' ? 2 : 1], ['fire', id === 'gatling' ? 4 : 2], ['reload', 3], ...(WEAPONS[id]?.alt ? [['alt', 2], ['shell', 2]] : []), ...(WEAPONS[id]?.fan ? [['fan', 2]] : [])];
+        for (const [st, n] of states) for (let f = 0; f < n; f++) jobs.push(() => A.viewModel(id === 'akimbo' ? 'colt' : id, st, f, this.skin, this.cloth));
+      }
+    };
+    // le décor de la carte (toutes ses images : moulins, lampes, portes battantes…) et les objets à ramasser
+    const deco = new Set();
+    for (const o of w.deco) {
+      const pk = !!(o.pk || PK.has(o.id)), key = `${pk}${o.id}`;
+      if (deco.has(key)) continue;
+      deco.add(key);
+      if (pk) sprite(() => A.pickupSprite(o.id));
+      else for (let f = 0; f < (A.PR_DECO?.[o.id]?.[0] || 1); f++) sprite(() => A.decoSprite(o.id, f));
     }
+    for (const id of ['crate', 'gold', 'ammo', 'whisky', 'bandage', 'vest', 'dynamite', 'star', 'trapSet', 'trapShut']) sprite(() => A.pickupSprite(id));
+    // les armes de l'équipement choisi
+    const thrown = lo.e === 'molotov' ? 'molotov' : lo.e === 'traps' ? 'trap' : 'dynamite';
+    const mine = [...new Set([lo.l, lo.p, lo.m, thrown, 'dynamite'])];
+    weapons(mine);
+    // notre visage dans le HUD (humeurs, de la pleine forme à la dernière extrémité)
+    const ch = this.state.players[this.me]?.character;
+    for (const mood of ['idle', 'hurt', 'grin']) for (const hp of [1, 0.6, 0.3, 0.1]) jobs.push(() => A.hudFace(ch, hp, mood));
+    jobs.push(() => A.hudFace(ch, 0, 'dead'));
+    // les autres joueurs (de face et de dos), les chevaux et les wagonnets sans cavalier
+    const players = (poses) => this.looks.forEach((look, i) => {
+      if (i === this.me) return;
+      for (const back of [false, true]) for (const [pose, n] of poses) for (let f = 0; f < n; f++) sprite(() => A.cowboyFrame(look, pose, f, back));
+    });
+    players([['idle', 1], ['walk', 4], ['shoot', 2]]);
+    const coats = [...new Set(this.horses.map((h) => h.coat))];
+    for (const coat of coats) for (const angle of ['side', 'front', 'back']) for (let f = 0; f < 4; f++) sprite(() => A.horseFrame(coat, f, angle, null));
+    if (this.carts.length) for (const angle of ['side', 'front', 'back']) sprite(() => A.cartFrame(angle, null));
+    // les effets (explosions, sang, poussière, flammes…) et les mires du canon et du mortier
+    for (const [id, [n]] of Object.entries(A.PR_FX || {})) for (let f = 0; f < n; f++) sprite(() => A.fxSprite(id, f));
+    sprite(() => aimDot()); sprite(() => aimMark(0)); sprite(() => aimMark(1));
+    // les bandits : ceux de la carte et des événements, les six tenues, d'abord de face (debout, en marche, au tir)
+    const kinds = new Set(this.dm ? [] : ['bandit', 'rifleman', 'brute', 'dynamiter']);
+    if (!this.dm) for (const e of w.events) { for (const k of e.mods?.npcKinds || []) kinds.add(k); if (e.mods?.boss) kinds.add('diablo'); }
+    const bandits = (back, poses) => {
+      for (const kind of kinds) for (let look = 0; look < 6; look++) for (const [pose, n] of poses(kind)) for (let f = 0; f < n; f++) sprite(() => A.banditFrame(kind, look, pose, f, back));
+    };
+    const fight = (kind) => [kind === 'dynamiter' ? 'throw' : 'shoot', 2];
+    bandits(false, (kind) => [['idle', 1], ['walk', 4], fight(kind)]);
+    // puis le reste : coups et chutes des joueurs et des bandits (un bandit à terre est toujours vu de face), dos des
+    // bandits, et les autres armes (caisses, armes temporaires)
+    players([['hurt', 1], ['melee', 2], ['die', 4]]);
+    bandits(false, () => [['hurt', 1], ['die', 4]]);
+    bandits(true, (kind) => [['idle', 1], ['walk', 4], fight(kind), ['hurt', 1]]);
+    weapons([...new Set([...LONGS, ...PISTOLS, ...MELEE, ...TEMPS])].filter((id) => !mine.includes(id)));
+    // en dernier, les autres joueurs en selle (une dizaine de ms par image) et dans les wagonnets
+    this.looks.forEach((look, i) => {
+      if (i === this.me) return;
+      for (const coat of coats) for (const angle of ['side', 'front', 'back']) for (let f = 0; f < 4; f++) sprite(() => A.horseFrame(coat, f, angle, look));
+      if (this.carts.length) for (const angle of ['side', 'front', 'back']) sprite(() => A.cartFrame(angle, look));
+    });
+    let k = 0;
     const step = () => {
-      if (this.abort.signal.aborted || !jobs.length) return;
-      const [id, st, f] = jobs.shift();
-      try { A.viewModel(id, st, f, this.skin, this.cloth); } catch { /* rien */ }
-      setTimeout(step, 16);
+      if (this.abort.signal.aborted || k >= jobs.length) return;
+      const t0 = performance.now();
+      do { try { jobs[k++](); } catch { /* rien */ } } while (k < jobs.length && performance.now() - t0 < 3);
+      if (k < jobs.length) setTimeout(step, 16);
     };
     setTimeout(step, 50);
   }
@@ -568,6 +675,7 @@ export class FpsScene extends MiniScene {
     m.zoom = false;
     m.drawn = null; // arc bandé : { at } depuis quand
     m.snareUntil = -1e9;
+    m.stunUntil = -1e9; // étourdi (lasso, harpon) : ni avancer ni tirer
     m.reeling = null; // lasso, harpon : le tir est tenu depuis { at }
     m.tether = null; // corde tendue vers une prise (annoncée par l'hôte)
     m.towTo = null; // au bout de la corde d'un autre : où l'hôte nous tire
@@ -865,7 +973,7 @@ export class FpsScene extends MiniScene {
         const dSelf = Math.hypot(ev.x - m.x, ev.y - m.y);
         // corde tendue : la cible suit le tireur, en douceur (ou elle est relâchée : ms 0)
         if (ev.quiet) {
-          if (ev.who === me && ev.npc == null) { m.snareUntil = this.t + ev.ms; m.towTo = ev.ms ? { x: ev.x, y: ev.y } : null; }
+          if (ev.who === me && ev.npc == null) { m.snareUntil = this.t + ev.ms; if (ev.stun) m.stunUntil = this.t + ev.ms; m.towTo = ev.ms ? { x: ev.x, y: ev.y } : null; }
           else if (ev.npc != null) { const n = this.npcs.get(ev.npc); if (n) { n.tx = ev.x; n.ty = ev.y; } }
           else if (this.remote[ev.who]) { const r = this.remote[ev.who]; r.tx = ev.x; r.ty = ev.y; }
           if (!ev.ms) this.snares.delete(key);
@@ -873,6 +981,7 @@ export class FpsScene extends MiniScene {
         }
         if (ev.who === me && ev.npc == null) {
           m.snareUntil = this.t + ev.ms;
+          if (ev.stun) { m.stunUntil = this.t + ev.ms; m.drawn = null; m.swing = null; this.letGo(); }
           if (m.m) this.dismountLocal();
           m.x = ev.x; m.y = ev.y;
           this.shake = Math.max(this.shake, 5);
@@ -1078,6 +1187,7 @@ export class FpsScene extends MiniScene {
 
   // ---------------------------------------------------------- boucle
   update(dt) {
+    this.workAt = performance.now(); // début du travail de l'image (voir render)
     // partie finie : on rend la souris pour l'écran des résultats
     if (this.over) this.input.stop?.();
     if (!this.world) return;
@@ -1096,7 +1206,8 @@ export class FpsScene extends MiniScene {
     }
     // interpolation des autres
     const k = 1 - Math.exp(-dt / 150); // lissage sur la cadence des positions reçues (150 à 200 ms)
-    for (const r of Object.values(this.remote)) {
+    for (const i in this.remote) {
+      const r = this.remote[i];
       const ox = r.x, oy = r.y;
       r.x += (r.tx - r.x) * k; r.y += (r.ty - r.y) * k;
       r.a += wrapA(r.ta - r.a) * k;
@@ -1110,13 +1221,14 @@ export class FpsScene extends MiniScene {
       n.a += wrapA(n.ta - n.a) * k;
       n.walk += Math.hypot(n.x - ox, n.y - oy) * 3;
     }
-    this.fx = this.fx.filter((f) => this.now - f.at < (f.kind === 'boom' ? 700 : 400));
+    const now = this.now;
+    keepIf(this.fx, (f) => now - f.at < (f.kind === 'boom' ? 700 : 400));
     for (const [id, f] of this.fires) if (t > f.t1) this.fires.delete(id);
     for (const [k, s] of this.snares) if (t > s.until) this.snares.delete(k);
     // le décor a changé (caisses soufflées, barils sautés) : la carte est redessinée, pas plus de deux fois par seconde
     if (this.mapDirty && this.now - (this.mapAt || 0) > 500) { this.mapDirty = false; this.mapAt = this.now; this.map?.refresh(); }
-    this.feed = this.feed.filter((f) => this.now - f.at < FEED_MS);
-    this.hurts = this.hurts.filter((h) => this.now - h.at < 900);
+    keepIf(this.feed, (f) => now - f.at < FEED_MS);
+    keepIf(this.hurts, (h) => now - h.at < 900);
     this.flash = Math.max(0, this.flash - dt * 0.004);
     if (this.env.lightning && Math.random() < dt / 9000) { this.lightning = 1; sfx('thunder', 0.4); }
     this.lightning = Math.max(0, this.lightning - dt * 0.004);
@@ -1259,7 +1371,7 @@ export class FpsScene extends MiniScene {
     }
     if (inp.reload) this.startReload();
     // dynamite, cocktail, piège (G, ou tir avec l'objet en main)
-    if ((inp.throw || (THROWN[m.w] && inp.firePressed)) && t - m.throwAt > THROW_MS && !mods.melee) {
+    if ((inp.throw || (THROWN[m.w] && inp.firePressed)) && t - m.throwAt > THROW_MS && !mods.melee && t >= m.stunUntil) {
       // devant le coffre, G prend la dynamite (s'il en reste) plutôt que l'équipement
       const th = THROWN[m.w] && !inp.throw ? m.w : m.dyn > 0 && this.nearSafe() ? 'dynamite' : this.thrown();
       if (th && this.thrownCount(th) > 0) this.throwItem(th, t);
@@ -1288,7 +1400,7 @@ export class FpsScene extends MiniScene {
     const m = this.my;
     const W8 = WEAPONS[m.w];
     const a = m.ammo[m.w];
-    if (m.reload || (m.drawAt && t - m.drawAt < 180)) { m.drawn = null; return; }
+    if (m.reload || (m.drawAt && t - m.drawAt < 180) || t < m.stunUntil) { m.drawn = null; return; }
     if (inp.fire && !m.drawn) {
       if (!a || a.mag <= 0) { if (inp.firePressed) { sfx('dry'); this.startReload(); } return; }
       if (t - m.lastFire < W8.rate) return;
@@ -1387,6 +1499,7 @@ export class FpsScene extends MiniScene {
   // 'bow' (flèche décochée, k : tension de l'arc de 0 à 1)
   fire(t, mode = null, k = 1) {
     const m = this.my;
+    if (t < m.stunUntil) return; // étourdi : le doigt ne répond plus
     const W0 = WEAPONS[m.w];
     // le second canon et le fanning se tirent avec leurs propres réglages (dégâts, cadence, dispersion)
     const W8 = mode === 'alt' ? { ...W0, ...W0.alt } : mode === 'fan' ? { ...W0, ...W0.fan } : W0;
@@ -1596,6 +1709,13 @@ export class FpsScene extends MiniScene {
     this.img = this.offCtx.createImageData(RW, RH);
     this.buf = new Uint32Array(this.img.data.buffer);
     this.zb = new Float32Array(RW * RH);
+    // tables par rangée (sols et plafonds : distance, ombre dehors / dedans, brouillard), par colonne (pixels
+    // couverts par les murs), et rangées de texture d'un sprite : réutilisées d'une image à l'autre
+    const row = () => new Float64Array(RH);
+    this.rows = { d: row(), or: row(), og: row(), ob: row(), ir: row(), ig: row(), ib: row(), ar: row(), ag: row(), ab: row() };
+    this.colFill = new Uint16Array(RW);
+    this.skyRow = new Int32Array(RH);
+    this.spV = new Int32Array(RH);
     this.sky = null;
   }
 
@@ -1624,7 +1744,15 @@ export class FpsScene extends MiniScene {
     this.sky = { w: PW, h: PH + up, up, d };
   }
 
+  // l'image, et le temps passé à la calculer depuis le début de update : la résolution automatique (fpsperf.js) se
+  // règle sur ce travail, pas sur l'écart entre deux images (borné à 50 ms, et calé sur l'écran : 30 ou 60 Hz)
   render(ctx) {
+    this.renderView(ctx);
+    if (this.world && this.workAt != null) this.res.work(performance.now() - this.workAt);
+    this.workAt = null;
+  }
+
+  renderView(ctx) {
     if (!this.world) return;
     this.ensureBuffers();
     if (!this.sky) this.buildSky();
@@ -1656,24 +1784,39 @@ export class FpsScene extends MiniScene {
     const boost = 1 + this.flash * 0.6 + this.lightning * 0.5;
     const far = L.far * (mods.fog ?? 1) * (dark ? 0.55 : 1);
     const near = far * 0.25;
-    const fogC = dark ? [0.03, 0.03, 0.06] : L.fog;
-    const fr = fogC[0] * 255, fg = fogC[1] * 255, fb = fogC[2] * 255;
+    const fogC = dark ? FOG_DARK : L.fog;
+    const fR = fogC[0] * 255, fG = fogC[1] * 255, fB = fogC[2] * 255;
     const lightK = (dark ? 0.4 : 1) * boost;
-    const outK = L.out.map((v) => Math.min(1, v * lightK));
-    const inK = L.in.map((v) => Math.min(1, v * (dark ? 0.7 : 1) * boost));
+    const oK0 = Math.min(1, L.out[0] * lightK), oK1 = Math.min(1, L.out[1] * lightK), oK2 = Math.min(1, L.out[2] * lightK);
+    const inD = dark ? 0.7 : 1;
+    const iK0 = Math.min(1, L.in[0] * inD * boost), iK1 = Math.min(1, L.in[1] * inD * boost), iK2 = Math.min(1, L.in[2] * inD * boost);
     const fogAt = (d) => (d <= near ? 0 : d >= far ? 1 : (d - near) / (far - near));
-    // écrit un pixel ombré : k = multiplicateurs, f = brouillard
+    // ombre d'un bloc de pixels (dessus d'un mur bas, dessous d'un linteau) : k = multiplicateurs, a = brouillard
     let kr = 1, kg = 1, kb = 1, ar = 0, ag = 0, ab = 0;
-    const shadeSet = (K, f, side) => {
+    const shadeSet = (roof, f, side) => {
       const s = (1 - f) * side;
-      kr = K[0] * s; kg = K[1] * s; kb = K[2] * s;
-      ar = fr * f; ag = fg * f; ab = fb * f;
+      if (roof) { kr = iK0 * s; kg = iK1 * s; kb = iK2 * s; } else { kr = oK0 * s; kg = oK1 * s; kb = oK2 * s; }
+      ar = fR * f; ag = fG * f; ab = fB * f;
     };
     const put = (o, c) => {
       buf[o] = 0xff000000 | (((((c >>> 16) & 255) * kb + ab) | 0) << 16) | (((((c >>> 8) & 255) * kg + ag) | 0) << 8) | (((c & 255) * kr + ar) | 0);
     };
     const maxD = far + 2;
     const walls = this.walls, flats = this.flats, tops = this.tops, tall = this.tall;
+    // sols et plafonds : la distance d'une rangée ne dépend que de y (au-dessous de l'horizon le sol, au-dessus le
+    // plafond) ; distance, brouillard et ombre (dehors, dedans) calculés une fois par rangée pour toute l'image
+    const R = this.rows, rowD = R.d;
+    const eP = eye * P, cP = (CEIL - eye) * P;
+    for (let y = 0; y < RH; y++) {
+      const d = y > hor ? eP / (y - hor) : y < hor ? cP / (hor - y) : 0;
+      const f = fogAt(d), s = (1 - f) * (y > hor ? 1 : 0.9);
+      rowD[y] = d;
+      R.or[y] = oK0 * s; R.og[y] = oK1 * s; R.ob[y] = oK2 * s;
+      R.ir[y] = iK0 * s; R.ig[y] = iK1 * s; R.ib[y] = iK2 * s;
+      R.ar[y] = fR * f; R.ag[y] = fG * f; R.ab[y] = fB * f;
+    }
+    const rAR = R.ar, rAG = R.ag, rAB = R.ab;
+    const colFill = this.colFill;
     // ------------------------------------------------ murs, sols, plafonds (colonne par colonne)
     for (let x = 0; x < RW; x++) {
       const cam = (2 * x) / RW - 1;
@@ -1687,7 +1830,9 @@ export class FpsScene extends MiniScene {
       let ci = my * MWd + mx;
       let side = 0;
       let prevRoof = C.ceil[ci] > 0;
-      for (let step = 0; step < 140; step++) {
+      // pixels déjà écrits dans la colonne : pleine, plus rien de ce qui est derrière ne peut s'y voir
+      let fill = 0;
+      for (let step = 0; step < 140 && fill < RH; step++) {
         // sortie de la case courante
         let dOut;
         let nside;
@@ -1699,48 +1844,48 @@ export class FpsScene extends MiniScene {
         // (un mur bas sous un toit : comptoir, piano, foin... garde son plafond au-dessus)
         const flr = h === 0 || bcell > 0;
         if (flr || (roofHere && h < CEIL)) {
-          const ft = flats[C.floor[ci]];
-          const K = roofHere ? inK : outK;
+          const KR = roofHere ? R.ir : R.or, KG = roofHere ? R.ig : R.og, KB = roofHere ? R.ib : R.ob;
           // sol : rangées entre dOut et dIn
-          const yA = Math.max(Math.ceil(hor + (eye * P) / dOut), Math.ceil(hor + 0.5)), yB = dIn > 1e-4 ? Math.min(RH - 1, Math.floor(hor + (eye * P) / dIn)) : RH - 1;
-          for (let y = yA; flr && y <= yB; y++) {
-            const o = y * RW + x;
-            if (zb[o]) continue;
-            const d = (eye * P) / (y - hor);
-            const wx = posX + rdx * d, wy = posY + rdy * d;
-            shadeSet(K, fogAt(d), 1);
-            put(o, ft ? ft[(((wy * 64) & 63) << 6) | ((wx * 64) & 63)] : 0xff406080);
-            zb[o] = d;
+          if (flr) {
+            const ft = flats[C.floor[ci]];
+            const yA = Math.max(Math.ceil(hor + eP / dOut), Math.ceil(hor + 0.5)), yB = dIn > 1e-4 ? Math.min(RH - 1, Math.floor(hor + eP / dIn)) : RH - 1;
+            for (let y = yA, o = yA * RW + x; y <= yB; y++, o += RW) {
+              if (zb[o]) continue;
+              const d = rowD[y];
+              const c = ft ? ft[((((posY + rdy * d) * 64) & 63) << 6) | (((posX + rdx * d) * 64) & 63)] : 0xff406080;
+              buf[o] = 0xff000000 | (((((c >>> 16) & 255) * KB[y] + rAB[y]) | 0) << 16) | (((((c >>> 8) & 255) * KG[y] + rAG[y]) | 0) << 8) | (((c & 255) * KR[y] + rAR[y]) | 0);
+              zb[o] = d;
+              fill++;
+            }
           }
           // plafond (bâtiments, galeries)
           if (roofHere) {
             const ct = flats[C.ceil[ci]];
-            const yC = dIn > 1e-4 ? Math.max(0, Math.ceil(hor - ((CEIL - eye) * P) / dIn)) : 0;
-            const yD = Math.min(Math.floor(hor - 0.5), Math.floor(hor - ((CEIL - eye) * P) / dOut));
-            for (let y = yC; y <= yD; y++) {
-              const o = y * RW + x;
+            const yC = dIn > 1e-4 ? Math.max(0, Math.ceil(hor - cP / dIn)) : 0;
+            const yD = Math.min(Math.floor(hor - 0.5), Math.floor(hor - cP / dOut));
+            for (let y = yC, o = yC * RW + x; y <= yD; y++, o += RW) {
               if (zb[o]) continue;
-              const d = ((CEIL - eye) * P) / (hor - y);
-              const wx = posX + rdx * d, wy = posY + rdy * d;
-              shadeSet(K, fogAt(d), 0.9);
-              put(o, ct ? ct[(((wy * 64) & 63) << 6) | ((wx * 64) & 63)] : 0xff203040);
+              const d = rowD[y];
+              const c = ct ? ct[((((posY + rdy * d) * 64) & 63) << 6) | (((posX + rdx * d) * 64) & 63)] : 0xff203040;
+              buf[o] = 0xff000000 | (((((c >>> 16) & 255) * KB[y] + rAB[y]) | 0) << 16) | (((((c >>> 8) & 255) * KG[y] + rAG[y]) | 0) << 8) | (((c & 255) * KR[y] + rAR[y]) | 0);
               zb[o] = d;
+              fill++;
             }
           }
           // dessous du linteau (quand on passe sous une porte)
           if (bcell > eye && h > 0) {
             const yU0 = dIn > 1e-4 ? Math.max(0, Math.ceil(hor - ((bcell - eye) * P) / dIn)) : 0;
             const yU1 = Math.floor(hor - ((bcell - eye) * P) / dOut);
-            shadeSet(roofHere ? inK : outK, fogAt(dIn), 0.55);
-            for (let y = yU0; y <= Math.min(RH - 1, yU1); y++) { const o = y * RW + x; if (!zb[o]) { put(o, tops[C.wall[ci]]); zb[o] = dIn + 0.01; } }
+            shadeSet(roofHere, fogAt(dIn), 0.55);
+            for (let y = yU0; y <= Math.min(RH - 1, yU1); y++) { const o = y * RW + x; if (!zb[o]) { put(o, tops[C.wall[ci]]); zb[o] = dIn + 0.01; fill++; } }
           }
         }
         if (h > 0 && bcell === 0 && h < eye && dIn > 1e-4) {
           // dessus d'un mur bas (comptoir, barrière, foin) vu d'en haut
           const yT0 = Math.ceil(hor - ((h - eye) * P) / dOut), yT1 = Math.floor(hor - ((h - eye) * P) / dIn);
-          shadeSet(roofHere ? inK : outK, fogAt(dIn), 0.95);
+          shadeSet(roofHere, fogAt(dIn), 0.95);
           const c = tops[C.wall[ci]];
-          for (let y = Math.max(0, yT0); y <= Math.min(RH - 1, yT1); y++) { const o = y * RW + x; if (!zb[o]) { put(o, c); zb[o] = dIn; } }
+          for (let y = Math.max(0, yT0); y <= Math.min(RH - 1, yT1); y++) { const o = y * RW + x; if (!zb[o]) { put(o, c); zb[o] = dIn; fill++; } }
         }
         if (dOut > maxD) break;
         // case suivante
@@ -1781,63 +1926,78 @@ export class FpsScene extends MiniScene {
         }
         const yTop = hor - ((top - eye) * P) / dIn, yBot = hor + ((eye - (fr ? 0 : b2)) * P) / dIn;
         const y0 = Math.max(0, Math.ceil(yTop)), y1 = Math.min(RH - 1, Math.floor(yBot));
-        shadeSet(prevRoof ? inK : outK, fogAt(dIn), side ? 0.82 : 1);
+        if (y0 > y1) continue;
+        // ombre de la face (côté, brouillard), en variables locales pour la boucle des pixels
+        const fw = fogAt(dIn), sw = (1 - fw) * (side ? 0.82 : 1);
+        const wR = (prevRoof ? iK0 : oK0) * sw, wG = (prevRoof ? iK1 : oK1) * sw, wB = (prevRoof ? iK2 : oK2) * sw;
+        const aR = fR * fw, aG = fG * fw, aB = fB * fw;
         const upH = top - 1;
+        const upS = upT && upH > 0.05 ? upT : null; // étage (enseigne, fronton) au-dessus de 1
         // un mur bas (comptoir, barrière, foin) montre toute sa texture, étirée sur sa hauteur
         const low = top < 1 && b2 === 0 ? top : 0;
-        for (let y = y0; y <= y1; y++) {
-          const o = y * RW + x;
+        const tallIn = !low && inside && tall[tid]; // mur intérieur étiré jusqu'au plafond
+        const dz = dIn / P; // hauteur (en unités du monde) d'une rangée de pixels à cette distance
+        for (let y = y0, o = y0 * RW + x; y <= y1; y++, o += RW) {
           if (zb[o]) continue;
-          const z = eye + ((hor - y) * dIn) / P;
+          const z = eye + (hor - y) * dz;
           let c;
           if (z < b2) {
             const hd = z >= b2 - 0.07;
             if (!hd && fr < 2) continue; // l'ouverture : on voit au travers
             c = hd ? (z > b2 - 0.012 || z < b2 - 0.058 ? 0xff0e1a2a : z > b2 - 0.025 ? 0xff3e6894 : 0xff2c4c6e)
               : k === 0 || k === 3 ? 0xff0e1a2a : k === 1 ? 0xff3e6894 : 0xff2c4c6e;
-          } else if (upT && z >= 1 && upH > 0.05) c = upT[((((1 - (z - 1) / upH) * 64) | 0) & 63) << 6 | tx];
-          else if (low) c = tx0 ? tx0[((((1 - z / low) * 64) | 0) & 63) << 6 | tx] : 0xffff00ff;
-          else if (inside && tall[tid]) c = tx0[((((1 - z / top) * 64) | 0) & 63) << 6 | tx]; // mur intérieur étiré jusqu'au plafond
-          else { const fz = z - Math.floor(z); c = tx0 ? tx0[((((1 - fz) * 64) | 0) & 63) << 6 | tx] : 0xffff00ff; }
+          } else if (upS && z >= 1) c = upS[((((1 - (z - 1) / upH) * 64) | 0) & 63) << 6 | tx];
+          else if (!tx0) c = 0xffff00ff;
+          else if (low) c = tx0[((((1 - z / low) * 64) | 0) & 63) << 6 | tx];
+          else if (tallIn) c = tx0[((((1 - z / top) * 64) | 0) & 63) << 6 | tx];
+          else c = tx0[((((1 - (z - Math.floor(z))) * 64) | 0) & 63) << 6 | tx];
           if (c === SEE) continue; // ciel peint entre les pointes de la palissade : on voit à travers
-          put(o, c);
+          buf[o] = 0xff000000 | (((((c >>> 16) & 255) * wB + aB) | 0) << 16) | (((((c >>> 8) & 255) * wG + aG) | 0) << 8) | (((c & 255) * wR + aR) | 0);
           zb[o] = dIn;
+          fill++;
         }
       }
+      colFill[x] = fill;
     }
     // ------------------------------------------------ ciel (et brouillard en bas, au-delà de tout)
-    const sky = this.sky;
+    const sky = this.sky, skyW = sky.w, skyD = sky.d, skyRow = this.skyRow;
     const skyDark = dark ? 0.35 : 1;
+    const fS = (1 - (mods.fog ?? 1)) * 0.7;
+    let kS = skyDark * (1 - fS) * (1 + this.lightning * 0.6);
+    if (kS > 1) kS = 1;
+    const aSR = fR * fS, aSG = fG * fS, aSB = fB * fS;
+    const fogPx = 0xff000000 | ((fB | 0) << 16) | ((fG | 0) << 8) | (fR | 0);
+    for (let y = 0; y < RH; y++) skyRow[y] = Math.min(sky.h - 1, Math.max(0, y - skyShift + sky.up)) * skyW;
     for (let x = 0; x < RW; x++) {
+      if (colFill[x] >= RH) continue; // colonne bouchée par les murs, sols et plafonds
       const cam = (2 * x) / RW - 1;
       const ang = v.a + Math.atan(cam * tanH);
-      let sx = Math.floor(((ang / TAU) % 1 + 1) % 1 * sky.w);
-      if (sx >= sky.w) sx = 0;
-      for (let y = 0; y < RH; y++) {
-        const o = y * RW + x;
+      let sx = Math.floor(((ang / TAU) % 1 + 1) % 1 * skyW);
+      if (sx >= skyW) sx = 0;
+      for (let y = 0, o = x; y < RH; y++, o += RW) {
         if (zb[o]) continue;
         if (y < hor) {
-          const c = sky.d[Math.min(sky.h - 1, Math.max(0, y - skyShift + sky.up)) * sky.w + sx];
-          const f = (1 - (mods.fog ?? 1)) * 0.7;
-          kr = kg = kb = skyDark * (1 - f) * (1 + this.lightning * 0.6);
-          if (kr > 1) kr = kg = kb = 1;
-          ar = fr * f; ag = fg * f; ab = fb * f;
-          put(o, c);
-        } else buf[o] = 0xff000000 | ((fb | 0) << 16) | ((fg | 0) << 8) | (fr | 0);
+          const c = skyD[skyRow[y] + sx];
+          buf[o] = 0xff000000 | (((((c >>> 16) & 255) * kS + aSB) | 0) << 16) | (((((c >>> 8) & 255) * kS + aSG) | 0) << 8) | (((c & 255) * kS + aSR) | 0);
+        } else buf[o] = fogPx;
         zb[o] = 1e9;
       }
     }
     // ------------------------------------------------ sprites
     const invDet = 1 / (plX * dirY - dirX * plY);
-    const sprite = (sx, sy, z, cv, o = {}) => {
+    const spV = this.spV;
+    // o : options, objets partagés (pas d'objet neuf par appel) : wh, ww (taille dans le monde), full (pleine
+    // lumière), dim (assombri), flip (miroir), red (touché)
+    const sprite = (sx, sy, z, cv, o = NO_OPT) => {
       if (!cv) return;
       const dx = sx - posX, dy = sy - posY;
       const ty = invDet * (-plY * dx + plX * dy);
       if (ty < 0.12 || ty > maxD) return;
       const txs = invDet * (dirY * dx - dirX * dy);
       const sp = pix(cv);
-      const wh = o.wh ?? sp.h / 64;
-      const ww = o.ww ?? sp.w / 64;
+      const sw = sp.w, sh = sp.h, sd = sp.d;
+      const wh = o.wh ?? sh / 64;
+      const ww = o.ww ?? sw / 64;
       const scx = (RW / 2) * (1 + txs / ty);
       const ph = (wh * P) / ty, pw = (ww * P) / ty;
       const yb = hor + ((eye - z) * P) / ty;
@@ -1846,22 +2006,27 @@ export class FpsScene extends MiniScene {
       const x0 = Math.max(0, Math.ceil(xa)), x1 = Math.min(RW - 1, Math.floor(xa + pw));
       const y0 = Math.max(0, Math.ceil(ya)), y1 = Math.min(RH - 1, Math.floor(yb));
       if (x0 > x1 || y0 > y1) return;
-      const K = roofed(w, sx, sy) ? inK : outK;
-      if (o.full) { kr = kg = kb = 1; ar = ag = ab = 0; } else shadeSet(K, fogAt(ty), o.dim ?? 1); // lampes allumées : en pleine lumière
-      const red = o.red;
+      // lampes allumées : en pleine lumière
+      let sR = 1, sG = 1, sB = 1, aR = 0, aG = 0, aB = 0;
+      if (!o.full) {
+        const f = fogAt(ty), s = (1 - f) * (o.dim ?? 1);
+        if (roofed(w, sx, sy)) { sR = iK0 * s; sG = iK1 * s; sB = iK2 * s; } else { sR = oK0 * s; sG = oK1 * s; sB = oK2 * s; }
+        aR = fR * f; aG = fG * f; aB = fB * f;
+      }
+      const red = o.red, flip = o.flip;
+      // la rangée de texture de chaque ligne de l'écran, une fois pour toutes les colonnes du sprite
+      for (let Y = y0; Y <= y1; Y++) spV[Y] = Math.floor(((Y - ya) / ph) * sh) * sw;
       for (let X = x0; X <= x1; X++) {
-        let u = Math.floor(((X - xa) / pw) * sp.w);
-        if (o.flip) u = sp.w - 1 - u;
-        if (u < 0 || u >= sp.w) continue;
-        for (let Y = y0; Y <= y1; Y++) {
-          const off = Y * RW + X;
+        let u = Math.floor(((X - xa) / pw) * sw);
+        if (flip) u = sw - 1 - u;
+        if (u < 0 || u >= sw) continue;
+        for (let Y = y0, off = y0 * RW + X; Y <= y1; Y++, off += RW) {
           const zv = zb[off];
           if (zv && zv < ty) continue;
-          const v = Math.floor(((Y - ya) / ph) * sp.h);
-          const c = sp.d[v * sp.w + u];
+          const c = sd[spV[Y] + u];
           if (!(c >>> 24)) continue;
           if (red) buf[off] = 0xff3030e0; // touché : un éclair rouge
-          else put(off, c);
+          else buf[off] = 0xff000000 | (((((c >>> 16) & 255) * sB + aB) | 0) << 16) | (((((c >>> 8) & 255) * sG + aG) | 0) << 8) | (((c & 255) * sR + aR) | 0);
           zb[off] = ty;
         }
       }
@@ -1891,8 +2056,15 @@ export class FpsScene extends MiniScene {
     const m = this.my;
     const v = this.vp || m; // point de vue de l'image (le joueur, ou la caméra de la cinématique)
     const lit = !!(this.env.lights || this.mods.dark);
-    const PK = new Set(['gold', 'crate', 'ammo', 'whisky', 'bandage', 'vest', 'dynamite', 'star', 'gatling', 'akimbo', 'goldwin']);
     const gunK = m.gun && !v.actors ? m.gun : null; // la pièce que l'on sert (hors cinématique) : dessinée par drawViewModel
+    // options des sprites qui changent d'un appel à l'autre : un seul objet, rempli juste avant chaque appel
+    const so = this.spOpt ||= {};
+    // qui se tient où (portes battantes) : relevé une fois par image, à plat [x0, y0, x1, y1...]
+    const occ = this.occ ||= [];
+    occ.length = 0;
+    if (m.alive) occ.push(m.x, m.y);
+    for (const i in this.remote) { const r = this.remote[i]; if (r.alive) occ.push(r.x, r.y); }
+    for (const n of this.npcs.values()) if (n.alive) occ.push(n.x, n.y);
     for (const o of w.deco) {
       if (o.gone || Math.abs(o.x - v.x) > 30 || Math.abs(o.y - v.y) > 30) continue;
       if (gunK && `d${o.k}` === gunK) continue;
@@ -1900,13 +2072,18 @@ export class FpsScene extends MiniScene {
       let f = 0;
       if (o.spin) f = Math.floor(now / 140) % 4;
       else if (o.id === 'cow' || o.id === 'chicken') f = Math.floor(now / 700 + o.k) % 2;
-      else if (o.batwing) f = this.batwingFrame(o, now);
+      else if (o.batwing) f = this.batwingFrame(o, now, occ);
       else if ((o.lamp || o.id === 'lantern') && st !== 'broken' && st !== 'fallen') f = lit || roofed(w, o.x, o.y) ? 1 : 0;
       const cv = o.pk || PK.has(o.id) ? A.pickupSprite(o.id) : A.decoSprite(o.id, f);
       let z = o.hang ? CEIL - cv.height / 64 : o.z || 0;
       // le lustre décroché tombe, puis reste au sol
       if (st === 'fallen') z *= 1 - clamp((now - (o.pr.at ?? -1e9)) / FPS.prop.fall, 0, 1) ** 2;
-      sprite(o.x, o.y, z, cv, { full: f === 1 && (o.lamp || o.id === 'lantern'), dim: st === 'open' || st === 'fallen' || st === 'burn' ? 0.55 : undefined, ...(o.sc && { wh: (cv.height / 64) * o.sc, ww: (cv.width / 64) * o.sc }) }); // sc : échelle (bouteille du comptoir)
+      so.full = f === 1 && (o.lamp || o.id === 'lantern');
+      so.dim = st === 'open' || st === 'fallen' || st === 'burn' ? 0.55 : undefined;
+      so.wh = o.sc ? (cv.height / 64) * o.sc : undefined; // sc : échelle (bouteille du comptoir)
+      so.ww = o.sc ? (cv.width / 64) * o.sc : undefined;
+      so.flip = so.red = undefined;
+      sprite(o.x, o.y, z, cv, so);
     }
     // le feu : quelques langues de flammes qui dansent sur la flaque, et qui baissent avant de s'éteindre
     for (const f of this.fires.values()) {
@@ -1916,7 +2093,8 @@ export class FpsScene extends MiniScene {
       for (let j = 0; j < n; j++) {
         const a = j * 2.1 + f.id;
         const x = f.x + (n > 1 ? Math.cos(a) * f.r * 0.45 : 0), y = f.y + (n > 1 ? Math.sin(a) * f.r * 0.45 : 0);
-        sprite(x, y, 0, A.fxSprite('flame', Math.floor(now / 90) + j + f.id), { full: true, wh: 0.75 * k, ww: 0.56 * k });
+        so.full = true; so.wh = 0.75 * k; so.ww = 0.56 * k; so.dim = so.flip = so.red = undefined;
+        sprite(x, y, 0, A.fxSprite('flame', Math.floor(now / 90) + j + f.id), so);
       }
     }
     // caisses (elles tombent du ciel en apparaissant) et sacs d'or (ils flottent)
@@ -1933,13 +2111,14 @@ export class FpsScene extends MiniScene {
       const view = this.angleView(h.x, h.y, h.a);
       const moving = h.rider >= 0 && this.remote[h.rider] && now - this.remote[h.rider].moveAt < 200;
       const fr = h.dead ? 0 : moving ? Math.floor(h.gait) % 4 : 0;
-      sprite(h.x, h.y, 0, A.horseFrame(h.coat, fr, view.angle, look), { flip: view.flip, red: h.dead ? false : undefined, dim: h.dead ? 0.5 : 1 });
+      so.flip = view.flip; so.dim = h.dead ? 0.5 : 1; so.full = so.red = so.wh = so.ww = undefined;
+      sprite(h.x, h.y, 0, A.horseFrame(h.coat, fr, view.angle, look), so);
     }
     for (const c of this.carts) {
       if (c.rider === this.me && m.m === `c${c.id}`) continue;
       const p = railAt(w, c.s);
       const view = this.angleView(p.x, p.y, p.a);
-      sprite(p.x, p.y, 0, A.cartFrame(view.angle, c.rider >= 0 ? this.looks[c.rider] : null), { flip: view.flip });
+      sprite(p.x, p.y, 0, A.cartFrame(view.angle, c.rider >= 0 ? this.looks[c.rider] : null), view.flip ? O_FLIP : NO_OPT);
     }
     // bandits
     for (const n of this.npcs.values()) {
@@ -1951,10 +2130,11 @@ export class FpsScene extends MiniScene {
       else if (n.st === 2) { pose = n.kind === 'dynamiter' ? 'throw' : 'shoot'; fr = 0; }
       else if (n.st === 1) { pose = 'walk'; fr = Math.floor(n.walk) % 4; }
       const cv = A.banditFrame(n.kind, n.look, pose, fr, back && n.alive);
-      sprite(n.x, n.y, 0, cv, { red: n.alive && now - n.hurtAt < 70 });
+      sprite(n.x, n.y, 0, cv, n.alive && now - n.hurtAt < 70 ? O_RED : NO_OPT);
     }
     // les autres joueurs
-    for (const [i, r] of Object.entries(this.remote)) {
+    for (const i in this.remote) {
+      const r = this.remote[i];
       if (!r.seen && !r.alive) continue;
       if (r.m && r.alive) continue; // dessiné avec sa monture
       if (!r.alive && (r.dieAt == null || now - r.dieAt > 6000)) continue;
@@ -1965,7 +2145,8 @@ export class FpsScene extends MiniScene {
       else if (now - r.flashAt < 140) { pose = WEAPONS[r.w]?.melee ? 'melee' : 'shoot'; fr = now - r.flashAt < 70 ? 1 : 0; }
       else if (now - r.moveAt < 160) { pose = 'walk'; fr = Math.floor(now / 130) % 4; }
       const cv = A.cowboyFrame(this.looks[i], pose, fr, back);
-      sprite(r.x, r.y, 0, cv, { red: r.alive && now - r.hurtAt < 60, wh: r.c && r.alive && cv ? (cv.height / 64) * 0.6 : undefined });
+      so.red = r.alive && now - r.hurtAt < 60; so.wh = r.c && r.alive && cv ? (cv.height / 64) * 0.6 : undefined; so.ww = so.full = so.dim = so.flip = undefined;
+      sprite(r.x, r.y, 0, cv, so);
     }
     // dynamite : en vol, puis la mèche grésille au sol
     for (const d of this.dyns.values()) {
@@ -1975,9 +2156,9 @@ export class FpsScene extends MiniScene {
       const k = clamp((this.t - d.at) / fly, 0, 1);
       const x = d.x0 + (d.x1 - d.x0) * k, y = d.y0 + (d.y1 - d.y0) * k;
       const z = (d.ball ? 0.35 : 0.5) * (1 - k) + Math.sin(Math.PI * k) * (d.mortar ? 2.6 : d.ball ? 0.6 : 0.8);
-      if (d.ball) sprite(x, y, z, A.fxSprite('ball', 0), { wh: 0.16, ww: 0.16 });
-      else if (d.mol) sprite(x, y, z, A.fxSprite('molFly', Math.floor(now / 80) % 4), { wh: 0.22, ww: 0.22, full: true });
-      else sprite(x, y, z, A.fxSprite('dynFly', Math.floor(now / 80) % 4), { wh: 0.2, ww: 0.2 });
+      if (d.ball) sprite(x, y, z, A.fxSprite('ball', 0), O_BALL);
+      else if (d.mol) sprite(x, y, z, A.fxSprite('molFly', Math.floor(now / 80) % 4), O_MOL);
+      else sprite(x, y, z, A.fxSprite('dynFly', Math.floor(now / 80) % 4), O_DYN);
     }
     // cordes tendues (lasso, harpon) : une ligne de nœuds du tireur à sa prise, qui pend un peu
     for (const [by, c] of this.tethers) {
@@ -1987,13 +2168,13 @@ export class FpsScene extends MiniScene {
       const mine = +by === this.me, dot = A.fxSprite('ropeDot', c.w === 'harpoon' ? 1 : 0);
       for (let k = mine ? 3 : 1; k < 16; k++) {
         const f = k / 16, x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f;
-        sprite(x, y, (mine ? 0.42 : 0.5) + (0.45 - (mine ? 0.42 : 0.5)) * f - Math.sin(f * Math.PI) * 0.08, dot, { wh: 0.05, ww: 0.05, full: true });
+        sprite(x, y, (mine ? 0.42 : 0.5) + (0.45 - (mine ? 0.42 : 0.5)) * f - Math.sin(f * Math.PI) * 0.08, dot, O_ROPE);
       }
     }
     // pièges à loup : à plat au sol, mâchoires ouvertes (on les voit mal de loin)
     for (const q of this.traps.values()) {
       if (Math.abs(q.x - v.x) > 14 || Math.abs(q.y - v.y) > 14) continue;
-      sprite(q.x, q.y, 0, A.pickupSprite('trapSet'), { wh: 0.16, ww: 0.42 });
+      sprite(q.x, q.y, 0, A.pickupSprite('trapSet'), O_TRAP_SET);
     }
     // entravés : la corde du lasso autour de la taille, les mâchoires refermées sur la cheville
     for (const [key, s] of this.snares) {
@@ -2001,22 +2182,22 @@ export class FpsScene extends MiniScene {
       if (!e || e.alive === false) continue;
       // un peu devant la cible (vers l'œil), sinon son sprite, à la même distance, le cache
       const d = Math.hypot(v.x - e.x, v.y - e.y) || 1, x = e.x + ((v.x - e.x) / d) * 0.32, y = e.y + ((v.y - e.y) / d) * 0.32;
-      if (s.w === 'trap') sprite(x, y, 0, A.pickupSprite('trapShut'), { wh: 0.16, ww: 0.36 });
-      else if (s.w === 'lasso') sprite(x, y, 0.3, A.fxSprite('loop', Math.floor(now / 160) % 2), { wh: 0.16, ww: 0.42, full: true });
+      if (s.w === 'trap') sprite(x, y, 0, A.pickupSprite('trapShut'), O_TRAP_SHUT);
+      else if (s.w === 'lasso') sprite(x, y, 0.3, A.fxSprite('loop', Math.floor(now / 160) % 2), O_LOOP);
     }
     for (const f of this.fx) {
       const el = now - f.at;
-      if (f.kind === 'boom') sprite(f.x, f.y, -0.1, A.fxSprite('boom', Math.min(4, Math.floor(el / 130))), f.big ? { wh: 2.1, ww: 2.1 } : { wh: 1.6, ww: 1.6 });
-      else sprite(f.x, f.y, (f.z || 0.5) - 0.08, A.fxSprite(f.kind, Math.min(2, Math.floor(el / 120))), { wh: 0.22, ww: 0.22 });
+      if (f.kind === 'boom') sprite(f.x, f.y, -0.1, A.fxSprite('boom', Math.min(4, Math.floor(el / 130))), f.big ? O_BOOM_BIG : O_BOOM);
+      else sprite(f.x, f.y, (f.z || 0.5) - 0.08, A.fxSprite(f.kind, Math.min(2, Math.floor(el / 120))), O_FX);
     }
     // mortier en main : la même mire, au point de chute que règle le regard
     if (!gunK && m.alive && !v.actors && WEAPONS[m.w]?.lob) {
       const d = this.mortarD(), ix = m.x + Math.cos(m.a) * d, iy = m.y + Math.sin(m.a) * d;
       for (let k = 0; k < 14; k++) {
         const b = (k / 14) * TAU + now / 1500, rr = FPS.mortar.radius;
-        sprite(ix + Math.cos(b) * rr, iy + Math.sin(b) * rr, 0, aimDot(), { wh: 0.07, ww: 0.07, full: true });
+        sprite(ix + Math.cos(b) * rr, iy + Math.sin(b) * rr, 0, aimDot(), O_AIM_DOT);
       }
-      sprite(ix, iy, 0.02, aimMark(Math.floor(now / 300) % 2), { wh: 0.42, ww: 0.42, full: true });
+      sprite(ix, iy, 0.02, aimMark(Math.floor(now / 300) % 2), O_AIM_MARK);
     }
     // au canon : la mire au point de chute et le cercle du souffle, au sol
     if (gunK && m.alive) {
@@ -2025,9 +2206,9 @@ export class FpsScene extends MiniScene {
         const d = cannonReach(w, u.x, u.y, m.a, m.gunD), ix = u.x + Math.cos(m.a) * d, iy = u.y + Math.sin(m.a) * d;
         for (let k = 0; k < 16; k++) {
           const b = (k / 16) * TAU + now / 1500, rr = FPS.cannon.radius;
-          sprite(ix + Math.cos(b) * rr, iy + Math.sin(b) * rr, 0, aimDot(), { wh: 0.07, ww: 0.07, full: true });
+          sprite(ix + Math.cos(b) * rr, iy + Math.sin(b) * rr, 0, aimDot(), O_AIM_DOT);
         }
-        sprite(ix, iy, 0.02, aimMark(Math.floor(now / 300) % 2), { wh: 0.42, ww: 0.42, full: true });
+        sprite(ix, iy, 0.02, aimMark(Math.floor(now / 300) % 2), O_AIM_MARK);
       }
     }
     // le train de l'événement : il traverse la gare à toute allure
@@ -2036,7 +2217,7 @@ export class FpsScene extends MiniScene {
       if (ev) {
         const x0 = -20 + (((this.t - ev.t0) / 1000) * 16) % (w.w + 40);
         const cars = ['loco', 'trainCar', 'freightCar', 'trainCar', 'freightCar'];
-        cars.forEach((id, k) => sprite(x0 - k * 4.4, 3.5, 0, A.wallTex(id, k % 2), { wh: 1.5, ww: 4.2 }));
+        cars.forEach((id, k) => sprite(x0 - k * 4.4, 3.5, 0, A.wallTex(id, k % 2), O_TRAIN));
       }
     }
     // les acteurs de la cinématique d'ouverture
@@ -2048,7 +2229,8 @@ export class FpsScene extends MiniScene {
     if (!this.state) return;
     const inv = 1 / (v.plX * v.dirY - v.dirX * v.plY), k = W / v.RW, zb = this.zb;
     const wanted = this.mods.bounty === 'leader' ? bountyLeader(this.state.players) : -1;
-    for (const [i, r] of Object.entries(this.remote)) {
+    for (const i in this.remote) {
+      const r = this.remote[i];
       if (!r.alive || !r.seen) continue;
       const dx = r.x - v.posX, dy = r.y - v.posY;
       const ty = inv * (-v.plY * dx + v.plX * dy);
@@ -2058,12 +2240,14 @@ export class FpsScene extends MiniScene {
       if (X < 0 || X >= v.RW) continue;
       const top = r.m ? (r.m[0] === 'h' ? 1.4 : 0.95) : r.c ? 0.72 : 1.05;
       // visible si le corps ou la tête n'est pas caché par quelque chose de plus proche
-      const seen = [r.c ? 0.3 : 0.5, top - 0.15].some((z) => {
+      let seen = false;
+      for (let k = 0; k < 2 && !seen; k++) {
+        const z = k ? top - 0.15 : r.c ? 0.3 : 0.5;
         const Y = Math.round(v.hor + ((v.eye - z) * v.P) / ty);
-        if (Y < 0 || Y >= this.RH) return false;
+        if (Y < 0 || Y >= this.RH) continue;
         const d = zb[Y * v.RW + X];
-        return !d || d >= ty - 0.3;
-      });
+        seen = !d || d >= ty - 0.3;
+      }
       if (!seen) continue;
       const lift = +i === wanted ? A.pickupSprite('star').height + 12 : 0; // au-dessus de l'étoile de la prime
       const p = this.state.players[i];
@@ -2100,12 +2284,10 @@ export class FpsScene extends MiniScene {
 
   // Portes battantes : elles s'ouvrent quand quelqu'un passe (0 fermées, 1 entrouvertes, 2 grandes ouvertes),
   // restent ouvertes tant qu'on est dans l'embrasure, puis battent une fois avant de se refermer.
-  batwingFrame(o, now) {
-    const m = this.my;
-    const near = (x, y) => Math.abs(x - o.x) < 0.6 && Math.abs(y - o.y) < 0.85;
-    const busy = (m.alive && near(m.x, m.y))
-      || Object.values(this.remote).some((r) => r.alive && near(r.x, r.y))
-      || [...this.npcs.values()].some((n) => n.alive && near(n.x, n.y));
+  // occ : positions de ceux qui sont debout (moi, les autres, les bandits), à plat [x0, y0, x1, y1...] (drawSprites)
+  batwingFrame(o, now, occ) {
+    let busy = false;
+    for (let k = 0; k < occ.length && !busy; k += 2) busy = Math.abs(occ[k] - o.x) < 0.6 && Math.abs(occ[k + 1] - o.y) < 0.85;
     if (busy) {
       if (!o.openAt || now - o.held > 300) o.openAt = now;
       o.held = now;
@@ -2123,21 +2305,34 @@ export class FpsScene extends MiniScene {
     if (!this.map || !m.alive || this.menu || this.over) return;
     const now = this.now;
     const w = this.world;
-    const seen = (x, y, firedAt) => now - firedAt < 2000 || (Math.hypot(x - m.x, y - m.y) < 12 && los(w, m.x, m.y, x, y));
-    const marks = [];
-    for (const c of this.crates.values()) marks.push({ x: c.x, y: c.y, kind: 'crate' });
-    for (const g of this.gold.values()) marks.push({ x: g.x, y: g.y, kind: 'gold' });
-    for (const h of this.horses) if (!h.dead && h.rider < 0) marks.push({ x: h.x, y: h.y, kind: 'horse' });
-    for (const c of this.carts) if (c.rider < 0) { const p = railAt(w, c.s); marks.push({ x: p.x, y: p.y, kind: 'cart' }); }
+    // en vue : la ligne de mire n'est retracée que 5 fois par seconde (gardée sur le bandit)
+    const seen = (n) => {
+      if (now - n.fireAt < 2000) return true;
+      if (!(now - (n.mapAt ?? -1e9) < 200)) { n.mapAt = now; n.mapSeen = Math.hypot(n.x - m.x, n.y - m.y) < 12 && los(w, m.x, m.y, n.x, n.y); }
+      return n.mapSeen;
+    };
+    // les repères : objets réutilisés d'une image à l'autre
+    const pool = this.markPool ||= [];
+    const marks = this.marks ||= [];
+    marks.length = 0;
+    const mark = (x, y, kind, col) => {
+      const o = pool[marks.length] ||= {};
+      o.x = x; o.y = y; o.kind = kind; o.col = col;
+      marks.push(o);
+    };
+    for (const c of this.crates.values()) mark(c.x, c.y, 'crate');
+    for (const g of this.gold.values()) mark(g.x, g.y, 'gold');
+    for (const h of this.horses) if (!h.dead && h.rider < 0) mark(h.x, h.y, 'horse');
+    for (const c of this.carts) if (c.rider < 0) { const p = railAt(w, c.s); mark(p.x, p.y, 'cart'); }
     for (const d of this.dyns.values()) {
       const k = clamp((this.t - d.at) / (d.ball ? d.boomAt - d.at : 650), 0, 1);
-      marks.push({ x: d.x0 + (d.x1 - d.x0) * k, y: d.y0 + (d.y1 - d.y0) * k, kind: 'dyn' });
+      mark(d.x0 + (d.x1 - d.x0) * k, d.y0 + (d.y1 - d.y0) * k, 'dyn');
     }
-    for (const f of this.fires.values()) marks.push({ x: f.x, y: f.y, col: '#f87818', kind: 'dot' });
+    for (const f of this.fires.values()) mark(f.x, f.y, 'dot', '#f87818');
     for (const n of this.npcs.values()) {
       if (!n.alive) continue;
-      if (n.kind === 'diablo') marks.push({ x: n.x, y: n.y, col: '#f0405a', kind: 'skull' });
-      else if (seen(n.x, n.y, n.fireAt)) marks.push({ x: n.x, y: n.y, col: '#e8604c', kind: 'dot' });
+      if (n.kind === 'diablo') mark(n.x, n.y, 'skull', '#f0405a');
+      else if (seen(n)) mark(n.x, n.y, 'dot', '#e8604c');
     }
     if (this.map.big) this.map.drawFull(ctx, m, marks, now, W, H);
     else this.map.drawRadar(ctx, m, marks, now);
@@ -2148,10 +2343,10 @@ export class FpsScene extends MiniScene {
     const v = this.vp || this.my;
     const toMe = Math.atan2(v.y - y, v.x - x);
     const rel = wrapA(a - toMe);
-    if (Math.abs(rel) < Math.PI / 4) return { angle: 'front', flip: false };
-    if (Math.abs(rel) > (3 * Math.PI) / 4) return { angle: 'back', flip: false };
+    if (Math.abs(rel) < Math.PI / 4) return VIEW_FRONT;
+    if (Math.abs(rel) > (3 * Math.PI) / 4) return VIEW_BACK;
     // de profil : le sprite regarde à droite ; miroir quand il va vers la gauche de l'écran
-    return { angle: 'side', flip: Math.sin(a - v.a) < 0 };
+    return Math.sin(a - v.a) < 0 ? VIEW_SIDE_FLIP : VIEW_SIDE;
   }
 
   drawWeather(ctx) {
@@ -2195,14 +2390,12 @@ export class FpsScene extends MiniScene {
     const h = this.horses[+m.m.slice(1)];
     if (!h) return;
     const hurt = this.now - (h.hurtAt || -1e9) < 160; // rougi le temps du coup (faible : c'est la barre du HUD qui clignote)
-    const cv = A.horseNeckView(h.coat || 0, hurt);
+    const cv0 = A.horseNeckView(h.coat || 0, hurt), cv = this.mods.dark ? dimmed(cv0) : cv0;
     const gal = clamp(m.v / 4, 0, 1);
     const nod = Math.round(Math.abs(Math.sin(m.bob * 0.5)) * 4 * gal), sway = Math.round(Math.sin(m.bob * 0.25) * 3 * gal);
-    if (this.mods.dark) ctx.filter = 'brightness(0.55)';
     // on lève les yeux : l'encolure descend avec le décor (vers le bas, elle reste en place : rien en dessous)
     const lift = Math.max(0, Math.round(Math.tan(m.pitch || 0) * (W / 2) / Math.tan(FOV / 2)));
     ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + sway), H - cv.height + nod + lift);
-    ctx.filter = 'none';
   }
 
   drawViewModel(ctx) {
@@ -2213,10 +2406,9 @@ export class FpsScene extends MiniScene {
     if (m.gun) {
       // la pièce : elle recule au coup puis revient en batterie
       const since = t - m.gunAt, kick = since < 600 ? Math.round(Math.sin(Math.min(1, since / 600) * Math.PI) * 14) : 0;
-      const cv = cannonView((m.gunD - FPS.cannon.near) / (FPS.cannon.range - FPS.cannon.near), since < 90);
-      if (this.mods.dark) ctx.filter = 'brightness(0.55)';
+      const cv0 = cannonView((m.gunD - FPS.cannon.near) / (FPS.cannon.range - FPS.cannon.near), since < 90);
+      const cv = this.mods.dark ? dimmed(cv0) : cv0;
       ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2), H - CANNON_H + kick);
-      ctx.filter = 'none';
       return;
     }
     const id = m.w;
@@ -2246,13 +2438,12 @@ export class FpsScene extends MiniScene {
     else if (id === 'gatling' && since < 400) { state = 'fire'; fr = Math.floor(this.now / 70) % 4; }
     else if (id === 'lasso') fr = Math.floor(this.now / 180) % 4; // le nœud coulant qui tournoie (4 temps du tour)
     else if (id === 'diablo') fr = Math.floor(this.now / 300) % 2; // la braise du pistolet du Diable pulse
-    const cv = A.viewModel(id === 'akimbo' ? 'colt' : id, state, fr, this.skin, this.cloth); // deux colts : le colt, dessiné deux fois
-    if (!cv) return;
+    const cv0 = A.viewModel(id === 'akimbo' ? 'colt' : id, state, fr, this.skin, this.cloth); // deux colts : le colt, dessiné deux fois
+    if (!cv0) return;
+    const cv = this.mods.dark ? dimmed(cv0) : cv0;
     const draw = m.drawAt ? clamp((t - m.drawAt) / 180, 0, 1) : 1;
     const bx = Math.sin(m.bob * 0.5) * 4 * clamp(m.v / 3, 0, 1);
     const by = Math.abs(Math.cos(m.bob * 0.5)) * 3 * clamp(m.v / 3, 0, 1) + (1 - draw) * 40 + recoil;
-    const dark = this.mods.dark ? 0.55 : 1;
-    if (dark < 1) ctx.filter = 'brightness(0.55)';
     if (W8?.dual) {
       ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + 52 + bx), Math.round(H - cv.height + by));
       ctx.save();
@@ -2265,7 +2456,6 @@ export class FpsScene extends MiniScene {
       const vx = cv.width >= W ? 0 : VM_X;
       ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + vx + bx), Math.round(H - cv.height + by));
     }
-    ctx.filter = 'none';
   }
 
   // ---------------------------------------------------------- HUD (dessiné par fpshud.js)
@@ -2274,15 +2464,19 @@ export class FpsScene extends MiniScene {
     const t = this.t;
     const W8 = WEAPONS[m.w];
     const a = this.ammoOf(m.w);
-    const players = this.state.players.map((p, i) => ({ name: p.name, color: this.color(i), score: p.score, k: p.k || 0, d: p.d || 0, alive: i === this.me ? m.alive : !!this.remote[i]?.alive, me: i === this.me, bot: p.bot }));
-    if (this.mods.bounty === 'leader') {
-      const best = bountyLeader(this.state.players);
+    const ps = this.state.players;
+    // la liste des joueurs ne sert qu'au tableau des scores et aux lignes « qui a abattu qui » : faite seulement alors
+    const board = !!this.inp?.board;
+    const players = board || this.feed.length ? ps.map((p, i) => ({ name: p.name, color: this.color(i), score: p.score, k: p.k || 0, d: p.d || 0, alive: i === this.me ? m.alive : !!this.remote[i]?.alive, me: i === this.me, bot: p.bot })) : NO_LIST;
+    if (players.length && this.mods.bounty === 'leader') {
+      const best = bountyLeader(ps);
       if (best >= 0) players[best].bounty = true;
     }
-    const rank = 1 + players.filter((p) => !p.me && p.score > (players[this.me]?.score || 0)).length;
+    let rank = 1;
+    const myScore = ps[this.me]?.score || 0;
+    for (let i = 0; i < ps.length; i++) if (i !== this.me && ps[i].score > myScore) rank++;
     const near = m.alive ? this.nearMount() : null;
     const use = m.alive && !near ? this.nearUse() : null;
-    const USE = { cannon: ['E : SERVIR LE CANON', 'E : SERVIR LE CANON (IL REFROIDIT)'], bar: [`E : UN WHISKY (+${FPS.bar.hp} PV)`, 'LE PATRON ESSUIE UN VERRE'] };
     const gun = m.gun && this.world.uses.find((q) => q.key === m.gun);
     const gunLeft = gun ? Math.max(0, (gun.readyAt || 0) - t) : 0;
     const gunPrompt = gun && (gunLeft > 0 ? `RECHARGEMENT ${Math.ceil(gunLeft / 1000)} S - PORTÉE ${Math.round(m.gunD)}`
@@ -2291,8 +2485,9 @@ export class FpsScene extends MiniScene {
     // corde tendue (lasso, harpon) : le geste à tenir passe avant tout le reste
     const reel = m.tether && `${this.touch ? 'GARDE LE DOIGT' : 'MAINTIENS LE CLIC'} : TU LE RAMÈNES - LÂCHE : ${m.tether.w === 'lasso' ? 'IL RESTE LIGOTÉ' : 'IL EST LIBRE'}`;
     const prompt = !m.alive ? null : gun ? gunPrompt : reel || (m.m ? (this.touch ? 'DESCENDRE' : 'E : DESCENDRE') : near ? (near.kind === 'horse' ? 'E : MONTER À CHEVAL' : 'E : MONTER DANS LE WAGONNET')
-      : use ? USE[use.kind][use.ready ? 0 : 1]
+      : use ? HUD_USE[use.kind][use.ready ? 0 : 1]
       : safe ? (m.dyn > 0 ? (this.touch ? 'DYNAMITE : BRAQUE LE COFFRE !' : 'G : DYNAMITE POUR BRAQUER LE COFFRE') : 'IL FAUT DE LA DYNAMITE POUR CE COFFRE')
+      : t < m.stunUntil ? `ÉTOURDI : NI BOUGER NI TIRER (${Math.ceil((m.stunUntil - t) / 1000)} S)`
       : t < m.snareUntil ? 'ENTRAVÉ : TU NE PEUX PLUS AVANCER !'
       : W8?.lob ? `MORTIER : PORTÉE ${Math.round(this.mortarD())} - ${this.touch ? 'GLISSE' : 'LÈVE OU BAISSE LES YEUX'} POUR RÉGLER`
       : m.crouch ? 'ACCROUPI : À COUVERT DERRIÈRE LES BARRIÈRES' : null);
@@ -2323,17 +2518,25 @@ export class FpsScene extends MiniScene {
       score: this.state.players[this.me]?.score || 0, kills: this.state.players[this.me]?.k || 0, deaths: this.state.players[this.me]?.d || 0, place: rank, players,
       dead: !m.alive && m.deadAt > -1e8 ? { by: m.killer, byColor: m.killerCol, respawnIn: Math.max(0, FPS.respawn - (t - m.deadAt)) } : null,
       mount,
-      hurt: this.hurts.map((h) => ({ ang: h.ang, age: this.now - h.at })),
+      hurt: this.hurts.length ? this.hurts.map((h) => ({ ang: h.ang, age: this.now - h.at })) : NO_LIST,
       hit: this.hit && this.now - this.hit.at < 400 ? { age: this.now - this.hit.at, kill: this.hit.kill } : null,
-      feed: this.feed.map((f) => ({ a: f.a, aCol: f.aCol, b: f.b, bCol: f.bCol, w: f.w, age: this.now - f.at })),
+      feed: this.feed.length ? this.feed.map((f) => ({ a: f.a, aCol: f.aCol, b: f.b, bCol: f.bCol, w: f.w, age: this.now - f.at })) : NO_LIST,
       banner: fpsBanner(this.world.events, Math.max(0, t)),
       pickup: this.toast && this.now - this.toast.at < 2200 ? { text: this.toast.text, age: this.now - this.toast.at } : null,
       prompt, spread: Math.round((W8?.spread || 0) * 300 * (charge != null ? 1 + (1 - charge) * 6 : W8?.charge ? 7 : 1) + (m.v > 1 ? 3 : 0) + 3), zoom: m.zoom,
-      board: !!this.inp?.board, character: this.state.players[this.me]?.character, color: this.color(this.me),
+      board, character: this.state.players[this.me]?.character, color: this.color(this.me),
       lockHint: this.input.needsLock && !this.menu && m.alive,
       menu: !!this.menu, // armurerie ouverte : le HUD s'efface (sauf le tableau des scores)
-      mods: { ...this.mods, rain: (this.mods.rain || this.env.weather === 'rain') && !roofed(this.world, m.x, m.y), dust: this.mods.dust || this.env.weather === 'dust' },
+      mods: this.hudMods(),
     };
+  }
+
+  // effets en cours pour le HUD (pluie, poussière), dans un objet réutilisé d'une image à l'autre
+  hudMods() {
+    const h = Object.assign(this.hudM ||= {}, this.mods);
+    h.rain = (this.mods.rain || this.env.weather === 'rain') && !roofed(this.world, this.my.x, this.my.y);
+    h.dust = this.mods.dust || this.env.weather === 'dust';
+    return h;
   }
 
   hudStats() {
@@ -2343,7 +2546,7 @@ export class FpsScene extends MiniScene {
 
   mood() {
     const base = super.mood();
-    if (this.npcs?.size && [...this.npcs.values()].some((n) => n.kind === 'diablo' && n.alive)) return { ...base, level: Math.max(base.level, 0.9) };
+    for (const n of this.npcs?.values() || []) if (n.kind === 'diablo' && n.alive) return { ...base, level: Math.max(base.level, 0.9) };
     return base;
   }
 }

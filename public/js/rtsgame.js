@@ -15,7 +15,7 @@
 // L'hôte simule tout (économie, unités, combats) et envoie un instantané de la partie 2 fois par seconde
 // (un peu moins souvent à 5 et 6 joueurs, pour rester sous la limite d'envois de Supabase).
 // Même interface que MiniGame (mini.js) pour net.js.
-import { MODES, COUNTDOWN, rng } from './worlds.js';
+import { MODES, COUNTDOWN, rng, RTS_BIOMES as BIOMES } from './worlds.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -55,14 +55,7 @@ export const TERRAIN = [
 ];
 export const T = { grass: 0, sand: 1, scrub: 2, rock: 3, water: 4, ford: 5, forest: 6, hill: 7, snow: 8, swamp: 9, salt: 10, bridge: 11 };
 
-// Décors de carte, tirés au hasard à chaque partie ; envs : ambiances (env.js) qui leur vont
-export const BIOMES = {
-  prairie: { name: 'LA PRAIRIE', envs: null },
-  canyon: { name: 'LE GRAND CANYON', envs: ['midi', 'aube', 'crepuscule', 'nuit', 'orage', 'poussiere'] },
-  sierra: { name: 'LA SIERRA ENNEIGÉE', envs: ['neige', 'midi', 'aube', 'crepuscule', 'nuit'] },
-  bayou: { name: 'LE BAYOU', envs: ['midi', 'aube', 'crepuscule', 'nuit', 'orage'] },
-  salines: { name: 'LES SALINES', envs: ['midi', 'aube', 'crepuscule', 'nuit', 'poussiere'] },
-};
+export { BIOMES }; // décors de carte : dans worlds.js, lus aussi par le lobby
 export const BIOME_IDS = Object.keys(BIOMES);
 
 export const VEINS = { gold: { name: "Filon d'or", rate: 2.6 }, ore: { name: 'Filon de minerai', rate: 1.4 } };

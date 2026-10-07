@@ -1,23 +1,11 @@
 // Point d'entrée : écrans, réseau, lobby, interface de jeu.
-import { Net, fetchLeaderboard } from './net.js';
+import { Net, fetchLeaderboard, preloadGame, preloadRealtime } from './net.js';
 import { initAudio, playMusic, nextTrack, sfx, toggleMute, setVolume, audioSettings, setMood } from './audio.js';
-import { Scene, due60 } from './scene.js';
+import { Scene } from './scene.js';
 import { Editor, drawPortraitInto } from './editor.js';
 import * as S from './sprites.js';
 import { ITEMS } from './data.js';
-import { ShooterScene } from './shooter.js';
-import { LassoScene } from './lasso.js';
-import { DuelScene } from './duel.js';
-import { CharlieScene } from './charlie.js';
-import { FortScene } from './fort.js';
-import { WagonScene } from './wagon.js';
-import { PinteScene } from './pinte.js';
-import { MineScene } from './mine.js';
-import { CourseScene } from './course.js';
-import { RtsScene } from './rts.js';
-import { FpsScene, FpsDmScene } from './fps.js';
-import { TEAM_NAMES } from './fortgame.js';
-import { MODES, PLAYER_COLORS } from './worlds.js';
+import { MODES, PLAYER_COLORS, TEAM_NAMES } from './worlds.js';
 import { VARIANTS, variantName } from './variants.js';
 import { gameIcon } from './gameicons.js';
 import { TouchPad } from './touch.js';
@@ -30,7 +18,36 @@ let user = null;
 let lobby = null;
 let scene = null; // roulette
 let mini = null; // mini-jeu en cours (fusillade, lasso, duel, Charlie)
-const MINI_SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene, fps: FpsScene, fpsdm: FpsDmScene };
+// Scènes des mini-jeux, chargées à la demande (le démarrage n'attend que l'accueil et la roulette).
+const MINI_SCENES = {
+  shooter: () => import('./shooter.js').then((m) => m.ShooterScene),
+  lasso: () => import('./lasso.js').then((m) => m.LassoScene),
+  duel: () => import('./duel.js').then((m) => m.DuelScene),
+  charlie: () => import('./charlie.js').then((m) => m.CharlieScene),
+  fort: () => import('./fort.js').then((m) => m.FortScene),
+  wagon: () => import('./wagon.js').then((m) => m.WagonScene),
+  pinte: () => import('./pinte.js').then((m) => m.PinteScene),
+  mine: () => import('./mine.js').then((m) => m.MineScene),
+  course: () => import('./course.js').then((m) => m.CourseScene),
+  rts: () => import('./rts.js').then((m) => m.RtsScene),
+  fps: () => import('./fps.js').then((m) => m.FpsScene),
+  fpsdm: () => import('./fps.js').then((m) => m.FpsDmScene),
+};
+const sceneCls = {}; // jeu -> classe de sa scène, une fois chargée
+const sceneLoads = {}; // jeu -> chargement en cours
+const sceneKey = (kind) => (MINI_SCENES[kind] ? kind : 'shooter'); // jeu inconnu : la fusillade, comme avant
+function loadScene(kind) {
+  kind = sceneKey(kind);
+  if (sceneCls[kind]) return Promise.resolve(sceneCls[kind]);
+  sceneLoads[kind] ||= MINI_SCENES[kind]().then((cls) => (sceneCls[kind] = cls), (e) => { delete sceneLoads[kind]; throw e; });
+  return sceneLoads[kind];
+}
+// Chargement d'avance (jeu choisi dans le lobby, tiré par la roue, carte du menu survolée) : la partie démarre sans attendre.
+function preload(kind) {
+  if (!MODES[kind] || kind === 'roulette') return;
+  loadScene(kind).catch(() => {});
+  if (!lobby || isHostOf(lobby)) preloadGame(kind); // l'arbitre, pour l'hôte (ou le jeu solo)
+}
 let screen = 'title';
 const pad = new TouchPad(document.getElementById('touchpad')); // commandes tactiles des mini-jeux
 let pending = false;
@@ -38,6 +55,7 @@ let lassoSlot = -1;
 let matchStart = 0;
 let music = 'menu';
 let pendingJoin = new URLSearchParams(location.search).get('lobby');
+if (pendingJoin) preloadRealtime(); // lien d'invitation : le canal de la table servira tout de suite
 let savedName = null;
 try { savedName = localStorage.getItem('bs-user'); } catch {}
 
@@ -108,8 +126,9 @@ try {
 
 // Fenêtre de confirmation au style du jeu (remplace confirm()) : renvoie une promesse (true = confirmé).
 // Échap ou un clic à côté = annuler. Pour une action risquée (danger), le focus est sur « annuler ».
+// field : un texte à saisir ({ value, placeholder, max }), lu dans $('modal-field') une fois confirmé.
 let modalDone = null;
-function askConfirm({ title, text, yes = 'Oui', no = 'Annuler', icon = null, danger = false }) {
+function askConfirm({ title, text, yes = 'Oui', no = 'Annuler', icon = null, danger = false, field = null }) {
   if (modalDone) modalDone(false); // une seule question à la fois
   $('modal-title').textContent = title;
   $('modal-text').textContent = text;
@@ -117,9 +136,16 @@ function askConfirm({ title, text, yes = 'Oui', no = 'Annuler', icon = null, dan
   $('modal-no').textContent = no;
   $('modal-yes').classList.toggle('danger', danger);
   $('modal-icon').innerHTML = icon ? pxIcon(icon, 2) : '';
+  const f = $('modal-field');
+  f.classList.toggle('hidden', !field);
+  if (field) {
+    f.value = field.value || '';
+    f.placeholder = field.placeholder || '';
+    f.maxLength = field.max || 500;
+  }
   $('modal').classList.remove('hidden');
   const before = document.activeElement;
-  (danger ? $('modal-no') : $('modal-yes')).focus();
+  (field ? f : danger ? $('modal-no') : $('modal-yes')).focus();
   sfx('ding');
   return new Promise((resolve) => {
     modalDone = (ok) => {
@@ -138,7 +164,12 @@ document.addEventListener('keydown', (e) => {
   if (!modalDone) return;
   e.stopImmediatePropagation();
   if (e.key === 'Escape') { e.preventDefault(); modalDone(false); }
-  else if (e.key === 'Tab') { e.preventDefault(); (document.activeElement === $('modal-yes') ? $('modal-no') : $('modal-yes')).focus(); }
+  else if (e.key === 'Tab') {
+    e.preventDefault();
+    const els = [$('modal-field'), $('modal-no'), $('modal-yes')].filter((el) => !el.classList.contains('hidden'));
+    const k = els.indexOf(document.activeElement);
+    els[(k + (e.shiftKey ? els.length - 1 : 1)) % els.length].focus();
+  }
 }, true);
 
 function setMusic(name) {
@@ -155,7 +186,8 @@ function show(name) {
   $('hud').classList.toggle('hidden', !game);
   $('bottombar').classList.toggle('hidden', !game);
   $('scr-game').classList.toggle('multi', game && !!lobby && !lobby.solo); // bouton de chat tactile
-  if (!game) { $('progress-fill').style.width = '0'; $('tooltip').classList.add('hidden'); }
+  if (!game) { $('progress-fill').style.width = '0'; $('tooltip').classList.add('hidden'); bgStart(); }
+  if (name === 'menu' || name === 'title') applyUpdate(); // nouvelle version du site : on la prend ici, jamais en pleine partie
 }
 
 function setUrl(code) {
@@ -188,8 +220,40 @@ document.addEventListener('click', (e) => { if (e.target.closest('.btn')) sfx('u
 
 // ------------------------------------------------------------ application installable
 // Service worker (sw.js) : démarrage rapide et écran d'accueil. Seulement en https (ou en local).
+// Une nouvelle version du site s'installe en arrière-plan et ne prend la main qu'à l'accueil ou au menu
+// (la page se recharge), jamais en pleine partie ni à une table : l'hôte et ses joueurs gardent le même code.
+let swWaiting = null; // nouvelle version prête, en attente
+let swStale = false; // une nouvelle version a pris la main (depuis un autre onglet) : on recharge au prochain passage au menu
+let swReg = null, swChecked = Date.now();
+function applyUpdate() {
+  if (lobby || (screen !== 'menu' && screen !== 'title')) return;
+  if (swStale) { swStale = false; location.reload(); return; }
+  if (swWaiting) { swWaiting.postMessage({ t: 'skipWaiting' }); swWaiting = null; return; }
+  // onglet ouvert depuis longtemps : on regarde s'il y a du neuf (au plus toutes les 10 min)
+  if (swReg && Date.now() - swChecked > 600000) { swChecked = Date.now(); swReg.update().catch(() => {}); }
+}
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; } // première installation : même code, rien à recharger
+    swStale = true;
+    applyUpdate();
+  });
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').then((reg) => {
+    swReg = reg;
+    const watch = (w) => {
+      if (!w) return;
+      const ready = () => {
+        if (w.state !== 'installed' || !navigator.serviceWorker.controller) return;
+        swWaiting = w;
+        applyUpdate();
+      };
+      w.addEventListener('statechange', ready);
+      ready();
+    };
+    watch(reg.waiting);
+    reg.addEventListener('updatefound', () => watch(reg.installing));
+  }).catch(() => {}));
 }
 // Bouton « Installer l'app » du menu : la vraie fenêtre d'installation sur Android (Chrome, Edge, Samsung),
 // et la marche à suivre sur iPhone (Safari n'a pas de fenêtre d'installation) ou dans les autres navigateurs.
@@ -245,20 +309,32 @@ bgx.imageSmoothingEnabled = false;
 const desert = S.makeCanvas(384, 216);
 S.drawDesert(desert.getContext('2d'), 0, 0, 384, 216, { sunX: 0.76, sunY: 0.27 });
 const tw = { x: -30 };
-const bgGate = { next: 0 };
-(function bgLoop(t) {
-  requestAnimationFrame(bgLoop);
-  if (screen !== 'game' && due60(bgGate, t)) {
-    bgx.drawImage(desert, 0, 0);
-    for (let i = 0; i < 3; i++) {
-      const a = t / 5000 + i * 2.1;
-      S.vulture(bgx, Math.round(70 + i * 105 + Math.cos(a) * 34), Math.round(26 + i * 7 + Math.sin(a) * 9), t + i * 90);
-    }
-    tw.x += 0.7;
-    if (tw.x > 410) tw.x = -40 - Math.random() * 400;
-    S.tumbleweed(bgx, Math.round(tw.x), Math.round(178 - Math.abs(Math.sin(t / 170)) * 7), t);
+// 30 images/s suffisent aux vautours et au virevoltant ; la boucle s'arrête pendant les parties (show la relance).
+const bgGate = { next: 0, last: 0 };
+let bgRaf = 0;
+function bgLoop(t) {
+  bgRaf = 0;
+  if (screen === 'game') return;
+  bgRaf = requestAnimationFrame(bgLoop);
+  if (t < bgGate.next - 2) return;
+  bgGate.next = Math.max(bgGate.next + 1000 / 30, t);
+  const dt = Math.min(100, t - (bgGate.last || t));
+  bgGate.last = t;
+  bgx.drawImage(desert, 0, 0);
+  for (let i = 0; i < 3; i++) {
+    const a = t / 5000 + i * 2.1;
+    S.vulture(bgx, Math.round(70 + i * 105 + Math.cos(a) * 34), Math.round(26 + i * 7 + Math.sin(a) * 9), t + i * 90);
   }
-})(0);
+  tw.x += 0.7 * (dt / (1000 / 60)); // même vitesse qu'à 60 images/s
+  if (tw.x > 410) tw.x = -40 - Math.random() * 400;
+  S.tumbleweed(bgx, Math.round(tw.x), Math.round(178 - Math.abs(Math.sin(t / 170)) * 7), t);
+}
+function bgStart() {
+  if (bgRaf || screen === 'game') return;
+  bgGate.last = 0;
+  bgRaf = requestAnimationFrame(bgLoop);
+}
+bgStart();
 
 // ------------------------------------------------------------ connexion
 $('username').value = savedName || '';
@@ -310,8 +386,13 @@ net.on('kicked', ({ text }) => {
 });
 
 // ------------------------------------------------------------ menu
-async function showMenu() {
+// board : false quand une mise à jour du joueur va suivre (elle rafraîchira le classement)
+let rtTimer = 0;
+async function showMenu(board = true) {
   show('menu');
+  // au repos sur le menu : la bibliothèque du canal Realtime se charge en douce (créer ou rejoindre une table sans attendre)
+  clearTimeout(rtTimer);
+  rtTimer = setTimeout(preloadRealtime, 3000);
   setMusic('menu');
   $('menu-hello').textContent = `Salut, ${user.username}.`;
   const poster = $('menu-poster');
@@ -319,6 +400,7 @@ async function showMenu() {
     <div class="poster-name">${esc(user.username)}</div><div class="poster-sub">Récompense : $${100 + user.stats.wins * 250}</div>`;
   drawPortraitInto(poster.querySelector('canvas'), user.character);
   renderMenuStats(user.stats || {}, user.history || []);
+  if (!board) return;
   try {
     renderLeaderboard(await fetchLeaderboard());
   } catch {}
@@ -402,8 +484,12 @@ renderSolo();
 $('btn-create').onclick = () => net.send({ t: 'createLobby' });
 $('solo-grid').onclick = (e) => {
   const b = e.target.closest('[data-solo]');
-  if (b) net.send({ t: 'createSolo', mode: b.dataset.solo });
+  if (!b) return;
+  preload(b.dataset.solo);
+  net.send({ t: 'createSolo', mode: b.dataset.solo });
 };
+// survol ou toucher d'une carte : le jeu commence à se charger avant le clic
+for (const ev of ['pointerover', 'focusin']) $('solo-grid').addEventListener(ev, (e) => { const b = e.target.closest?.('[data-solo]'); if (b) preload(b.dataset.solo); });
 $('btn-join').onclick = () => {
   const code = $('join-code').value.trim().toUpperCase();
   if (code) net.send({ t: 'joinLobby', code });
@@ -419,7 +505,7 @@ $('btn-logout').onclick = () => {
 
 // ------------------------------------------------------------ éditeur
 const editor = new Editor({
-  onSave: (c) => { net.send({ t: 'saveChar', character: c }); user.character = c; showMenu(); },
+  onSave: (c) => { net.send({ t: 'saveChar', character: c }); user.character = c; showMenu(false); }, // le message « user » qui suit rafraîchit le classement
   onBack: () => showMenu(),
 });
 $('btn-edit').onclick = () => { show('editor'); editor.open(user.character, user.username); };
@@ -429,6 +515,7 @@ net.on('lobby', ({ lobby: l }) => {
   const prev = lobby;
   lobby = l;
   setUrl(l.code);
+  if ((l.format || 'single') === 'single' && !l.inGame) preload(l.mode);
   if (prev && screen === 'game') {
     for (const p of l.players) {
       const was = prev.players.find((x) => x.name === p.name);
@@ -444,6 +531,7 @@ net.on('lobby', ({ lobby: l }) => {
 });
 
 function closeScenes() {
+  miniHold = null;
   liveClear();
   pad.detach();
   if (scene) { scene.destroy(); scene = null; }
@@ -593,22 +681,24 @@ $('modes-next').onclick = () => modesGo(modesPage + 1);
 $('modes-dots').onclick = (e) => { const b = e.target.closest('[data-page]'); if (b) modesGo(+b.dataset.page); };
 
 // Places autour de la table : portrait, badges, et pour l'hôte « confier la table » et « expulser ».
+// Chaque message du lobby redemande les places : seules celles qui ont changé sont refaites,
+// et un portrait n'est redessiné que si la place est refaite ou si le personnage a changé.
 function renderSeats(l, isHost) {
   const seats = $('seats');
-  seats.innerHTML = '';
   const canEdit = isHost && !l.spinning;
   // toujours 6 places affichées ; les vides servent à inviter (ou à asseoir un bot)
   const nSeats = Math.max(l.players.length, l.max || 6);
+  while (seats.children.length > nSeats) seats.lastElementChild.remove();
   for (let i = 0; i < nSeats; i++) {
     const p = l.players[i];
     const d = document.createElement('div');
     if (!p) {
       d.className = 'seat empty';
       if (canEdit) {
-        d.innerHTML = `<div class="box acts"><button type="button" class="seat-btn" data-invite title="Copier le lien d’invitation">Inviter</button>
+        d.innerHTML = `<div class="box acts"><button type="button" class="seat-btn" data-invite title="Envoyer une invitation">Inviter</button>
           <button type="button" class="seat-btn" data-bot title="Asseoir un bot à cette place">+ Bot</button></div>`;
       } else {
-        d.title = 'Copier le lien d’invitation';
+        d.title = 'Envoyer une invitation';
         d.dataset.invite = '';
         d.innerHTML = '<div class="box">Chaise vide…<br>Clique pour inviter</div>';
       }
@@ -623,9 +713,19 @@ function renderSeats(l, isHost) {
         : '';
       d.innerHTML = `${acts}<canvas width="56" height="60"></canvas><div class="nm">${esc(p.name)}</div>
         <div class="tag">${host ? `<img class="px-ico" src="${ICON.star}" width="14" height="14" alt=""> hôte ` : ''}${me ? '(toi)' : ''}${p.bot ? '<span class="botag">bot</span>' : ''} ${p.connected ? '' : '<span class="off">déconnecté</span>'}</div>`;
-      drawPortraitInto(d.querySelector('canvas'), p.character || {});
     }
-    seats.appendChild(d);
+    const sig = `${d.className}|${d.title}|${d.dataset.invite ?? '-'}|${d.innerHTML}`;
+    const look = p ? JSON.stringify(p.character || {}) : '';
+    let el = seats.children[i];
+    if (el && el.seatSig === sig && el.seatLook === look) continue; // rien n'a changé à cette place
+    if (!el) el = seats.appendChild(d);
+    else if (el.seatSig !== sig) {
+      el.replaceWith(d);
+      el = d;
+    }
+    el.seatSig = sig;
+    el.seatLook = look;
+    if (p) drawPortraitInto(el.querySelector('canvas'), p.character || {});
   }
 }
 
@@ -740,8 +840,50 @@ async function copyText(v, input) {
   }
 }
 
+// ------------------------------------------------------------ invitation
+// Le message part avec le lien : celui du joueur s'il en a écrit un (gardé sur ce navigateur),
+// sinon un message qui décrit la table (jeu ou déroulé, places libres).
+const INVITE_KEY = 'bs-invite';
+let inviteMsg = '';
+try { inviteMsg = localStorage.getItem(INVITE_KEY) || ''; } catch {}
+
+function inviteWhat(l) {
+  if (l.format === 'wheel') return 'la roue des jeux';
+  if (l.format === 'champ') return `un championnat en ${l.champ && !l.champ.done ? l.champ.rounds : l.rounds} jeux`;
+  const m = MODES[l.mode] || MODES.roulette;
+  const v = l.variants?.[l.mode];
+  return `une partie de ${m.name}${v ? ` (${variantName(l.mode, v)})` : ''}`;
+}
+
+function autoInvite(l) {
+  const free = (l.max || 6) - l.players.length;
+  const seats = free > 1 ? ` Encore ${free} chaises libres.` : free === 1 ? ' Plus qu’une chaise libre !' : '';
+  return `${user?.username || 'Un cowboy'} t’attend au Buckshot Saloon pour ${inviteWhat(l)}.${seats}`;
+}
+
+// { text: message + code, url } pour le partage ; full : tout d'un bloc pour le presse-papiers
+function inviteText(l) {
+  const text = `${inviteMsg || autoInvite(l)}\nTable ${l.code}`;
+  const url = $('lobby-link').value;
+  return { text, url, full: `${text} : ${url}` };
+}
+
+$('btn-invite-msg').onclick = async () => {
+  if (!lobby) return;
+  if (!(await askConfirm({
+    title: 'Message d’invitation',
+    text: 'Envoyé avec le lien et le code de la table. Laisse vide pour le message automatique.',
+    yes: 'Enregistrer', no: 'Annuler', icon: 'hat',
+    field: { value: inviteMsg, placeholder: autoInvite(lobby), max: 200 },
+  }))) return;
+  inviteMsg = $('modal-field').value.trim();
+  try { inviteMsg ? localStorage.setItem(INVITE_KEY, inviteMsg) : localStorage.removeItem(INVITE_KEY); } catch {}
+  $('btn-invite-msg').classList.toggle('on', !!inviteMsg);
+};
+$('btn-invite-msg').classList.toggle('on', !!inviteMsg);
+
 async function copyLink() {
-  await copyText($('lobby-link').value, $('lobby-link'));
+  await copyText(inviteText(lobby).full, $('lobby-link'));
   $('btn-copy').textContent = 'Copié !';
   setTimeout(() => ($('btn-copy').textContent = 'Copier'), 1500);
 }
@@ -768,6 +910,7 @@ function hideSpin() {
 }
 net.on('spin', ({ pick, pool, round, rounds }) => {
   if (!MODES[pick]) return;
+  preload(pick);
   hideSpin();
   modalDone?.(false); // une question restée ouverte n'a plus lieu d'être
   $('tooltip').classList.add('hidden');
@@ -811,11 +954,12 @@ net.on('aborted', () => {
   else showMenu();
 });
 
-// Partage natif (mobile, Windows…) si dispo, sinon copie du lien
+// Partage natif (mobile, Windows…) si dispo, sinon copie de l'invitation
 async function invite() {
   if (navigator.share) {
+    const { text, url } = inviteText(lobby);
     try {
-      return await navigator.share({ title: 'Buckshot Saloon', text: `Rejoins ma table au Buckshot Saloon (code ${lobby.code})`, url: $('lobby-link').value });
+      return await navigator.share({ title: 'Buckshot Saloon', text, url });
     } catch (e) { if (e.name === 'AbortError') return; }
   }
   copyLink();
@@ -941,11 +1085,31 @@ function act(action) {
 }
 
 function enterGame(kind) {
-  if (kind && kind !== 'roulette') enterMini(kind);
+  if (kind && kind !== 'roulette') whenScene(kind, () => enterMini(kind));
   else enterRoulette();
 }
 
-let tipTimer = 0;
+// Scène du mini-jeu pas encore chargée (import à la demande) : les messages de la partie attendent, dans l'ordre.
+let miniHold = null; // { kind, todo: [fonctions] }
+function whenScene(kind, fn) {
+  if (sceneCls[sceneKey(kind)] && !miniHold) return fn();
+  if (!miniHold || miniHold.kind !== kind) {
+    const hold = miniHold = { kind, todo: [] };
+    loadScene(kind).then(() => {
+      if (miniHold !== hold) return;
+      miniHold = null;
+      for (const f of hold.todo) f();
+    }, (e) => {
+      console.error(e);
+      if (miniHold !== hold) return;
+      miniHold = null;
+      toast('Impossible de charger ce jeu (réseau ?). Quitte la table et réessaie.');
+    });
+  }
+  miniHold.todo.push(fn);
+}
+
+let tipTimer = 0, tipKey = null, tipH = 0;
 function enterRoulette() {
   show('game');
   setMusic('game');
@@ -964,15 +1128,21 @@ function enterRoulette() {
     onHover: (id, x, y, isOpp, tap) => {
       const tip = $('tooltip');
       clearTimeout(tipTimer);
-      if (!id) return tip.classList.add('hidden');
-      const it = ITEMS[id];
-      tip.innerHTML = `<b>${it.name}${isOpp ? ' (adversaire)' : ''}</b>${it.desc}${tap ? '<em>Touche encore pour l’utiliser</em>' : ''}`;
-      tip.classList.remove('hidden');
+      if (!id) { tipKey = null; return tip.classList.add('hidden'); }
+      // appelé à chaque mouvement de souris : le texte (et sa hauteur) ne changent qu'avec l'objet survolé
+      const key = `${id}|${isOpp}|${tap}`;
+      if (key !== tipKey || tip.classList.contains('hidden')) {
+        const it = ITEMS[id];
+        tip.innerHTML = `<b>${it.name}${isOpp ? ' (adversaire)' : ''}</b>${it.desc}${tap ? '<em>Touche encore pour l’utiliser</em>' : ''}`;
+        tip.classList.remove('hidden');
+        tipKey = key;
+        tipH = tip.offsetHeight;
+      }
       const w = Math.min(260, innerWidth - 16);
       tip.style.left = `${Math.max(8, Math.min(x + 16, innerWidth - w - 8))}px`;
       // au doigt, au-dessus du doigt pour ne pas cacher l'objet
-      const top = tap === undefined ? y + 16 : y - tip.offsetHeight - 20;
-      tip.style.top = `${Math.max(8, Math.min(top, innerHeight - tip.offsetHeight - 8))}px`;
+      const top = tap === undefined ? y + 16 : y - tipH - 20;
+      tip.style.top = `${Math.max(8, Math.min(top, innerHeight - tipH - 8))}px`;
       if (isOpp || (tap === false && document.body.classList.contains('touch'))) tipTimer = setTimeout(() => tip.classList.add('hidden'), 3500);
     },
     onItem: (slot) => {
@@ -1008,15 +1178,22 @@ function enterMini(kind) {
   $('toasts').innerHTML = '';
   closeScenes();
   liveMark(kind);
-  const MiniCls = MINI_SCENES[kind] || ShooterScene;
+  const MiniCls = sceneCls[sceneKey(kind)];
   mini = new MiniCls($('game'), {
     send: (action) => net.send({ t: 'action', action }),
     live: (d) => net.sendLive(d),
-    onState: renderMiniHud,
+    onState: queueHud,
     onEnd: showMiniOver,
   });
   pad.attach(mini);
+  hudHtml = hudBar = null; // le HUD et la barre ont pu servir à la roulette ou être remis à zéro entre-temps
   renderMiniHud();
+}
+
+// HUD des mini-jeux : redessiné au plus une fois par image (un lot de k événements = k états), et seulement s'il change.
+let hudRaf = 0, hudHtml = null, hudBar = null;
+function queueHud() {
+  if (!hudRaf) hudRaf = requestAnimationFrame(() => { hudRaf = 0; renderMiniHud(); });
 }
 
 function renderMiniHud() {
@@ -1029,8 +1206,10 @@ function renderMiniHud() {
   const ms = mini.clock();
   const r = Math.ceil((ms ?? 0) / 1000);
   const clock = ms == null ? '' : `<span class="cream">${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}</span>`;
-  $('hud').innerHTML = `${stats}${players}<span class="grow"></span>${clock}`;
-  $('progress-fill').style.width = `${(mini.progress() ?? 0) * 100}%`;
+  const html = `${stats}${players}<span class="grow"></span>${clock}`;
+  if (html !== hudHtml) $('hud').innerHTML = hudHtml = html;
+  const bar = `${(mini.progress() ?? 0) * 100}%`;
+  if (bar !== hudBar) $('progress-fill').style.width = hudBar = bar;
 }
 
 function showMiniOver(ev) {
@@ -1062,12 +1241,14 @@ net.on('live', ({ from, d }) => { if (mini && screen === 'game') mini.onLive(fro
 net.on('events', ({ events }) => {
   const kind = events[0]?.state?.kind;
   if (kind) {
-    if (!mini || screen !== 'game' || mini.kind !== kind) {
-      // un dernier tick d'une partie qu'on vient de quitter ne doit pas rouvrir l'écran de jeu
-      if (!events.some((ev) => ev.type === 'mgStart')) return;
-      enterMini(kind);
-    }
-    for (const ev of events) mini.event(ev);
+    whenScene(kind, () => {
+      if (!mini || screen !== 'game' || mini.kind !== kind) {
+        // un dernier tick d'une partie qu'on vient de quitter ne doit pas rouvrir l'écran de jeu
+        if (!events.some((ev) => ev.type === 'mgStart')) return;
+        enterMini(kind);
+      }
+      for (const ev of events) mini.event(ev);
+    });
     return;
   }
   if (!scene || screen !== 'game') enterRoulette();
@@ -1077,8 +1258,10 @@ net.on('events', ({ events }) => {
 
 net.on('sync', ({ state }) => {
   if (state.kind) {
-    if (!mini || screen !== 'game' || mini.kind !== state.kind) enterMini(state.kind);
-    mini.sync(state);
+    whenScene(state.kind, () => {
+      if (!mini || screen !== 'game' || mini.kind !== state.kind) enterMini(state.kind);
+      mini.sync(state);
+    });
     return;
   }
   if (!scene || screen !== 'game') enterRoulette();

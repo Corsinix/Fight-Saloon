@@ -165,10 +165,10 @@
           <div class="lobby-side">
             <div class="panel lobby-players">
               <h3>Joueurs <small id="players-n"></small></h3>
-              <label>Invite tes adversaires, ou ajoute des bots :</label>
+              <label>Invite tes adversaires, ou ajoute des bots : <button type="button" class="mini-link" id="btn-invite-msg" title="Écrire le message envoyé avec le lien">ton message</button></label>
               <div class="link-row">
                 <input id="lobby-link" readonly>
-                <button class="btn" id="btn-copy">Copier</button>
+                <button class="btn" id="btn-copy" title="Copier l’invitation (message et lien)">Copier</button>
                 <button class="btn hidden" id="btn-share">Partager</button>
               </div>
               <div class="seats many" id="seats"></div>
@@ -229,6 +229,7 @@
       <div class="modal-icon" id="modal-icon"></div>
       <h2 id="modal-title" class="modal-title"></h2>
       <p id="modal-text" class="modal-text"></p>
+      <textarea id="modal-field" class="modal-field hidden" rows="3" aria-labelledby="modal-title"></textarea>
       <div class="modal-buttons">
         <button class="btn alt" id="modal-no" type="button"></button>
         <button class="btn" id="modal-yes" type="button"></button>

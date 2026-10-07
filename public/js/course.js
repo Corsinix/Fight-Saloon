@@ -8,7 +8,7 @@ import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
 import { MiniScene, pixelSprite } from './miniscene.js';
-import { riderLook, horseSprite } from './lasso.js';
+import { riderLook, horseSprite, forgetRiders } from './lasso.js';
 import { W, H } from './worlds.js';
 import { desertOpts } from './env.js';
 import {
@@ -148,6 +148,7 @@ export class CourseScene extends MiniScene {
     this.gait = this.state.players.map(() => 0);
     this.dustT = this.state.players.map(() => 0);
     this.riders = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `${i}:${JSON.stringify(p.character || {})}`));
+    forgetRiders(this.riders);
     this.fx = [];
     this.wasAir = false;
     this.bg = null;

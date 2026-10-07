@@ -446,7 +446,8 @@ function slots(ctx, h) {
 
 // Haut à droite : qui a abattu qui, avec quelle arme. Les lignes où l'on figure sont sur fond doré.
 function feed(ctx, h) {
-  const list = (h.feed || []).filter((f) => f.age < FEED_MS).slice(-4);
+  if (!h.feed?.length) return;
+  const list = h.feed.filter((f) => f.age < FEED_MS).slice(-4);
   // sous le bandeau d'événement quand il y en a un : une longue ligne le recouvrait
   const b = h.banner;
   let y = b && b.k > 0 ? (b.age < BIG_BANNER || b.warn > 0 ? 60 : 20) : 4;

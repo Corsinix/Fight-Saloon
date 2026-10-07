@@ -1,7 +1,8 @@
 // Éditeur de personnage.
 import { CHAR_PARTS, CHAR_COLORS, randomCharacter } from './data.js';
-import { drawCharacter, makeCanvas, CHAR_W, CHAR_H } from './sprites.js';
+import { drawCharacter, characterSprite, makeCanvas, CHAR_W, CHAR_H } from './sprites.js';
 import { sfx } from './audio.js';
+import { due60 } from './scene.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -11,7 +12,7 @@ const CROPS = {
   beard: [6, 15, 36], outfit: [0, 8, 48], extra: [0, 8, 48],
 };
 
-let portrait = null;
+// c : look jamais modifié en place ensuite (le sprite est mis en cache selon le look, voir characterSprite)
 export function drawPortraitInto(canvas, c, opts = {}) {
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
@@ -22,12 +23,7 @@ export function drawPortraitInto(canvas, c, opts = {}) {
   ctx.fillRect(0, h - 16, w, 16);
   ctx.fillStyle = '#7a4a36';
   ctx.fillRect(0, h - 6, w, 6);
-  // un seul canevas de travail, réutilisé à chaque image de l'aperçu animé
-  if (!portrait) portrait = makeCanvas(CHAR_W, CHAR_H);
-  const spr = portrait;
-  spr.getContext('2d').clearRect(0, 0, CHAR_W, CHAR_H);
-  drawCharacter(spr.getContext('2d'), c, opts);
-  ctx.drawImage(spr, Math.floor((w - 48) / 2), h - 56);
+  ctx.drawImage(characterSprite(c, opts), Math.floor((w - 48) / 2), h - 56);
 }
 
 export class Editor {
@@ -46,10 +42,13 @@ export class Editor {
     this.openKey = null;
     $('ed-name').textContent = name;
     this.refresh();
+    // aperçu animé à 60 images/s au plus, comme les jeux
+    const gate = { next: 0 };
     const loop = (t) => {
-      const blink = t % 3200 < 130;
-      drawPortraitInto($('ed-preview'), this.c, { blink, t });
       this.raf = requestAnimationFrame(loop);
+      if (!due60(gate, t)) return;
+      const blink = t % 3200 < 130;
+      drawPortraitInto($('ed-preview'), this.look, { blink, t });
     };
     cancelAnimationFrame(this.raf);
     this.raf = requestAnimationFrame(loop);
@@ -58,6 +57,8 @@ export class Editor {
   close() { cancelAnimationFrame(this.raf); }
 
   refresh() {
+    // copie figée du look pour l'aperçu : this.c est modifié en place, le cache des sprites ne le verrait pas
+    this.look = { ...this.c };
     const parts = $('ed-parts');
     parts.innerHTML = '';
     for (const p of CHAR_PARTS) {

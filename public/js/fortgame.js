@@ -1,7 +1,7 @@
 // Mini-jeu « Assaut du fort » : deux équipes, l'une attaque le fort, l'autre défend depuis la palissade,
 // puis on échange les rôles à la mi-temps. Ce fichier contient les règles partagées (le monde vient d'une graine)
 // et l'arbitre qui tourne dans le navigateur de l'hôte, avec la même interface que MiniGame (mini.js).
-import { MODES, COUNTDOWN, W, rng } from './worlds.js';
+import { MODES, COUNTDOWN, W, rng, FORT_MAPS } from './worlds.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -23,7 +23,7 @@ export const FORT = {
   crateLife: 9000,
 };
 export const FORT_PTS = { gate: 60, breach: 250, enter: 150, kill: 50, defKill: 60, hold: 20, bonus: 20 };
-export const TEAM_NAMES = ['ROUGES', 'BLEUS'];
+export { TEAM_NAMES } from './worlds.js';
 export const TEAM_COLORS = ['#e8604c', '#5a8ad8'];
 
 // Caisses de ravitaillement : les assaillants passent dessus, les défenseurs tirent dessus.
@@ -36,19 +36,7 @@ export const FORT_BONUS = {
   dynpack: { name: 'CAISSE DE DYNAMITE', desc: '3 DYNAMITES EN RAFALE', w: 2 },
 };
 
-// Champs de bataille : décor, abris, style du fort. Tiré de la graine.
-export const FORT_MAPS = {
-  desert: { name: 'DÉSERT', w: 3, back: 'mesas', fort: 'wood', ground: ['#c4a468', '#c8aa6e', '#ccb074', '#d0b67a', '#d4bc80'], path: '#dcc490', yard: '#b89a68',
-    covers: { rock: 2, cactus: 2, barrels: 2, crates: 2, hay: 1, wagon: 1 } },
-  prairie: { name: 'PRAIRIE', w: 2, back: 'hills', fort: 'wood', ground: ['#7a9a48', '#82a24e', '#8aa854', '#92ae5a', '#9ab460'], path: '#b8a868', yard: '#8a9a50', grass: true,
-    covers: { hay: 3, fence: 3, wagon: 1, crates: 1, barrels: 1, rock: 1 } },
-  canyon: { name: 'CANYON', w: 2, back: 'cliffs', fort: 'wood', ground: ['#b06a44', '#b8724a', '#c07a50', '#c48056', '#c8885c'], path: '#d09a6a', yard: '#a86440',
-    covers: { boulder: 3, rock: 3, cactus: 1, barrels: 1, crates: 1 } },
-  riviere: { name: 'GUÉ DE LA RIVIÈRE', w: 2, back: 'mesas', fort: 'wood', ground: ['#a8a468', '#b0aa6e', '#b8b074', '#c0b67a', '#c8bc80'], path: '#d4c890', yard: '#a09a60', river: true, grass: true,
-    covers: { rock: 3, barrels: 2, crates: 2, hay: 1, fence: 1 } },
-  mission: { name: 'MISSION SAN ROSARIO', w: 2, back: 'mesas', fort: 'adobe', ground: ['#d0b888', '#d4bc8c', '#d8c090', '#dcc494', '#e0c898'], path: '#e8d4a8', yard: '#c8b080',
-    covers: { adobe: 3, barrels: 2, crates: 1, cactus: 2, wagon: 1 } },
-};
+export { FORT_MAPS }; // champs de bataille : dans worlds.js, lus aussi par le lobby
 
 export const COVERS = {
   rock: [24, 12], barrels: [20, 16], wagon: [46, 22], crates: [18, 18], hay: [24, 13], cactus: [12, 24],

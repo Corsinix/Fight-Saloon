@@ -31,6 +31,32 @@ function outlined(ctx, x, y, rects) {
   for (const [dx, dy, w, h] of rects) R(ctx, x + dx - 1, y + dy - 1, w + 2, h + 2, S.OUT);
   for (const [dx, dy, w, h, col] of rects) R(ctx, x + dx, y + dy, w, h, col);
 }
+// Lumière d'une lampe du saloon (dégradé radial de 90 px, opacité 1 au centre) et assombrissement des bords
+// de l'image : dessinés une fois, recopiés à chaque image (un dégradé créé à chaque image coûte cher).
+let lampGlow = null, barVignette = null;
+function lampSprite() {
+  if (lampGlow) return lampGlow;
+  lampGlow = S.makeCanvas(180, 180);
+  const x = lampGlow.getContext('2d');
+  const g = x.createRadialGradient(90, 90, 0, 90, 90, 90);
+  g.addColorStop(0, 'rgba(255,190,110,1)');
+  g.addColorStop(1, 'rgba(255,190,110,0)');
+  x.fillStyle = g;
+  x.fillRect(0, 0, 180, 180);
+  return lampGlow;
+}
+function vignetteSprite() {
+  if (barVignette) return barVignette;
+  barVignette = S.makeCanvas(W + 8, H + 8);
+  const x = barVignette.getContext('2d');
+  const v = x.createRadialGradient(W / 2 + 4, 114, 90, W / 2 + 4, 114, 240);
+  v.addColorStop(0, 'rgba(10,5,3,0)');
+  v.addColorStop(1, 'rgba(10,5,3,0.6)');
+  x.fillStyle = v;
+  x.fillRect(0, 0, W + 8, H + 8);
+  return barVignette;
+}
+
 const flipX = (rects, dir) => (dir > 0 ? rects : rects.map(([dx, dy, w, h, c]) => [-dx - w, dy, w, h, c]));
 
 // Silhouettes : couleurs de tenue et de chapeau d'un personnage de l'éditeur
@@ -288,23 +314,16 @@ function saloonBar(ctx, el, players, o) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   for (const lx of [100, 206]) {
-    const fl = 0.16 + 0.04 * Math.sin(el / 80 + lx);
-    const g = ctx.createRadialGradient(lx, 40, 0, lx, 40, 90);
-    g.addColorStop(0, `rgba(255,190,110,${fl})`);
-    g.addColorStop(1, 'rgba(255,190,110,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(lx - 90, 0, 180, 140);
+    ctx.globalAlpha = 0.16 + 0.04 * Math.sin(el / 80 + lx);
+    ctx.drawImage(lampSprite(), 0, 50, 180, 130, lx - 90, 0, 180, 130); // (rien au-dessus de y = 0)
   }
+  ctx.globalAlpha = 1;
   for (let i = 0; i < 18; i++) {
     const x = 70 + hash(i) * 170 + Math.sin(el / 700 + i) * 6, y = 50 + ((hash(i + 40) * 90 + el * 0.008 * (1 + (i % 3))) % 90);
     R(ctx, x, y, 1, 1, 'rgba(255,230,180,0.5)');
   }
   ctx.restore();
-  const v = ctx.createRadialGradient(W / 2, 110, 90, W / 2, 110, 240);
-  v.addColorStop(0, 'rgba(10,5,3,0)');
-  v.addColorStop(1, 'rgba(10,5,3,0.6)');
-  ctx.fillStyle = v;
-  ctx.fillRect(-4, -4, W + 8, H + 8);
+  ctx.drawImage(vignetteSprite(), -4, -4);
   // la réplique, dans une bulle au-dessus du client
   if (o.bubble > 0) {
     const txt = 'UN VERRE, BARMAN !', n = Math.ceil(o.bubble * txt.length);

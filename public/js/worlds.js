@@ -9,6 +9,32 @@ export const HELP_MS = 3500;
 export const COUNTDOWN = CUT_MS + HELP_MS;
 export const PLAYER_COLORS = ['#f0705a', '#7ab0f0', '#b8e070', '#f8d070', '#c890f0', '#60d8c8'];
 export const MAX_PLAYERS = 6;
+export const TEAM_NAMES = ['ROUGES', 'BLEUS']; // équipes de l'assaut du fort (ici pour l'écran de fin, sans charger l'arbitre)
+
+// Listes de variantes lues par le lobby (variants.js) : ici plutôt que dans les arbitres, pour ne pas charger ces derniers au démarrage.
+// Champs de bataille : décor, abris, style du fort. Tiré de la graine.
+export const FORT_MAPS = {
+  desert: { name: 'DÉSERT', w: 3, back: 'mesas', fort: 'wood', ground: ['#c4a468', '#c8aa6e', '#ccb074', '#d0b67a', '#d4bc80'], path: '#dcc490', yard: '#b89a68',
+    covers: { rock: 2, cactus: 2, barrels: 2, crates: 2, hay: 1, wagon: 1 } },
+  prairie: { name: 'PRAIRIE', w: 2, back: 'hills', fort: 'wood', ground: ['#7a9a48', '#82a24e', '#8aa854', '#92ae5a', '#9ab460'], path: '#b8a868', yard: '#8a9a50', grass: true,
+    covers: { hay: 3, fence: 3, wagon: 1, crates: 1, barrels: 1, rock: 1 } },
+  canyon: { name: 'CANYON', w: 2, back: 'cliffs', fort: 'wood', ground: ['#b06a44', '#b8724a', '#c07a50', '#c48056', '#c8885c'], path: '#d09a6a', yard: '#a86440',
+    covers: { boulder: 3, rock: 3, cactus: 1, barrels: 1, crates: 1 } },
+  riviere: { name: 'GUÉ DE LA RIVIÈRE', w: 2, back: 'mesas', fort: 'wood', ground: ['#a8a468', '#b0aa6e', '#b8b074', '#c0b67a', '#c8bc80'], path: '#d4c890', yard: '#a09a60', river: true, grass: true,
+    covers: { rock: 3, barrels: 2, crates: 2, hay: 1, fence: 1 } },
+  mission: { name: 'MISSION SAN ROSARIO', w: 2, back: 'mesas', fort: 'adobe', ground: ['#d0b888', '#d4bc8c', '#d8c090', '#dcc494', '#e0c898'], path: '#e8d4a8', yard: '#c8b080',
+    covers: { adobe: 3, barrels: 2, crates: 1, cactus: 2, wagon: 1 } },
+};
+export const COURSE_VARIANTS = { track: 'LE CHAMP DE COURSES', wild: 'LA CHEVAUCHÉE SAUVAGE' };
+// RTS : décors de carte, tirés au hasard à chaque partie ; envs : ambiances (env.js) qui leur vont
+export const RTS_BIOMES = {
+  prairie: { name: 'LA PRAIRIE', envs: null },
+  canyon: { name: 'LE GRAND CANYON', envs: ['midi', 'aube', 'crepuscule', 'nuit', 'orage', 'poussiere'] },
+  sierra: { name: 'LA SIERRA ENNEIGÉE', envs: ['neige', 'midi', 'aube', 'crepuscule', 'nuit'] },
+  bayou: { name: 'LE BAYOU', envs: ['midi', 'aube', 'crepuscule', 'nuit', 'orage'] },
+  salines: { name: 'LES SALINES', envs: ['midi', 'aube', 'crepuscule', 'nuit', 'poussiere'] },
+};
+
 
 export const MODES = {
   roulette: { name: 'Roulette', sub: 'Le duel au fusil à pompe', min: 2, max: 2 },

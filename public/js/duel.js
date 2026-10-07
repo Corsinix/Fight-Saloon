@@ -102,6 +102,7 @@ export class DuelScene extends MiniScene {
     this.showEnv = true;
     this.layout = streetLayout(seed); // la rue change à chaque partie, le saloon reste au fond
     this.looks = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `${i}:${JSON.stringify(p.character || {})}`));
+    S.forgetLooks(cache, this.looks.map((r) => r.key)); // duellistes des parties précédentes
     this.cur = null;
     this.best = null;
     this.tw = { x: -40 };

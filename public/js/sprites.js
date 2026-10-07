@@ -9,6 +9,46 @@ export function freeCanvas(c) {
   if (c) { c.width = 0; c.height = 0; }
 }
 
+// Oublie, dans un cache de sprites, ceux des looks de joueurs (clés contenant `${i}:{…}`) absents de keep (clés des
+// joueurs de la partie qui commence) : sans ça, ils s'accumulent d'une partie à l'autre. Canvas libérés tout de suite.
+export function forgetLooks(cache, keep) {
+  for (const [k, c] of cache) {
+    if (!k.includes(':{') || keep.some((r) => k.includes(r))) continue;
+    cache.delete(k);
+    if (c instanceof HTMLCanvasElement) { freeCanvas(c.flip); freeCanvas(c); }
+  }
+}
+
+// Cache « le moins récemment utilisé » : get() remet l'entrée en tête, set() chasse les plus anciennes
+// au-delà de max, en appelant free() sur chacune (par défaut : libère le canvas).
+export function lru(max, free = freeCanvas) {
+  const m = new Map();
+  return {
+    get(k) {
+      const v = m.get(k);
+      if (v !== undefined) { m.delete(k); m.set(k, v); }
+      return v;
+    },
+    set(k, v) {
+      m.set(k, v);
+      while (m.size > max) {
+        const [old, o] = m.entries().next().value;
+        m.delete(old);
+        free(o);
+      }
+    },
+  };
+}
+
+// Clé de cache d'un look de personnage, calculée une fois par objet : JSON.stringify à chaque image et pour
+// chaque personnage coûtait cher. Les looks ne sont jamais modifiés en place (on en crée un nouveau).
+const lookKeys = new WeakMap();
+export function lookKey(c) {
+  let k = lookKeys.get(c);
+  if (k === undefined) { k = JSON.stringify(c); lookKeys.set(c, k); }
+  return k;
+}
+
 // read : canvas relu pixel par pixel (getImageData), gardé en mémoire plutôt que sur la carte graphique
 export function makeCanvas(w, h, read = false) {
   const c = document.createElement('canvas');
@@ -1183,9 +1223,10 @@ export function drawCharacter(ctx, c, opts = {}) {
   }
 }
 
-const charCache = new Map();
+// (cache « le moins récemment utilisé » : les canvas chassés sont libérés tout de suite)
+const charCache = lru(200);
 export function characterSprite(c, opts = {}) {
-  const key = JSON.stringify(c) + (opts.blink ? 'b' : '') + (opts.hurt ? 'h' : '') + (opts.tint || '') +
+  const key = lookKey(c) + (opts.blink ? 'b' : '') + (opts.hurt ? 'h' : '') + (opts.tint || '') +
     (c.mouth === 'cigar' || c.mouth === 'pipe' ? Math.floor((opts.t || 0) / 300) % 4 : '');
   let s = charCache.get(key);
   if (!s) {
@@ -1197,7 +1238,6 @@ export function characterSprite(c, opts = {}) {
       ctx.fillStyle = opts.tint;
       ctx.fillRect(0, 0, CHAR_W, CHAR_H);
     }
-    if (charCache.size > 200) charCache.clear();
     charCache.set(key, s);
   }
   return s;
@@ -1205,10 +1245,11 @@ export function characterSprite(c, opts = {}) {
 
 // Le chapeau seul, découpé du personnage (ce qui change quand on l'enlève, au-dessus des sourcils) :
 // { img, x, y } avec sa position dans le sprite, ou null sans chapeau.
-const hatCache = new Map();
+const hatCache = lru(48, (h) => freeCanvas(h?.img));
 export function hatSprite(c) {
-  const key = JSON.stringify(c);
-  if (hatCache.has(key)) return hatCache.get(key);
+  const key = lookKey(c);
+  const hit = hatCache.get(key);
+  if (hit !== undefined) return hit;
   let out = null;
   if (c.hat && c.hat !== 'none') {
     const pix = (ch) => { const cv = makeCanvas(CHAR_W, CHAR_H, true); const x = cv.getContext('2d', { willReadFrequently: true }); drawCharacter(x, ch, {}); return x.getImageData(0, 0, CHAR_W, CHAR_H).data; };

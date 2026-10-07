@@ -7,7 +7,7 @@
 // interface que MiniGame (mini.js). Les autres chevaux sont vus en direct (positions envoyées par chacun).
 // Une fois sur deux (tiré de la graine), la course quitte le champ de courses pour la chevauchée sauvage :
 // pas de couloirs, on traverse la prairie et on dirige son cheval librement (voir WILD plus bas).
-import { MODES, COUNTDOWN, rng } from './worlds.js';
+import { MODES, COUNTDOWN, rng, COURSE_VARIANTS } from './worlds.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -77,7 +77,7 @@ export const maxReach = (t) => Math.max(0, t) * COURSE.v1 * (1 + COURSE.whip.gai
 // La piste : des obstacles de plus en plus rapprochés, des carottes au sol entre deux obstacles, et parfois une
 // carotte en l'air au-dessus d'un obstacle (on l'attrape en sautant pile au bon moment). Les écarts laissent
 // toujours le temps de retomber avant le prochain obstacle, même au grand galop.
-export const COURSE_VARIANTS = { track: 'LE CHAMP DE COURSES', wild: 'LA CHEVAUCHÉE SAUVAGE' };
+export { COURSE_VARIANTS }; // terrains : dans worlds.js, lus aussi par le lobby
 // v : terrain imposé par l'hôte (lobby), sinon tiré de la graine
 export function courseWorld(seed, v = null) {
   return (COURSE_VARIANTS[v] ? v : courseVariant(seed)) === 'wild' ? wildWorld(seed) : trackWorld(seed);

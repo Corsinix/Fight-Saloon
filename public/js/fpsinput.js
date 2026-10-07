@@ -146,9 +146,13 @@ export class FpsInput {
 
   // Boutons tactiles facultatifs, qui n'apparaissent que s'ils servent : use ('up' monter, 'down' descendre,
   // 'use' canon ou comptoir, false caché ; true vaut 'up') et throw (dynamite).
+  // Appelé à chaque image : rien à faire si rien n'a changé depuis ce qui est affiché sur ce pavé.
   setButtons({ use, throw: th } = {}) {
-    if (use != null) this.btnShow.use = use === true ? 'up' : use || false;
-    if (th != null) this.btnShow.throw = !!th;
+    const u = use == null ? this.btnShow.use : use === true ? 'up' : use || false;
+    const t = th == null ? this.btnShow.throw : !!th;
+    if (u === this.btnShow.use && t === this.btnShow.throw && this.shownOn === this.pad) return;
+    this.btnShow.use = u;
+    this.btnShow.throw = t;
     this.refreshPad();
   }
 
@@ -406,10 +410,12 @@ export class FpsInput {
     this.refreshPad();
   }
 
-  // appelé à chaque image par la scène (setButtons) : on ne touche au DOM que si quelque chose change
+  // appelé par setButtons quand quelque chose change, et au montage du pavé (boutons gardés sous la main)
   refreshPad() {
     if (!this.pad) return;
-    const use = this.pad.querySelector('.fp-use'), dir = this.btnShow.use;
+    if (this.shownOn !== this.pad) this.padBtns = { use: this.pad.querySelector('.fp-use'), throw: this.pad.querySelector('.fp-throw') };
+    this.shownOn = this.pad;
+    const use = this.padBtns.use, dir = this.btnShow.use;
     use.classList.toggle('hidden', !dir);
     if (dir && use.dataset.dir !== dir) {
       use.dataset.dir = dir;
@@ -418,7 +424,7 @@ export class FpsInput {
       use.setAttribute('aria-label', label);
       use.title = label;
     }
-    this.pad.querySelector('.fp-throw').classList.toggle('hidden', !this.btnShow.throw);
+    this.padBtns.throw.classList.toggle('hidden', !this.btnShow.throw);
   }
 }
 

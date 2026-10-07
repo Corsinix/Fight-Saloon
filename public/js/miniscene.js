@@ -209,8 +209,13 @@ export class MiniScene {
     this.now = Math.max(this.now, now);
     if (this.t0 != null) this.countdownSounds();
     this.update(dt);
-    for (const p of this.popups) p.t += dt;
-    this.popups = this.popups.filter((p) => p.t < 1100);
+    // compactés sur place (pas de nouveau tableau à chaque image)
+    let n = 0;
+    for (const p of this.popups) {
+      p.t += dt;
+      if (p.t < 1100) this.popups[n++] = p;
+    }
+    this.popups.length = n;
     this.shake = Math.max(0, this.shake - dt * 0.03);
     if (this.pendingLive && now - this.lastLive >= LIVE_MS) this.sendLive(this.pendingLive, true);
     const ctx = this.ctx;

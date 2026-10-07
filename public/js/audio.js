@@ -14,6 +14,11 @@ function persist() {
   try { localStorage.setItem('bs-audio', JSON.stringify(settings)); } catch {}
 }
 
+// muet ou volume de la musique à zéro : plus rien n'est programmé (le séquenceur créerait des oscillateurs pour rien)
+const musicOff = () => settings.muted || !(settings.music > 0);
+// page cachée (autre onglet, téléphone en veille) : le contexte audio est suspendu, la musique en pause
+let hidden = typeof document !== 'undefined' && !!document.hidden;
+
 function applyVolumes() {
   if (!ac) return;
   master.gain.value = settings.muted ? 0 : 1;
@@ -128,13 +133,40 @@ export function initAudio() {
   loadCrusher();
   loadCustomMusic();
   loadSamples();
-  setInterval(layers, 100);
+  syncLayers();
   applyMood();
 }
 
 export const audioSettings = settings;
-export function setVolume(kind, v) { settings[kind] = v; applyVolumes(); persist(); }
-export function toggleMute() { settings.muted = !settings.muted; applyVolumes(); persist(); return settings.muted; }
+export function setVolume(kind, v) { settings[kind] = v; applyVolumes(); musicGate(); persist(); }
+export function toggleMute() { settings.muted = !settings.muted; applyVolumes(); musicGate(); persist(); return settings.muted; }
+
+// Le son revient (ou se coupe) : la musique demandée repart du début du morceau (ou s'arrête).
+function musicGate() {
+  if (!ac) return;
+  if (musicOff()) stopMusic();
+  else if (wanted && !player && !customEl && !hidden) playMusic(wanted, true);
+  syncLayers();
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    hidden = document.hidden;
+    if (!ac) return;
+    if (hidden) {
+      if (player) { clearInterval(player.timer); player.timer = 0; }
+      customEl?.pause();
+      ac.suspend().catch(() => {});
+    } else {
+      // (sur iPhone, resume peut attendre le prochain toucher : initAudio s'en charge au déblocage)
+      ac.resume().catch(() => {});
+      if (player && !player.timer) player.timer = setInterval(tick, 50);
+      else if (customEl) customEl.play().catch(() => {});
+      else musicGate();
+    }
+    syncLayers();
+  });
+}
 
 // ------------------------------------------------------------------ instruments
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -1714,6 +1746,7 @@ export function setMood(m = {}) {
   const retempo = next.level !== mood.level;
   Object.assign(mood, next);
   if (!ac) return;
+  syncLayers();
   applyMood();
   if (retempo && player) {
     // on garde la position dans le morceau : la suite est replacée au nouveau tempo
@@ -1730,8 +1763,18 @@ function applyMood() {
   if (customEl) customEl.playbackRate = mood.level > 0.75 ? 1.04 : 1;
 }
 
-// cœur et horloge, joués par-dessus n'importe quel morceau (fichiers compris)
-let nextBeat = 0, nextTick = 0, tickN = 0;
+// cœur et horloge, joués par-dessus n'importe quel morceau (fichiers compris) ;
+// la minuterie ne tourne que quand l'un des deux est demandé et que la musique s'entend
+let nextBeat = 0, nextTick = 0, tickN = 0, layerTimer = 0;
+function syncLayers() {
+  const on = !!ac && !hidden && !musicOff() && (mood.heart || mood.tick);
+  if (on && !layerTimer) layerTimer = setInterval(layers, 100);
+  else if (!on && layerTimer) {
+    clearInterval(layerTimer);
+    layerTimer = 0;
+    nextBeat = nextTick = 0;
+  }
+}
 function layers() {
   const now = ac.currentTime, ahead = now + 0.25;
   if (mood.heart) {
@@ -1884,6 +1927,7 @@ export function playMusic(name, force = false) {
   stopMusic();
   duckG.gain.cancelScheduledValues(ac.currentTime);
   duckG.gain.setValueAtTime(1, ac.currentTime);
+  if (musicOff() || hidden) return; // rien à programmer : musicGate la relancera
   plPos[name] ??= 0;
   const list = tracks(name);
   if (!list.length) return;
@@ -2351,7 +2395,7 @@ function voice(t, dur, { f0, f1 = f0, from = 'a', to = from, gain = 0.3, growl =
 const sfxLast = {};
 const sfxRecent = [];
 export function sfx(name, delay = 0, prio = false) {
-  if (!ac || !SFX[name] || document.hidden) return;
+  if (!ac || !SFX[name] || document.hidden || settings.muted || !(settings.sfx > 0)) return;
   const now = performance.now();
   if (!delay && !prio && now - (sfxLast[name] || -1e9) < 40) return;
   while (sfxRecent.length && now - sfxRecent[0] > 250) sfxRecent.shift();

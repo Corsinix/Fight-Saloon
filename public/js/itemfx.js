@@ -1,7 +1,7 @@
 // Petits dessins des animations d'objets de la roulette : bras et poings, menottes et chaîne, lasso,
 // cigare et allumette, carte, marteau, scie, manipulateur de télégraphe, longue-vue, derringer…
 // Tout est posé en rectangles arrondis au pixel près, pour rester net une fois le canvas agrandi.
-import { OUT, shade, disc, makeCanvas } from './sprites.js';
+import { OUT, shade, disc, makeCanvas, lru } from './sprites.js';
 
 const R = (ctx, x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); };
 const STEEL = '#8a909a', STEEL_L = '#d8dce4', STEEL_D = '#4a4f58';
@@ -272,10 +272,12 @@ export function spyglassTube(ctx, x0, y0, x1, y1, glint = false) {
 }
 
 // Vue dans la longue-vue : tout est noir sauf un disque (r) cerclé de laiton ; inside() dessine le contenu.
-export function lensView(ctx, cx, cy, r, W, H, inside) {
-  inside();
+// Centre entier (le cas de la roulette) : le carré autour du disque vient d'un masque dessiné une fois par rayon,
+// le reste de l'écran de quatre rectangles noirs (plutôt que quatre ou cinq traits par ligne à chaque image).
+const lenses = lru(12);
+function lensRows(ctx, cx, cy, r, y0, y1, W) {
   const ro = r + 4;
-  for (let y = 0; y < H; y++) {
+  for (let y = y0; y < y1; y++) {
     const dy = y + 0.5 - cy;
     if (Math.abs(dy) > ro) { R(ctx, 0, y, W, 1, '#0a0604'); continue; }
     const dxo = Math.floor(Math.sqrt(ro * ro - dy * dy));
@@ -288,6 +290,22 @@ export function lensView(ctx, cx, cy, r, W, H, inside) {
       R(ctx, cx - dxo, y, dxo - dxi, 1, rim); R(ctx, cx + dxi, y, dxo - dxi, 1, rim);
     }
   }
+}
+export function lensView(ctx, cx, cy, r, W, H, inside) {
+  inside();
+  if (!Number.isInteger(cx) || !Number.isInteger(cy) || !Number.isInteger(r)) { lensRows(ctx, cx, cy, r, 0, H, W); return; }
+  const ro = r + 4;
+  let m = lenses.get(r);
+  if (!m) {
+    m = makeCanvas(ro * 2, ro * 2);
+    lensRows(m.getContext('2d'), ro, ro, r, 0, ro * 2, ro * 2);
+    lenses.set(r, m);
+  }
+  ctx.drawImage(m, cx - ro, cy - ro);
+  if (cy - ro > 0) R(ctx, 0, 0, W, cy - ro, '#0a0604');
+  if (cy + ro < H) R(ctx, 0, cy + ro, W, H - cy - ro, '#0a0604');
+  if (cx - ro > 0) R(ctx, 0, cy - ro, cx - ro, ro * 2, '#0a0604');
+  if (cx + ro < W) R(ctx, cx + ro, cy - ro, W - cx - ro, ro * 2, '#0a0604');
 }
 
 // Derringer vu à la première personne : crosse dans le poing (x, y), canons jusqu'à la bouche (mx, my)

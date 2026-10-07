@@ -117,6 +117,15 @@ export function due60(gate, t) {
   return true;
 }
 
+// Retire sur place (dans l'ordre) les éléments pour lesquels keep(x) est faux : les particules et effets sont
+// triés à chaque image, sans recréer un tableau à chaque fois. Renvoie la liste.
+export function prune(list, keep) {
+  let n = 0;
+  for (let i = 0; i < list.length; i++) if (keep(list[i])) list[n++] = list[i];
+  list.length = n;
+  return list;
+}
+
 // Position du pointeur en pixels du jeu (W × H). Sur téléphone le canvas est centré avec object-fit: contain :
 // on retire les bandes noires. Hors de l'image, x ou y sort de [0, W] / [0, H].
 export function canvasPos(cv, e, W, H) {
@@ -1383,7 +1392,7 @@ export class Scene {
       }
       if (p.type === 'shell' && p.t >= p.max) this.spentHide = 0;
     }
-    this.parts = this.parts.filter((p) => p.t < p.max);
+    prune(this.parts, (p) => p.t < p.max);
   }
 
   introTable(ctx, el) {
@@ -1428,7 +1437,9 @@ export class Scene {
       // adversaire
       const blink = t % 3700 < 120;
       const hurt = t < this.oppFx.hurtUntil || this.oppFx.dead;
-      const look = this.oppFx.hatless ? { ...O.character, hat: 'none' } : O.character;
+      // nu-tête : le même objet tant que le look ne change pas (clé du cache de sprites calculée une fois)
+      if (this.oppFx.hatless && this.hatless?.of !== O.character) this.hatless = { of: O.character, look: { ...O.character, hat: 'none' } };
+      const look = this.oppFx.hatless ? this.hatless.look : O.character;
       const spr = S.characterSprite(look, { blink, hurt, t, tint: t < this.oppFx.tintUntil ? 'rgba(255,60,40,0.6)' : t < this.oppFx.greenUntil ? 'rgba(110,190,60,0.5)' : t < this.oppFx.glowUntil ? 'rgba(255,230,120,0.4)' : null });
       const bob = Math.round(Math.sin(t / 700));
       const sway = this.room ? this.room.sway(t) : 0;

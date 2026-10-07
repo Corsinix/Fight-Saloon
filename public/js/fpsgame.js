@@ -59,8 +59,8 @@ export const FPS = {
 // dmg par balle (ou par plomb : pellets), rate : ms entre deux tirs, mag : chargeur, reserve : munitions de départ,
 // reload : ms (rl : son de recharge), spread : dispersion (rad), range : portée utile (au-delà, dégâts divisés par deux).
 // Particularités : breaks (la pioche casse le décor), tether (lasso, harpon : la cible touchée reste au bout de la corde
-// et ne peut plus avancer ; tant que le tir est maintenu, elle est ramenée vers le tireur à speed cases/s, au plus max ms ;
-// relâchée, elle reste encore entravée keep ms), alt (second canon au clic droit, ses propres munitions), fan (clic
+// et ne peut plus ni avancer ni tirer ; tant que le tir est maintenu, elle est ramenée vers le tireur à speed cases/s, au
+// plus max ms ; relâchée, elle reste encore étourdie keep ms), alt (second canon au clic droit, ses propres munitions), fan (clic
 // droit maintenu : on vide le barillet en tapant le chien), charge (ms : l'arc se bande en maintenant le tir, pleine
 // tension : flèche enflammée), lob (le mortier tire en cloche), kick (cases de recul du tireur), leech (part des
 // dégâts rendue en PV), quiet (on ne l'entend que de près), swing (ms de chaque image du geste, 110 sinon ; le coup porte
@@ -70,7 +70,7 @@ export const WEAPONS = {
   tomahawk: { slot: 1, name: 'TOMAHAWK', melee: true, dmg: 55, rate: 720, range: 1.35, sfx: 'swish' },
   saber: { slot: 1, name: 'SABRE', melee: true, dmg: 42, rate: 560, range: 1.8, sfx: 'swish' },
   pickaxe: { slot: 1, name: 'PIOCHE', melee: true, dmg: 62, rate: 950, range: 1.45, sfx: 'swish', breaks: true, swing: [240, 120, 290] },
-  lasso: { slot: 1, name: 'LASSO', melee: true, dmg: 12, rate: 1500, range: 5, cone: 0.32, sfx: 'whip', tether: { speed: 3.2, max: 4500, keep: 2500 }, swing: [200, 200, 200], hitAt: 260 },
+  lasso: { slot: 1, name: 'LASSO', melee: true, dmg: 12, rate: 1500, range: 5, cone: 0.32, sfx: 'whip', tether: { speed: 3.2, max: 4500, keep: 1500 }, swing: [200, 200, 200], hitAt: 260 },
   colt: { slot: 2, name: 'COLT', dmg: 24, rate: 300, mag: 6, reserve: 30, reload: 1300, spread: 0.012, range: 22, sfx: 'colt', rl: 'reload' },
   schofield: { slot: 2, name: 'SCHOFIELD', dmg: 21, rate: 270, mag: 6, reserve: 30, reload: 650, spread: 0.018, range: 20, sfx: 'schofield', rl: 'reload' },
   derringer: { slot: 2, name: 'DERRINGER', dmg: 48, rate: 260, mag: 2, reserve: 16, reload: 900, spread: 0.03, range: 10, sfx: 'derringer', rl: 'breakopen' },
@@ -84,7 +84,7 @@ export const WEAPONS = {
   sawed: { slot: 3, name: 'CANON SCIÉ', dmg: 11, pellets: 10, rate: 280, mag: 2, reserve: 20, reload: 1600, spread: 0.13, range: 8, sfx: 'sawed', rl: 'breakopen' },
   sharps: { slot: 3, name: 'CARABINE SHARPS', dmg: 95, rate: 1300, mag: 1, reserve: 15, reload: 1100, spread: 0.002, range: 45, zoom: true, sfx: 'sharps', rl: 'breakopen' },
   bow: { slot: 3, name: 'ARC', dmg: 72, rate: 300, mag: 1, reserve: 20, reload: 420, spread: 0.003, range: 30, charge: 850, quiet: true, sfx: 'bow', rl: 'nock' },
-  harpoon: { slot: 3, name: 'FUSIL À HARPON', dmg: 70, rate: 1400, mag: 1, reserve: 10, reload: 1500, spread: 0.003, range: 16, tether: { speed: 4.2, max: 3500, keep: 0 }, sfx: 'harpoon', rl: 'breakopen' },
+  harpoon: { slot: 3, name: 'FUSIL À HARPON', dmg: 45, rate: 1400, mag: 1, reserve: 10, reload: 1500, spread: 0.003, range: 16, tether: { speed: 4.2, max: 3500, keep: 1250 }, sfx: 'harpoon', rl: 'breakopen' },
   // armes de caisse : elles remplacent le reste jusqu'à la fin de leur temps ou de leur chargeur
   gatling: { slot: 5, temp: true, name: 'GATLING', dmg: 9, rate: 85, mag: 90, spread: 0.05, range: 24, auto: true, ms: 15000, slow: 0.7, sfx: 'gatling' },
   akimbo: { slot: 5, temp: true, name: 'DEUX COLTS', dmg: 24, rate: 210, mag: 32, spread: 0.02, range: 22, dual: true, ms: 15000, sfx: 'akimbo' },
@@ -189,6 +189,8 @@ export const PROPS = {
   bottle: { hp: 1, r: 0.1, pass: true, blast: 2.4 }, // bouteille : en mille morceaux
 };
 // ce que la pioche casse d'un coup (pas le coffre : il faut de la dynamite ; pas le foin : il prendrait feu)
+// ce qu'un joueur étourdi (au bout d'une corde, puis sonné) ne peut plus faire
+const STUN_BLOCKS = new Set(['hit', 'throw', 'trap', 'ignite', 'prop', 'use', 'mount']);
 export const PICKABLE = new Set(['tnt', 'barrel', 'crates', 'boulder', 'bottle', 'lamp', 'lantern']);
 const PROP_DECO = { barrelTnt: 'tnt', barrel: 'barrel', hayBale: 'hay', safe: 'safe', lantern: 'lantern', chandelier: 'chandelier', lamp: 'lamp', bottle: 'bottle' };
 const PROP_CELL = { tnt: 'tnt', crates: 'crates', hay: 'hay', canyonBoulder: 'boulder', ghostRubble: 'crates', portCotton: 'hay', portCordwood: 'crates' };
@@ -1134,6 +1136,7 @@ export class FpsGame {
       return { events: this.flush() };
     }
     if (!p.alive) return { events: [] };
+    if (t < (p.stunUntil || 0) && STUN_BLOCKS.has(a.kind)) return { events: [] };
     // la position jointe à l'action est plus fraîche que la dernière reçue (live, toutes les 150 ms) : prise si plausible
     if (!p.m && num('x', 'y') && Math.hypot(a.x - p.x, a.y - p.y) < 2.5) { p.x = a.x; p.y = a.y; }
     if (a.kind === 'hit' && (a.tg === 'n' || a.tg === 'p') && Number.isInteger(a.id) && num('dmg')) this.playerHit(i, a, t);
@@ -1217,9 +1220,9 @@ export class FpsGame {
     for (const x of this.tethers.filter((x) => x.by === i)) this.untether(x, t); // une seule corde par tireur
     // les bots tiennent la corde un moment puis la lâchent
     if (p.bot) hold = true;
-    if (!hold) { if (T.keep) this.snare(tg, T.keep, t, w, i); return; }
+    if (!hold) { if (T.keep) this.snare(tg, T.keep, t, w, i, false, true); return; }
     this.tethers.push({ by: i, tg, w, until: t + T.max, release: p.bot ? t + rnd(700, 2000) : Infinity, next: 0 });
-    this.snare(tg, 450, t, w, i);
+    this.snare(tg, 450, t, w, i, false, true);
     this.push({ type: 'tether', by: i, who: tg.p ?? -1, npc: tg.n ? tg.n.id : -1, w });
   }
 
@@ -1235,7 +1238,7 @@ export class FpsGame {
     if (k < 0) return;
     this.tethers.splice(k, 1);
     const q = x.tg.p != null ? this.p[x.tg.p] : x.tg.n;
-    if (q?.alive) this.snare(x.tg, WEAPONS[x.w].tether.keep, t, x.w, x.by, true);
+    if (q?.alive) this.snare(x.tg, WEAPONS[x.w].tether.keep, t, x.w, x.by, true, true);
     this.push({ type: 'untether', by: x.by });
   }
 
@@ -1253,22 +1256,18 @@ export class FpsGame {
         const r = move(this.world, q.x, q.y, ((p.x - q.x) / d) * step, ((p.y - q.y) / d) * step, x.tg.n ? 0.26 : FPS.radius);
         q.x = r.x; q.y = r.y;
       }
-      q.snareUntil = t + 450;
-      if (t >= x.next) { x.next = t + 150; this.snare(x.tg, 450, t, x.w, x.by, true); }
+      q.snareUntil = q.stunUntil = t + 450;
+      if (t >= x.next) { x.next = t + 150; this.snare(x.tg, 450, t, x.w, x.by, true, true); }
     }
   }
 
-  // Une cible entravée (lasso, harpon, piège) : elle ne peut plus avancer pendant ms (elle tire encore) ; quiet : mise à
-  // jour d'une corde déjà tendue (pas d'annonce ni de bruit chez les joueurs)
-  snare(tg, ms, t, w, by = -1, quiet = false) {
-    if (tg.n) {
-      tg.n.snareUntil = t + ms;
-      this.push({ type: 'snare', npc: tg.n.id, ms, x: tg.n.x, y: tg.n.y, w, by, quiet: quiet || undefined });
-    } else {
-      const q = this.p[tg.p];
-      q.snareUntil = t + ms;
-      this.push({ type: 'snare', who: tg.p, ms, x: q.x, y: q.y, w, by, quiet: quiet || undefined });
-    }
+  // Une cible entravée (piège : elle ne peut plus avancer pendant ms, elle tire encore) ou étourdie (stun : lasso,
+  // harpon, ni avancer ni tirer) ; quiet : mise à jour d'une corde déjà tendue (pas d'annonce ni de bruit)
+  snare(tg, ms, t, w, by = -1, quiet = false, stun = false) {
+    const q = tg.n || this.p[tg.p];
+    q.snareUntil = t + ms;
+    if (stun) q.stunUntil = t + ms;
+    this.push({ type: 'snare', ...(tg.n ? { npc: tg.n.id } : { who: tg.p }), ms, x: q.x, y: q.y, w, by, quiet: quiet || undefined, stun: stun || undefined });
   }
 
 
@@ -1859,6 +1858,8 @@ export class FpsGame {
     const dist = Math.hypot(tg.x - n.x, tg.y - n.y);
     const seen = dist < k.range + 4 && los(this.world, n.x, n.y, tg.x, tg.y, bodyZ(tg));
     const aimA = Math.atan2(tg.y - n.y, tg.x - n.x);
+    // étourdi (lasso, harpon) : il se débat, sans viser ni tirer
+    if (t < (n.stunUntil || 0)) { n.aimAt = 0; n.st = 0; return; }
     if (n.aimAt) {
       // il vise, puis tire (ou lance son bâton)
       n.a = aimA;
@@ -2144,7 +2145,8 @@ export class FpsGame {
       const r = move(w, p.x, p.y, mx * speed * 0.75 * dt, my * speed * 0.75 * dt);
       p.x = r.x; p.y = r.y;
       // un canon prêt à portée de main et la cible assez loin : le bot le sert (hausse et pointage approximatifs)
-      const gun = !mods.melee && t - b.seenAt > b.react && w.uses.find((u) => u.kind === 'cannon' && t >= (u.readyAt || 0) && Math.hypot(u.x - p.x, u.y - p.y) < 1.6);
+      const stunned = t < (p.stunUntil || 0);
+      const gun = !mods.melee && !stunned && t - b.seenAt > b.react && w.uses.find((u) => u.kind === 'cannon' && t >= (u.readyAt || 0) && Math.hypot(u.x - p.x, u.y - p.y) < 1.6);
       const gd = gun ? Math.hypot(tgt.x - gun.x, tgt.y - gun.y) : 0;
       if (gun && gd > FPS.cannon.near + 1.5 && gd < FPS.cannon.range && Math.random() < 0.4) {
         this.use(i, { key: gun.key, a: Math.atan2(tgt.y - gun.y, tgt.x - gun.x) + rnd(-0.05, 0.05), d: gd + rnd(-1.2, 1.2) }, t);
@@ -2152,7 +2154,7 @@ export class FpsGame {
         return;
       }
       // tir, après un temps de réaction
-      if (t - b.seenAt > b.react && t - b.lastShot >= W8.rate * rnd(1.05, 1.6)) {
+      if (!stunned && t - b.seenAt > b.react && t - b.lastShot >= W8.rate * rnd(1.05, 1.6)) {
         const throwing = b.dyn > 0 ? 'dyn' : b.mol > 0 ? 'mol' : null;
         if (throwing && dist > 4 && dist < FPS.dyn.range && Math.random() < 0.08) {
           b[throwing]--;

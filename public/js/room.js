@@ -2,7 +2,7 @@
 // avec ses éléments animés, et une ambiance (heure, météo) visible par les fenêtres et dans l'éclairage.
 // Lieu et ambiance sont tirés de la graine de la partie : les deux joueurs voient la même chose.
 import * as S from './sprites.js';
-import { pickEnv, Ambience, desertOpts, skyDeco } from './env.js';
+import { pickEnv, Ambience, desertOpts, skyDeco, haloSprite } from './env.js';
 import { rng } from './worlds.js';
 import { sfx } from './audio.js';
 
@@ -1009,7 +1009,8 @@ export class Room {
     const k = night ? 1.8 : 1;
     for (const p of lamps) {
       const fl = Math.sin(now / 90 + p.x) * 0.5 + Math.sin(now / 37) * 0.5;
-      for (const [r, a] of [[p.r, 0.04], [p.r * 0.65, 0.05], [p.r * 0.35, 0.06]]) S.disc(ctx, p.x, p.y + sway, Math.round(r + fl), `rgba(255,170,70,${a * k})`);
+      const h = haloSprite([[p.r, 0.04], [p.r * 0.65, 0.05], [p.r * 0.35, 0.06]].map(([r, a]) => [Math.round(r + fl), a * k]), '255,170,70');
+      ctx.drawImage(h, Math.round(p.x) - h.r, Math.round(p.y + sway) - h.r);
     }
     ctx.globalCompositeOperation = 'source-over';
   }

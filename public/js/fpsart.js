@@ -18,6 +18,33 @@ function memo(key, make) {
   if (!c) { c = make(); CACHE.set(key, c); }
   return c;
 }
+// Images propres aux joueurs d'une partie (tenues des autres, cavaliers, affiches, visages, armes en main à notre
+// peau et notre tenue) : clé -> signature du look. Sans ça, le cache grossit de partie en partie (forgetLooks).
+const LOOKED = new Map();
+function memoLook(sig, key, make) {
+  let c = CACHE.get(key);
+  if (!c) { c = make(); CACHE.set(key, c); LOOKED.set(key, sig); }
+  return c;
+}
+// (sans look : memo ordinaire, gardé pour toujours)
+const memoAny = (sig, key, make) => memo(key, make);
+// Un look de cavalier (riderLook) en chaîne : deux looks identiques partagent leurs images
+const lookSig = (look) => `${look.key}|${look.skin}${look.hair}${look.cloth}${look.hatC}${look.hat}${look.beard}${look.outfit}${look.color}${look.hairStyle}${look.eyes}${look.eyeC}${look.mouth}${look.extra}`;
+const vmSig = (skin, cloth) => `vm|${skin}|${cloth}`;
+// Nouvelle partie : libère les images des looks qui n'y sont plus (looks : ceux des joueurs ; skin, cloth : les
+// nôtres, pour les armes en main). Affiches et visages sont toujours refaits. Les canvas libérés sont vidés
+// (0 x 0) : à n'appeler qu'avant de dessiner la partie (fps.js, au début de setup).
+export function forgetLooks(looks = [], skin, cloth) {
+  const keep = new Set(looks.filter(Boolean).map(lookSig));
+  keep.add(vmSig(skin, cloth));
+  for (const [key, sig] of LOOKED) {
+    if (keep.has(sig)) continue;
+    const c = CACHE.get(key);
+    if (c) c.width = c.height = 0;
+    CACHE.delete(key);
+    LOOKED.delete(key);
+  }
+}
 
 // Canvas relu pixel par pixel : gardé en mémoire plutôt que sur la carte graphique
 function canvas(w, h) {
@@ -141,13 +168,22 @@ function sprite(w, h, draw, { outlined = true } = {}) {
   draw(pen(c, w >> 1, h - 1), c);
   return outlined ? finish(c) : hardAlpha(c);
 }
-// Nouvelle texture 64x64 opaque : draw(pen, rand) avec l'origine en haut à gauche
-function texture(seed, draw, w = TEX, h = TEX) {
+// Nouvelle texture 64x64 opaque : draw(pen, rand) avec l'origine en haut à gauche ; graded : étalonnée (txGrade).
+// Alpha tout ou rien, trous bouchés en noir et étalonnage en une seule relecture des pixels (même résultat que
+// txGrade(opaque(hardAlpha(c))), sans trois allers-retours getImageData / putImageData)
+function texture(seed, draw, w = TEX, h = TEX, graded = false) {
   const c = canvas(w, h);
   const p = pen(c);
   p.R(0, 0, w, h, '#000000');
   draw(p, rng(hash(seed)), c);
-  return opaque(hardAlpha(c));
+  const ctx = c.getContext('2d'), img = ctx.getImageData(0, 0, w, h), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] < 128) { d[i] = d[i + 1] = d[i + 2] = 0; }
+    d[i + 3] = 255;
+    if (graded) txGradePx(d, i);
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
 }
 
 // Grain : nuance au hasard (±amt) des pixels d'une zone, pour casser les aplats (bois, crépi, pierre)
@@ -218,20 +254,22 @@ function txField(c, f, x0 = 0, y0 = 0, w = TEX, h = TEX) {
 // autre pixel ne peut tomber dessus.
 function txGrade(c) {
   const ctx = c.getContext('2d'), img = ctx.getImageData(0, 0, c.width, c.height), d = img.data;
-  for (let i = 0; i < d.length; i += 4) {
-    let r = d[i], g = d[i + 1], b = d[i + 2];
-    if (r === 0x9f && g === 0xb8 && b === 0xc8) continue;
-    const L = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    const s = clamp((0.45 - L) / 0.45, 0, 1), h = clamp((L - 0.58) / 0.42, 0, 1);
-    r = r * (1 - 0.13 * s) * (1 + 0.05 * h);
-    g = g * (1 - 0.07 * s) * (1 + 0.02 * h);
-    b = b * (1 + 0.1 * s) * (1 - 0.07 * h) + 9 * s * (1 - s * 0.4);
-    r = clamp(Math.round(r), 0, 255); g = clamp(Math.round(g), 0, 255); b = clamp(Math.round(b), 0, 255);
-    if (r === 0x9f && g === 0xb8 && b === 0xc8) b--;
-    d[i] = r; d[i + 1] = g; d[i + 2] = b;
-  }
+  for (let i = 0; i < d.length; i += 4) txGradePx(d, i);
   ctx.putImageData(img, 0, 0);
   return c;
+}
+// le pixel i (RGBA) de d, étalonné sur place
+function txGradePx(d, i) {
+  let r = d[i], g = d[i + 1], b = d[i + 2];
+  if (r === 0x9f && g === 0xb8 && b === 0xc8) return;
+  const L = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const s = clamp((0.45 - L) / 0.45, 0, 1), h = clamp((L - 0.58) / 0.42, 0, 1);
+  r = r * (1 - 0.13 * s) * (1 + 0.05 * h);
+  g = g * (1 - 0.07 * s) * (1 + 0.02 * h);
+  b = b * (1 + 0.1 * s) * (1 - 0.07 * h) + 9 * s * (1 - s * 0.4);
+  r = clamp(Math.round(r), 0, 255); g = clamp(Math.round(g), 0, 255); b = clamp(Math.round(b), 0, 255);
+  if (r === 0x9f && g === 0xb8 && b === 0xc8) b--;
+  d[i] = r; d[i + 1] = g; d[i + 2] = b;
 }
 
 // Pinceau qui dessine aussi à ±64 px (raccord horizontal, et vertical si wy)
@@ -2251,7 +2289,7 @@ export function wallTex(id, v = 0) {
   const draw = TX_WALLS[id];
   if (!draw) return checker(TEX, TEX);
   const n = TX_VARS[id] || 1, vv = txMod(Math.floor(+v || 0), n);
-  return memo(`w:${id}:${vv}`, () => txGrade(texture(`w:${id}:${vv}`, (p, rand, c) => draw(p, rand, c, vv))));
+  return memo(`w:${id}:${vv}`, () => texture(`w:${id}:${vv}`, (p, rand, c) => draw(p, rand, c, vv), TEX, TEX, true));
 }
 
 // =================================================================== affiche « WANTED » d'un joueur
@@ -2261,7 +2299,7 @@ const TX_LOOK = ['skin', 'hair', 'hairColor', 'eyes', 'eyeColor', 'nose', 'mouth
 export function wantedPoster(base, baseV, character, name, reward) {
   const ch = character || {}, look = JSON.stringify(TX_LOOK.map((k) => ch[k]));
   const rw0 = String(reward ?? '?'), rw1 = rw0.startsWith('$') ? rw0 : '$' + rw0;
-  return memo(`wp:${base}:${baseV}:${look}:${name}:${rw1}`, () => {
+  return memoLook('', `wp:${base}:${baseV}:${look}:${name}:${rw1}`, () => {
     const c = canvas(TEX, TEX), ctx = c.getContext('2d');
     ctx.drawImage(wallTex(base, baseV), 0, 0);
     // papier dessiné à part (étalonné comme les murs), puis posé sur le mur
@@ -2553,7 +2591,7 @@ export function flatTex(id) {
   }
   const draw = TX_FLATS[id];
   if (!draw) return checker(TEX, TEX);
-  return memo(`f:${id}`, () => txGrade(texture(`f:${id}`, draw)));
+  return memo(`f:${id}`, () => texture(`f:${id}`, draw, TEX, TEX, true));
 }
 
 // ------------------------------------------------------------------ 1b) murs et sols en plus (ville, abords, mine)
@@ -4168,8 +4206,8 @@ export function cowboyFrame(look, pose, frame, back = false) {
   const n = PP_POSES[pose];
   if (!look || !n) return checker(48, 64);
   const f = ((frame | 0) % n + n) % n;
-  const key = `ppc|${look.key}|${look.skin}${look.hair}${look.cloth}${look.hatC}${look.hat}${look.beard}${look.outfit}${look.color}${look.hairStyle}${look.eyes}${look.eyeC}${look.mouth}${look.extra}|${pose}${f}${back ? 'b' : ''}`;
-  return memo(key, () => ppFrame(ppCowboySpec(look), pose, f, back));
+  const sig = lookSig(look);
+  return memoLook(sig, `ppc|${sig}|${pose}${f}${back ? 'b' : ''}`, () => ppFrame(ppCowboySpec(look), pose, f, back));
 }
 
 export function banditFrame(kind, look, pose, frame, back = false) {
@@ -4378,7 +4416,7 @@ export function hudFace(character, hp01, mood) {
   const md = ['idle', 'hurt', 'grin', 'dead'].includes(mood) ? mood : 'idle';
   const dmg = md === 'dead' ? 3 : hp > 0.75 ? 0 : hp > 0.45 ? 1 : hp > 0.2 ? 2 : 3;
   const f = ['skin', 'hair', 'hairColor', 'eyes', 'eyeColor', 'nose', 'mouth', 'beard', 'hat', 'hatColor', 'outfit', 'outfitColor', 'extra'].map((k) => ch[k]);
-  return memo(`ppf|${JSON.stringify(f)}|${dmg}|${md}`, () => ppFace(ch, dmg, md));
+  return memoLook('', `ppf|${JSON.stringify(f)}|${dmg}|${md}`, () => ppFace(ch, dmg, md));
 }
 
 // ------------------------------------------------------------------ 4) montures
@@ -4996,7 +5034,9 @@ function mtHorseFB(c, co, f, r, v) {
 export function horseFrame(coat, frame, angle, rider = null) {
   const co = MT_COATS[coat];
   if (!co || !MT_GAIT[frame] || !['side', 'front', 'back'].includes(angle)) return checker(96, 80);
-  return memo(`horse|${coat}|${frame}|${angle}|${rider ? rider.key : ''}`, () => {
+  // avec cavalier : la clé porte tout son look (le joueur n° i n'a pas la même tenue d'une partie à l'autre)
+  const sig = rider ? lookSig(rider) : '';
+  return (rider ? memoLook : memoAny)(sig, `horse|${coat}|${frame}|${angle}|${sig}`, () => {
     const c = canvas(96, 80);
     if (angle === 'side') mtHorseSide(c, co, frame, rider);
     else mtHorseFB(c, co, frame, rider, angle === 'front' ? 0 : -1);
@@ -5166,10 +5206,12 @@ function mtCart(c, v, r) {
   }
 }
 
+const CART_V = { side: 1, front: 0, back: -1 };
 export function cartFrame(angle, rider = null) {
-  const v = { side: 1, front: 0, back: -1 }[angle];
+  const v = CART_V[angle];
   if (v === undefined) return checker(64, 56);
-  return memo(`cart|${angle}|${rider ? rider.key : ''}`, () => {
+  const sig = rider ? lookSig(rider) : '';
+  return (rider ? memoLook : memoAny)(sig, `cart|${angle}|${sig}`, () => {
     const c = canvas(64, 56);
     mtCart(c, v, rider);
     return finish(c);
@@ -6062,9 +6104,9 @@ function knPose(id, state, frame) {
 }
 
 function knViewModel(id, state, frame, skin, cloth) {
-  if (id === 'lasso') return memo(`kn:lasso:${state}:${frame}:${skin}:${cloth}`, () => knLassoView(state, frame, skin, cloth));
+  if (id === 'lasso') return memoLook(vmSig(skin, cloth), `kn:lasso:${state}:${frame}:${skin}:${cloth}`, () => knLassoView(state, frame, skin, cloth));
   if (id !== 'bowie' && id !== 'tomahawk' && id !== 'saber' && id !== 'pickaxe') return null;
-  return memo(`kn:${id}:${state}:${frame}:${skin}:${cloth}`, () => knBowie(knPose(id, state, frame), skin, cloth));
+  return memoLook(vmSig(skin, cloth), `kn:${id}:${state}:${frame}:${skin}:${cloth}`, () => knBowie(knPose(id, state, frame), skin, cloth));
 }
 
 // ------------------------------------------------------------------ 8c) armes longues en main (moteur vm3d)
@@ -7388,7 +7430,7 @@ const VM_EXTRA = [];
 export function registerViewModel(fn) { VM_EXTRA.push(fn); }
 
 export function viewModel(id, state, frame, skin, cloth) {
-  return memo(`vm3:${id}:${state}:${frame}:${skin}:${cloth}`, () => {
+  return memoLook(vmSig(skin, cloth), `vm3:${id}:${state}:${frame}:${skin}:${cloth}`, () => {
     // armes blanches (melee.js), armes longues (longguns3d.js), divers (misc3d.js), modules js/fpsvm/ : null si l'id n'est pas à eux
     for (const f of [typeof knViewModel === 'function' && knViewModel, typeof lgViewModel === 'function' && lgViewModel,
       typeof msViewModel === 'function' && msViewModel, ...VM_EXTRA.map((g) => (...a) => {

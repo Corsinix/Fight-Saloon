@@ -3,11 +3,9 @@
 // Le navigateur de l'hôte fait office de serveur de la table : il fait tourner la partie
 // (game.js) et n'envoie à chaque joueur que ce qu'il a le droit de voir.
 // L'interface (on / send / messages { t: ... }) est la même que l'ancien serveur WebSocket.
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { Game, personalize } from './game.js';
 import { Bot, botPlayer } from './bot.js';
-import { makeGame } from './games.js';
 import { variantOk } from './variants.js';
 import { MODES, MAX_PLAYERS } from './worlds.js';
 import { CHAR_PARTS, CHAR_COLORS } from './data.js';
@@ -23,8 +21,45 @@ const CHAMP_PTS = [5, 3, 2, 1]; // points du championnat selon la place
 const FORMATS = ['single', 'wheel', 'champ']; // un jeu choisi, la roue (jeu au hasard), le championnat
 const ROUNDS = [3, 5, 7, 10];
 
+const MAX_CATCHUP = 50; // pas d'horloge rejoués au plus d'un coup (onglet de l'hôte en arrière-plan)
+const ROSTER_MS = 5000; // noms et personnages des joueurs renvoyés avec les événements au moins toutes les 5 s
+const STATIC_KEYS = ['name', 'character', 'bot']; // champs des joueurs qui ne changent pas pendant une partie
+const BOARD_MS = 60000; // classement gardé une minute
+
 const configured = /^https:\/\//.test(SUPABASE_URL) && !SUPABASE_URL.includes('COLLE') && SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.startsWith('COLLE');
-const sb = configured ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } }) : null;
+
+// supabase-js (version fixée : le service worker la garde en cache) ne sert qu'au canal Realtime des tables :
+// chargée à la première table ouverte, pour que l'accueil et le jeu solo démarrent sans elle (hors ligne, CDN en panne…).
+// Les fonctions SQL (comptes, classement) passent par un simple fetch.
+const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/+esm';
+let sbLoad = null;
+function realtime() {
+  if (!sbLoad) {
+    sbLoad = import(SUPABASE_JS).then(({ createClient }) => createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } }));
+    sbLoad.catch(() => { sbLoad = null; }); // échec (réseau) : nouvel essai au prochain appel
+  }
+  return sbLoad;
+}
+// Chargement d'avance (lien d'invitation, menu au repos) : la table s'ouvre ensuite sans attendre le CDN.
+export const preloadRealtime = () => { if (configured) realtime().catch(() => {}); };
+
+// Arbitres des mini-jeux, chargés à la demande (games.js en est la version synchrone, pour les bancs d'essai).
+const REFEREES = {
+  fort: [() => import('./fortgame.js'), (m, players, v) => new m.FortGame(players, v)],
+  wagon: [() => import('./wagongame.js'), (m, players) => new m.WagonGame(players)],
+  pinte: [() => import('./pintegame.js'), (m, players, v) => new m.PinteGame(players, v)],
+  mine: [() => import('./minegame.js'), (m, players) => new m.MineGame(players)],
+  course: [() => import('./coursegame.js'), (m, players, v) => new m.CourseGame(players, v)],
+  rts: [() => import('./rtsgame.js'), (m, players, v) => new m.RtsGame(players, v)],
+  fps: [() => import('./fpsgame.js'), (m, players) => new m.FpsGame(players, 'fps')],
+  fpsdm: [() => import('./fpsgame.js'), (m, players) => new m.FpsGame(players, 'fpsdm')],
+};
+const MINI_REF = [() => import('./mini.js'), (m, players, v, mode) => new m.MiniGame(mode, players, v)];
+const refLoaded = {}; // mode -> module de l'arbitre, une fois chargé
+const loadReferee = (mode) => (REFEREES[mode] || MINI_REF)[0]().then((m) => { refLoaded[mode] = m; });
+const makeGame = (mode, players, variant) => (REFEREES[mode] || MINI_REF)[1](refLoaded[mode], players, variant, mode);
+// Chargement d'avance quand l'hôte choisit le jeu (ou survole sa carte) : la partie démarre sans attendre.
+export const preloadGame = (mode) => { if (MODES[mode] && mode !== 'roulette' && !refLoaded[mode]) loadReferee(mode).catch(() => {}); };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const keyOf = (name) => String(name).toLowerCase();
@@ -57,9 +92,22 @@ const toUser = (r) => r && {
   history: r.history || [],
 };
 
+// Fonction SQL de supabase/schema.sql, appelée comme le fait supabase-js (PostgREST : POST /rest/v1/rpc/<fonction>).
+async function callSql(fn, args = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) throw new Error(data?.message || `${fn} : HTTP ${res.status}`);
+  return data;
+}
+
 async function rpc(fn, args) {
-  const { data, error } = await sb.rpc(fn, args);
-  if (error) throw error;
+  const data = await callSql(fn, args);
   return Array.isArray(data) ? data[0] : data;
 }
 
@@ -94,12 +142,18 @@ function newCode() {
   return Array.from({ length: 5 }, () => A[Math.floor(Math.random() * A.length)]).join('');
 }
 
-export async function fetchLeaderboard() {
-  if (!sb) return [];
-  const { data, error } = await sb.rpc('saloon_leaderboard');
-  if (error) throw error;
-  return data || [];
+// Classement gardé une minute (le menu le redemande à chaque passage) ; oublié dès qu'un résultat ou un personnage change.
+let board = null; // { at, data: promesse }
+export function fetchLeaderboard() {
+  if (!configured) return Promise.resolve([]);
+  if (!board || Date.now() - board.at > BOARD_MS) {
+    const b = { at: Date.now(), data: callSql('saloon_leaderboard').then((d) => d || []) };
+    b.data.catch(() => { if (board === b) board = null; });
+    board = b;
+  }
+  return board.data;
 }
+const staleBoard = () => { board = null; };
 
 export class Net {
   constructor() {
@@ -114,6 +168,8 @@ export class Net {
     this.joining = null;
     this.joinTimer = 0;
     this.hostGoneTimer = 0;
+    this.roster = new Map(); // invité : clé -> { name, character, bot } des joueurs de la partie (voir packEvents)
+    this.wireRoster = null; // hôte : ce qui en a été envoyé { game, at, sent }
     setTimeout(() => this.emit('open'), 0);
   }
 
@@ -121,10 +177,13 @@ export class Net {
   emit(t, m) { (this.handlers[t] || []).forEach((fn) => fn(m)); }
 
   // Livraison asynchrone, comme si le message venait du réseau.
-  local(msg) { setTimeout(() => this.emit(msg.t, msg), 0); }
+  local(msg) {
+    if (msg.t === 'user') staleBoard(); // résultat enregistré ou personnage changé : le classement aussi
+    setTimeout(() => this.emit(msg.t, msg), 0);
+  }
 
   send(m) {
-    if (!sb) return this.local({ t: 'error', text: 'Supabase n’est pas configuré (voir public/js/config.js).' });
+    if (!configured) return this.local({ t: 'error', text: 'Supabase n’est pas configuré (voir public/js/config.js).' });
     this.handle(m).catch((e) => {
       console.error(e);
       this.local({ t: 'error', text: 'Le saloon ne répond pas. Réessaie dans un instant.' });
@@ -164,6 +223,7 @@ export class Net {
   // ---------------------------------------------------------------- canal Realtime
   async openChannel(code) {
     await this.closeChannel();
+    const sb = await realtime();
     const ch = sb.channel(`saloon:${code}`, { config: { broadcast: { self: false }, presence: { key: this.user.key } } });
     this.chan = ch;
     this.code = code;
@@ -183,11 +243,12 @@ export class Net {
     const ch = this.chan;
     this.chan = null;
     this.code = null;
-    if (ch) await sb.removeChannel(ch);
+    if (ch) await (await realtime()).removeChannel(ch);
   }
 
-  wire(to, msg) {
-    return this.chan?.send({ type: 'broadcast', event: 'm', payload: { to, from: this.user.key, name: this.user.name, msg } });
+  // ks : destinataires d'un message envoyé une seule fois à toute la table (to 'all', voir deliverAll)
+  wire(to, msg, ks) {
+    return this.chan?.send({ type: 'broadcast', event: 'm', payload: { to, from: this.user.key, name: this.user.name, msg, ...(ks ? { ks } : {}) } });
   }
 
   presentKeys() {
@@ -196,9 +257,20 @@ export class Net {
 
   onWire(p) {
     if (!p || !p.msg) return;
+    if (p.to === 'all' && p.ks) {
+      // message de l'hôte pour plusieurs joueurs (lobby, comptoir, événements) : ks dit lesquels
+      if (this.hosting || !p.ks.includes(this.user.key)) return;
+      const msg = p.msg.t === 'ev' ? this.unpackEvents(p.msg) : p.msg;
+      if (msg) this.fromHost(msg, p.from);
+      return;
+    }
     if (p.to === 'all') {
-      this.hosting?.game?.onLive?.(p.from, p.msg.d);
-      return this.emit('live', { from: p.from, d: p.msg.d });
+      // positions : celle d'un joueur, ou un lot (b : [[clé, d]…]) pour tous les bots de l'hôte
+      for (const [from, d] of p.msg.b || [[p.from, p.msg.d]]) {
+        this.hosting?.game?.onLive?.(from, d);
+        this.emit('live', { from, d });
+      }
+      return;
     }
     if (p.to === 'host' && this.hosting) this.hostHandle(p.from, p.msg, p.name);
     else if (p.to === this.user.key && this.hosting && p.msg.t === 'deposed') this.deposed(p.from);
@@ -227,9 +299,71 @@ export class Net {
     if (this.code) this.wire('all', { t: 'live', d });
   }
 
-  liveOut(key, d) {
-    this.emit('live', { from: key, d });
-    this.chan?.send({ type: 'broadcast', event: 'm', payload: { to: 'all', from: key, msg: { t: 'live', d } } });
+  // Positions des bots de l'hôte : un seul message par pas d'horloge pour tous (avant : un message par bot).
+  liveOut(out) {
+    if (!out.length) return;
+    for (const o of out) this.emit('live', { from: o.key, d: o.d });
+    this.chan?.send({ type: 'broadcast', event: 'm', payload: { to: 'all', from: this.user.key, msg: { t: 'live', b: out.map((o) => [o.key, o.d]) } } });
+  }
+
+  // ---------------------------------------------------------------- événements des mini-jeux, en un seul message
+  // Dans un mini-jeu, l'état vu par chaque joueur ne diffère que par « me » : l'hôte envoie un seul lot à toute
+  // la table et chacun reconstruit sa version (me = sa place dans la partie). Sur le fil, les états identiques
+  // d'un lot ne passent qu'une fois, et les noms, personnages et drapeaux bot (fixes pendant la partie) sont
+  // envoyés à part (r : au début de la partie, puis toutes les ROSTER_MS) et remis dans chaque état à l'arrivée.
+  // Renvoie null si le lot ne s'y prête pas (infos secrètes, états qui diffèrent) : envoi joueur par joueur.
+  packEvents(g, events) {
+    const st = [], si = [], seen = new Map();
+    const now = Date.now();
+    let w = this.wireRoster;
+    const fresh = !w || w.game !== g || now - w.at > ROSTER_MS;
+    if (fresh) w = { game: g, at: now, sent: new Map() };
+    const ev = [];
+    for (const e of events) {
+      const { states, private: priv, ...rest } = e;
+      if (priv || !states?.length) return null;
+      const s0 = JSON.stringify(states[0]);
+      for (let i = 1; i < states.length; i++) if (JSON.stringify({ ...states[i], me: 0 }) !== s0) return null;
+      const s = states[0];
+      if (!Array.isArray(s.players) || s.players.some((p) => !p || typeof p.key !== 'string')) return null;
+      if (fresh) for (const p of s.players) if (!w.sent.has(p.key)) w.sent.set(p.key, Object.fromEntries(STATIC_KEYS.filter((k) => k in p).map((k) => [k, p[k]])));
+      const players = s.players.map((p) => {
+        const r = w.sent.get(p.key);
+        const out = {};
+        for (const k in p) if (!(r && STATIC_KEYS.includes(k) && k in r && r[k] === p[k])) out[k] = p[k];
+        return out;
+      });
+      const c = JSON.stringify({ ...s, players });
+      if (!seen.has(c)) { seen.set(c, st.length); st.push(JSON.parse(c)); }
+      si.push(seen.get(c));
+      ev.push(rest);
+    }
+    this.wireRoster = w;
+    return { t: 'ev', e: ev, s: st, i: si, ...(fresh ? { r: [...w.sent] } : {}) };
+  }
+
+  // Invité : lot reçu -> { t: 'events', events } tel que l'aurait envoyé personalize() pour ce joueur.
+  unpackEvents(m) {
+    for (const [key, info] of m.r || []) this.roster.set(key, info);
+    const me = this.user.key;
+    const lobbyOf = (key) => this.lastLobby?.players?.find((p) => p.key === key);
+    const inflate = (c) => {
+      const players = c.players.map((p) => {
+        const r = this.roster.get(p.key) || lobbyOf(p.key) || {};
+        const out = { ...p };
+        for (const k of STATIC_KEYS) if (!(k in out) && k in r) out[k] = r[k];
+        return out;
+      });
+      const j = players.findIndex((p) => p.key === me);
+      return j < 0 ? null : { ...c, me: j, players };
+    };
+    const events = [];
+    for (let k = 0; k < m.e.length; k++) {
+      const state = inflate(m.s[m.i[k]]); // un objet neuf par événement, comme avant
+      if (!state) return null;
+      events.push({ ...m.e[k], state });
+    }
+    return { t: 'events', events };
   }
 
   // ---------------------------------------------------------------- côté invité
@@ -259,6 +393,10 @@ export class Net {
       if (this.rejoining) { this.rejoining = false; this.local({ t: 'left' }); }
     }
     if (msg.t === 'closed') return this.hostClosed(msg.text);
+    // état complet (retour en cours de partie) : noms et personnages pour les lots qui suivront (unpackEvents)
+    if (msg.t === 'sync' && Array.isArray(msg.state?.players)) {
+      for (const p of msg.state.players) if (p?.key) this.roster.set(p.key, Object.fromEntries(STATIC_KEYS.filter((k) => k in p).map((k) => [k, p[k]])));
+    }
     this.local(msg);
   }
 
@@ -377,7 +515,7 @@ export class Net {
       // un autre joueur reprend la table ; s'il ne reste que des bots, elle ferme
       const heir = this.heirOf(l);
       if (heir) this.handOver(l, heir.key, { leaving: true, aborted: playing && !!l.game.kind });
-      else for (const p of l.players) if (p.key !== l.host) this.deliver(p.key, { t: 'closed', text: 'L’hôte a fermé la table.' });
+      else this.deliverAll(l, { t: 'closed', text: 'L’hôte a fermé la table.' }, l.players.map((p) => p.key).filter((k) => k !== l.host));
       this.hosting = null;
       if (this.chan) await sleep(300); // laisse partir les derniers messages
     } else if (this.code && this.hostKey) {
@@ -456,6 +594,17 @@ export class Net {
     else if (!key.startsWith('bot:')) this.wire(key, msg);
   }
 
+  // Même message pour plusieurs joueurs (toute la table par défaut) : un seul envoi sur le canal, avec la liste
+  // des destinataires (avant : un message par joueur, que chaque invité recevait aussi pour les autres).
+  deliverAll(l, msg, keys = l.players.map((p) => p.key)) {
+    const ks = [];
+    for (const key of keys) {
+      if (key === this.user.key) this.fromHost(msg);
+      else if (!key.startsWith('bot:')) ks.push(key);
+    }
+    if (ks.length) this.wire('all', msg, ks);
+  }
+
   lobbyView(l) {
     return {
       code: l.code,
@@ -486,8 +635,9 @@ export class Net {
   }
 
   broadcastLobby(l) {
-    const v = this.lobbyView(l);
-    for (const p of l.players) this.deliver(p.key, { t: 'lobby', lobby: v });
+    this.deliverAll(l, { t: 'lobby', lobby: this.lobbyView(l) });
+    // le jeu choisi par l'hôte : son arbitre se charge d'avance (la roue et le championnat le font au tirage)
+    if (l.format === 'single' && !(l.game && l.game.phase === 'playing')) preloadGame(l.mode);
   }
 
   hostPresence(l, here) {
@@ -523,7 +673,7 @@ export class Net {
       if (l.banned.has(key)) return err('L’hôte t’a expulsé de cette table.');
       if (l.locked) return err('Cette table est fermée aux nouveaux venus.');
       if (l.players.length >= MAX_PLAYERS) return err('Cette table est déjà complète.');
-      if ((l.game && l.game.phase === 'playing') || l.spinning) return err('Une partie est en cours.');
+      if ((l.game && l.game.phase === 'playing') || l.spinning || l.loading) return err('Une partie est en cours.');
       if (!validUsername(name) || keyOf(name) !== key) return err('Pseudo invalide.');
       l.players.push({ key, name, character: sanitizeCharacter(character), connected: true });
       this.sysChat(l, `${name} rejoint la table.`);
@@ -552,7 +702,7 @@ export class Net {
     if (idx < 0) return;
     const err = (text) => this.deliver(from, { t: 'error', text });
     const isHost = l.host === from;
-    const busy = (l.game && l.game.phase === 'playing') || l.spinning;
+    const busy = (l.game && l.game.phase === 'playing') || l.spinning || !!l.loading;
     switch (m.t) {
       case 'char':
         l.players[idx].character = sanitizeCharacter(m.character);
@@ -678,7 +828,7 @@ export class Net {
       case 'chat': {
         const text = String(m.text || '').slice(0, 120).trim();
         if (!text) return;
-        for (const p of l.players) this.deliver(p.key, { t: 'chat', from: l.players[idx].name, text });
+        this.deliverAll(l, { t: 'chat', from: l.players[idx].name, text });
         break;
       }
     }
@@ -706,7 +856,7 @@ export class Net {
 
   // Ligne du narrateur dans le comptoir (arrivées, départs…), pour toute la table.
   sysChat(l, text) {
-    for (const o of l.players) this.deliver(o.key, { t: 'chat', sys: true, text });
+    this.deliverAll(l, { t: 'chat', sys: true, text });
   }
 
   gameIdx(l, key) {
@@ -748,7 +898,8 @@ export class Net {
     l.lastPick = pick;
     l.spinning = true;
     const spin = { t: 'spin', pick, pool, round: champ ? champ.n + 1 : 0, rounds: champ ? champ.rounds : 0 };
-    for (const p of l.players) this.deliver(p.key, spin);
+    this.deliverAll(l, spin);
+    preloadGame(pick); // l'arbitre se charge pendant que la roue tourne
     this.broadcastLobby(l);
     clearTimeout(l.spinTimer);
     l.spinTimer = setTimeout(() => {
@@ -778,6 +929,26 @@ export class Net {
   }
 
   startGame(l) {
+    if (l.loading) return;
+    // arbitre du mini-jeu pas encore chargé : on le charge, puis on lance (si la table n'a pas bougé entre-temps)
+    if (l.mode !== 'roulette' && !refLoaded[l.mode]) {
+      const mode = l.mode;
+      l.loading = mode;
+      loadReferee(mode).then(() => {
+        l.loading = null;
+        if (this.hosting !== l || l.mode !== mode || (l.game && l.game.phase === 'playing')) return;
+        if (this.cantStart(l)) return this.broadcastLobby(l);
+        this.startGame(l);
+      }, (e) => {
+        l.loading = null;
+        console.error(e);
+        if (this.hosting !== l) return;
+        this.deliver(l.host, { t: 'error', text: 'Impossible de charger ce jeu (réseau ?). Réessaie dans un instant.' });
+        if (l.solo && !l.game) this.hosting = null; // la partie solo n'a jamais commencé : on reste au menu
+        else this.broadcastLobby(l);
+      });
+      return;
+    }
     l.rematch.clear();
     clearInterval(l.miniTimer);
     clearTimeout(l.botTimer);
@@ -792,10 +963,23 @@ export class Net {
       // la variante choisie par l'hôte ne vaut que pour « Un jeu » : la roue et le championnat restent des surprises
       const g = makeGame(l.mode, players, l.format === 'single' ? l.variants[l.mode] ?? null : null);
       l.game = g;
+      let last = Date.now();
       l.miniTimer = setInterval(() => {
         if (this.hosting !== l || l.game !== g) return clearInterval(l.miniTimer);
-        this.sendEvents(l, g.tick());
-        for (const o of g.liveOut.splice(0)) this.liveOut(o.key, o.d);
+        // Onglet de l'hôte en arrière-plan : le navigateur n'appelle plus cette minuterie qu'une fois par seconde
+        // (ou moins). On rejoue les pas manqués, chacun à son heure de jeu (horloge de l'arbitre reculée le temps
+        // du pas), pour que la partie ne tourne pas au ralenti pour toute la table.
+        const now = Date.now(), late = now - last;
+        last = now;
+        const steps = late > MINI_TICK * 2 && Number.isFinite(g.startAt) ? Math.min(MAX_CATCHUP, Math.round(late / MINI_TICK)) : 1;
+        const events = [];
+        for (let k = steps - 1; k >= 0; k--) {
+          const back = Math.round((late * k) / steps);
+          if (back) g.startAt += back;
+          try { events.push(...g.tick()); } finally { if (back) g.startAt -= back; }
+        }
+        this.sendEvents(l, events);
+        this.liveOut(g.liveOut.splice(0));
         if (g.phase === 'over') {
           clearInterval(l.miniTimer);
           this.broadcastLobby(l);
@@ -810,10 +994,15 @@ export class Net {
   sendEvents(l, events) {
     if (!events.length) return;
     l.lockUntil = Date.now() + events.reduce((s, e) => s + (e.dur || 0), 0);
-    for (const p of l.players) {
+    const inGame = l.players.filter((p) => this.gameIdx(l, p.key) >= 0);
+    // mini-jeu : un seul lot pour toute la table (voir packEvents) ; l'hôte garde sa version personnalisée
+    const packed = l.game.kind && inGame.some((p) => p.key !== this.user.key && !p.key.startsWith('bot:')) ? this.packEvents(l.game, events) : null;
+    for (const p of inGame) {
+      if (packed && p.key !== this.user.key) continue;
       const j = this.gameIdx(l, p.key);
-      if (j >= 0) this.deliver(p.key, { t: 'events', events: events.map((e) => personalize(e, j)) });
+      this.deliver(p.key, { t: 'events', events: events.map((e) => personalize(e, j)) });
     }
+    if (packed) this.deliverAll(l, packed, inGame.map((p) => p.key).filter((k) => k !== this.user.key));
     const end = events.find((e) => e.type === 'matchEnd');
     if (end) {
       if (l.game.champ) this.champRecord(l, end);
@@ -827,7 +1016,7 @@ export class Net {
         const g = l.game;
         setTimeout(() => {
           if (l.game !== g || this.hosting !== l) return;
-          for (const p of l.players) this.deliver(p.key, { t: 'chat', from: l.players[l.bot.idx].name, text: line.text });
+          this.deliverAll(l, { t: 'chat', from: l.players[l.bot.idx].name, text: line.text });
         }, line.delay);
       }
       this.scheduleBot(l);

@@ -48,6 +48,29 @@ const cached = (key, make) => {
   if (!c) { c = make(); cache.set(key, c); }
   return c;
 };
+// Dégradé radial (lumières, halos) de couleur rgb : dessiné une fois dans un petit sprite (alpha 1 au centre,
+// stops = [position, alpha]…), puis agrandi en lissant à chaque image, avec l'opacité a. Créer un dégradé coûte
+// cher : il y en avait une à deux dizaines par image dans la mine.
+const RAD = 32;
+const radSprite = (rgb, stops) => cached(`rad:${rgb}:${stops}`, () => {
+  const c = S.makeCanvas(RAD * 2, RAD * 2);
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(RAD, RAD, 0, RAD, RAD, RAD);
+  for (const [o, a] of stops) g.addColorStop(o, `rgba(${rgb},${a})`);
+  x.fillStyle = g;
+  x.fillRect(0, 0, RAD * 2, RAD * 2);
+  return c;
+});
+const FADE = [[0, 1], [1, 0]], HOLE = [[0, 1], [0.55, 0.6], [1, 0]];
+function radial(ctx, x, y, r, rgb, a = 1, stops = FADE) {
+  if (!(r > 0) || a <= 0) return;
+  const sm = ctx.imageSmoothingEnabled, ga = ctx.globalAlpha;
+  ctx.imageSmoothingEnabled = true;
+  ctx.globalAlpha = ga * a;
+  ctx.drawImage(radSprite(rgb, stops), x - r, y - r, r * 2, r * 2);
+  ctx.globalAlpha = ga;
+  ctx.imageSmoothingEnabled = sm;
+}
 function blob(R, cx, cy, rx, ry, col) {
   for (let dy = -ry; dy <= ry; dy++) {
     const half = rd(rx * Math.sqrt(Math.max(0, 1 - (dy / (ry + 0.5)) ** 2)));
@@ -619,6 +642,7 @@ export class MineScene extends MiniScene {
     this.remote = {};
     for (let i = 0; i < this.n; i++) if (i !== this.me) this.remote[i] = { x: 0, tx: 0, l: 1, tl: 1, air: false, hitAt: -1e9, outAt: null };
     this.riders = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `${i}:${JSON.stringify(p.character || {})}`));
+    S.forgetLooks(cache, this.riders.map((r) => r.key)); // wagonnets des joueurs des parties précédentes
     this.fx = []; // étincelles, poussière (coordonnées de l'écran)
     this.booms = [];
     this.lastL = null;
@@ -1146,14 +1170,7 @@ export class MineScene extends MiniScene {
     d.fillStyle = `rgba(8,4,2,${dark})`;
     d.fillRect(0, 0, W, H);
     d.globalCompositeOperation = 'destination-out';
-    const hole = (x, y, r) => {
-      const g = d.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, 'rgba(0,0,0,1)');
-      g.addColorStop(0.55, 'rgba(0,0,0,0.6)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      d.fillStyle = g;
-      d.fillRect(x - r, y - r, r * 2, r * 2);
-    };
+    const hole = (x, y, r) => radial(d, x, y, r, '0,0,0', 1, HOLE);
     for (const l of lamps) hole(l.x, l.y + 10, l.r);
     hole(p.x + 34, p.y - 14, 66); // lampe du wagonnet, qui éclaire devant
     hole(p.x, p.y - 14, 30);
@@ -1165,11 +1182,7 @@ export class MineScene extends MiniScene {
     ctx.globalCompositeOperation = 'lighter';
     for (const l of lamps) {
       const rgb = l.cool === 'blue' ? '40,90,170' : l.cool === 'violet' ? '110,50,150' : l.fire ? '170,70,10' : '120,70,20';
-      const g = ctx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r * 0.6);
-      g.addColorStop(0, `rgba(${rgb},0.35)`);
-      g.addColorStop(1, `rgba(${rgb},0)`);
-      ctx.fillStyle = g;
-      ctx.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
+      radial(ctx, l.x, l.y, l.r * 0.6, rgb, 0.35);
     }
     ctx.restore();
   }
@@ -1219,11 +1232,7 @@ export class MineScene extends MiniScene {
       const r = BK.half * e.s * 2.2;
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
-      const g = ctx.createRadialGradient(W / 2, BK.hz, 0, W / 2, BK.hz, r);
-      g.addColorStop(0, `rgba(255,236,190,${0.5 * (1 - dExit / 1600)})`);
-      g.addColorStop(1, 'rgba(255,236,190,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(W / 2 - r, BK.hz - r, r * 2, r * 2);
+      radial(ctx, W / 2, BK.hz, r, '255,236,190', 0.5 * (1 - dExit / 1600));
       ctx.restore();
     }
     // traverses et rails, ligne par ligne (les embranchements croisent les voies)
@@ -1310,11 +1319,7 @@ export class MineScene extends MiniScene {
         const r = 40 * k, gy = p.y - 18 * k, rgb = it.glow === 'fire' ? '200,90,20' : '60,110,200';
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
-        const g = ctx.createRadialGradient(p.x, gy, 0, p.x, gy, r);
-        g.addColorStop(0, `rgba(${rgb},${0.35 * (1 - fog)})`);
-        g.addColorStop(1, `rgba(${rgb},0)`);
-        ctx.fillStyle = g;
-        ctx.fillRect(p.x - r, gy - r, r * 2, r * 2);
+        radial(ctx, p.x, gy, r, rgb, 0.35 * (1 - fog));
         ctx.restore();
       }
       if (it.name != null && it.d < 320) canvasText(ctx, this.name(it.name).slice(0, 8).toUpperCase(), rd(p.x), placeTag(tags, rd(p.x), rd(p.y - 44 * k), [0, -8, -16, -24, -32]), { color: this.color(it.name) });
@@ -1332,11 +1337,7 @@ export class MineScene extends MiniScene {
     // lampe frontale : un cône de lumière devant le wagonnet
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const g = ctx.createRadialGradient(p.x, BK.hz + 60, 0, p.x, BK.hz + 60, 90);
-    g.addColorStop(0, 'rgba(120,90,40,0.25)');
-    g.addColorStop(1, 'rgba(120,90,40,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(p.x - 90, BK.hz - 30, 180, 180);
+    radial(ctx, p.x, BK.hz + 60, 90, '120,90,40', 0.25);
     ctx.restore();
     for (const b of this.booms) S.drawFlash(ctx, b.x, b.y, 30, b.at);
     this.drawArm(ctx, p);
@@ -1402,11 +1403,7 @@ export class MineScene extends MiniScene {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     const r = 70 * l.s * fl;
-    const g = ctx.createRadialGradient(x, y + 4 * k, 0, x, y + 4 * k, r);
-    g.addColorStop(0, `rgba(140,80,20,${0.4 * (1 - fogAt(l.d))})`);
-    g.addColorStop(1, 'rgba(140,80,20,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y + 4 * k - r, r * 2, r * 2);
+    radial(ctx, x, y + 4 * k, r, '140,80,20', 0.4 * (1 - fogAt(l.d)));
     ctx.restore();
   }
 

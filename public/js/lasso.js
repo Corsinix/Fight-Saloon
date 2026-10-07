@@ -2,7 +2,7 @@
 // ZQSD / WASD / flèches pour diriger le cheval, souris pour viser, clic pour lancer le lasso.
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
-import { canvasText } from './scene.js';
+import { canvasText, prune } from './scene.js';
 import { SKIN, HAIR_COLORS, CLOTH_COLORS, EYE_COLORS, hatColorOf, beardHasMustache, beardHasChin } from './data.js';
 import { MiniScene, ring, pixelSprite as sprite } from './miniscene.js';
 import { skyDeco } from './env.js';
@@ -26,6 +26,7 @@ const OUT = '#1a0f0a';
 const rd = Math.round;
 const tri = (u) => 1 - 2 * Math.abs((((u % 1) + 1) % 1) - 0.5);
 const clamp01 = (k) => (k < 0 ? 0 : k > 1 ? 1 : k);
+const byY = (a, b) => a.y - b.y;
 
 // ------------------------------------------------------------ sprites
 const cache = new Map();
@@ -34,6 +35,8 @@ const cached = (key, make) => {
   if (!c) { c = make(); cache.set(key, c); }
   return c;
 };
+// au début d'une partie (lasso, course…) : on libère les chevaux montés par les joueurs des parties précédentes
+export const forgetRiders = (riders) => S.forgetLooks(cache, riders.map((r) => r.key));
 
 // sprite sans contour (marques au sol)
 function rawSprite(w, h, ox, oy, draw) {
@@ -648,6 +651,7 @@ export class LassoScene extends MiniScene {
       this.remote[i] = { x: p.x, y: p.y, tx: p.x, ty: p.y, throw: null, stinkUntil: -1e9 };
     }
     this.riders = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `${i}:${JSON.stringify(p.character || {})}`));
+    forgetRiders(this.riders);
     this.buildDecor(seed);
   }
 
@@ -874,7 +878,7 @@ export class LassoScene extends MiniScene {
     }
     this.twistUpdate(t);
     for (const g of this.gold) { g.t += dt; g.x += g.vx * dt; g.y += g.vy * dt; }
-    this.gold = this.gold.filter((g) => g.t < g.max);
+    prune(this.gold, (g) => g.t < g.max);
     // lasso du joueur
     const th = me.throw;
     if (th) {
@@ -911,7 +915,7 @@ export class LassoScene extends MiniScene {
       }
     }
     for (const p of this.parts) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.r += dt * 0.006; }
-    this.parts = this.parts.filter((p) => p.t < p.max);
+    prune(this.parts, (p) => p.t < p.max);
     // virevoltant
     this.tw.x -= dt * 0.24;
     if (this.tw.x < -30) { this.tw.x = W + 40 + Math.random() * 300; this.tw.y = 120 + Math.random() * 80; }
@@ -1118,27 +1122,35 @@ export class LassoScene extends MiniScene {
     this.drawFlat(ctx, tt);
     S.tumbleweed(ctx, Math.round(this.tw.x), Math.round(this.tw.y - Math.abs(Math.sin(now / 160)) * 6), now);
 
-    // tout ce qui est au sol, trié par profondeur
-    const items = [];
+    // tout ce qui est au sol, trié par profondeur (kind : 0 obstacle, 1 bête, 2 cheval ; objets réutilisés
+    // d'une image à l'autre, tri sur place)
+    const items = (this.drawItems ||= []);
+    let n = 0;
+    const put = (y, kind, ref, x, p) => { const it = (items[n++] ||= { y: 0, kind: 0, ref: null, x: 0, p: null }); it.y = y; it.kind = kind; it.ref = ref; it.x = x; it.p = p; };
     for (const o of this.world.obstacles) {
       if (t < o.t0) continue;
       const x = obstacleX(o, t);
-      if (x > -20 && x < W + 20) items.push({ y: o.y, draw: () => this.drawAt(ctx, obstacleSprite(o.kind), x, o.y) });
+      if (x > -20 && x < W + 20) put(o.y, 0, o, x, null);
     }
     for (const a of this.world.animals) {
       if (t < a.t0 - 50 || t > a.t1 + PULL + 50) continue;
       const p = this.animalDraw(a, t);
       if (!p || p.x < -40 || p.x > W + 40) continue;
-      items.push({ y: p.y, draw: () => this.drawAnimal(ctx, a, p, now) });
+      put(p.y, 1, a, 0, p);
     }
     for (let i = 0; i < this.n; i++) {
       const h = this.horse(i);
       if (!h || h.left) continue;
-      items.push({ y: h.y, draw: () => this.drawHorse(ctx, i, h, now, t) });
+      put(h.y, 2, i, 0, h);
     }
-    items.sort((a, b) => a.y - b.y);
+    items.length = n;
+    items.sort(byY);
     for (const p of this.parts) S.disc(ctx, p.x, p.y, Math.round(p.r), `rgba(236,220,170,${0.5 * (1 - p.t / p.max)})`);
-    for (const it of items) it.draw();
+    for (const it of items) {
+      if (it.kind === 0) this.drawAt(ctx, obstacleSprite(it.ref.kind), it.x, it.ref.y);
+      else if (it.kind === 1) this.drawAnimal(ctx, it.ref, it.p, now);
+      else this.drawHorse(ctx, it.ref, it.p, now, t);
+    }
     this.drawFore(ctx, tt);
     this.amb.end(out, now);
     this.amb.weather(out, now);

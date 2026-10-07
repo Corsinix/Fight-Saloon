@@ -13,7 +13,7 @@
 // L'hôte simule la partie et envoie un instantané 2 fois par seconde : on lisse les déplacements entre deux.
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
-import { canvasText, canvasPos } from './scene.js';
+import { canvasText, canvasPos, prune } from './scene.js';
 import { MiniScene, pixelSprite } from './miniscene.js';
 import { W, H, rng } from './worlds.js';
 import { ENVS, Ambience } from './env.js';
@@ -37,6 +37,18 @@ const hash = (n) => {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 const h2 = (x, y) => hash(x * 7919 + y * 104729 + 13);
+const byY = (a, b) => a.y - b.y;
+// copie retournée d'un sprite (unités tournées vers la gauche), gardée avec lui
+function flipped(spr) {
+  if (!spr.flip) {
+    const c = S.makeCanvas(spr.width, spr.height);
+    const x = c.getContext('2d');
+    x.scale(-1, 1);
+    x.drawImage(spr, -spr.width, 0);
+    spr.flip = c;
+  }
+  return spr.flip;
+}
 const tw = (s) => String(s).length * 5.2; // largeur approximative d'un texte (police pixel 8 px)
 
 const cache = new Map();
@@ -735,12 +747,22 @@ export class RtsScene extends MiniScene {
     this.look = lookOf(this.world.biome);
     this.map = renderMap(this.world);
     this.mini = renderMini(this.world);
-    this.waterPx = [];
-    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (tileAt(this.world, c, r) === T.water) this.waterPx.push([c * TS, r * TS]);
+    // reflets de l'eau : par rangée de cases, x, décalage de phase et hauteur de chaque reflet (calculés une fois)
+    this.waterRows = [];
+    for (let r = 0; r < ROWS; r++) {
+      const row = [];
+      for (let c = 0; c < COLS; c++) {
+        if (tileAt(this.world, c, r) !== T.water) continue;
+        const x = c * TS, y = r * TS;
+        row.push(x, h2(x, y) * 8, y + ((h2(y, x) * 8) | 0));
+      }
+      this.waterRows.push(row);
+    }
     this.placing = null; // bâtiment en cours de placement
     this.armed = null; // 'amove' : le prochain clic sur la carte lance la charge
     this.box = null; // cadre de sélection en cours
     this.sel = new Set(); // unités choisies
+    this.selCache = null;
     this.selB = null; // bâtiment choisi
     this.cmdFx = new Map(); // ordres donnés à mes unités choisies (pour tracer leur chemin)
     this.lastClick = null;
@@ -847,6 +869,7 @@ export class RtsScene extends MiniScene {
     if (this.sayTo != null && !this.state.players[this.sayTo]) this.sayTo = null;
     // la sélection ne garde que ce qui existe encore
     for (const id of this.sel) if (!units.has(id)) { this.sel.delete(id); this.cmdFx.delete(id); }
+    this.selCache = null;
     if (this.selB != null && !blds.some((b) => b.id === this.selB)) this.selB = null;
     if (!prev) return;
     // unités tombées : un peu de poussière et le chapeau qui roule
@@ -1024,11 +1047,13 @@ export class RtsScene extends MiniScene {
   allBlds() { return [...this.snapB.blds, ...this.pending.map((p) => ({ ...p, owner: this.me, w: BUILDINGS[p.kind].w, build: 1 }))]; }
   cost(kind) { return costOf(this.allBlds(), this.me, kind); }
   selBld() { return this.selB != null ? this.snapB.blds.find((b) => b.id === this.selB) || null : null; }
-  selUnits() { return [...this.sel].map((id) => this.snapB.units.get(id)).filter(Boolean); }
+  // (gardées jusqu'au prochain changement de sélection ou d'instantané : demandées plusieurs fois par image)
+  selUnits() { return (this.selCache ||= [...this.sel].map((id) => this.snapB.units.get(id)).filter(Boolean)); }
   get mode() { return this.diplo ? 'diplo' : this.selB != null ? 'bld' : this.sel.size ? 'units' : 'none'; }
 
   // ---------------------------------------------------------- sélection
   select(ids, add = false) {
+    this.selCache = null;
     if (!add) this.sel.clear();
     for (const id of ids) if (this.sel.size < RTS.maxSel) this.sel.add(id);
     this.selB = null;
@@ -1036,8 +1061,8 @@ export class RtsScene extends MiniScene {
     if (ids.length) this.closeDiplo();
     if (ids.length) sfx('ui');
   }
-  clearSel() { this.sel.clear(); this.selB = null; this.armed = null; this.closeDiplo(); }
-  selectBld(b) { this.sel.clear(); this.selB = b.id; this.armed = null; this.placing = null; this.closeDiplo(); sfx('ui'); }
+  clearSel() { this.sel.clear(); this.selCache = null; this.selB = null; this.armed = null; this.closeDiplo(); }
+  selectBld(b) { this.sel.clear(); this.selCache = null; this.selB = b.id; this.armed = null; this.placing = null; this.closeDiplo(); sfx('ui'); }
   // panneau des pactes : il remplace celui des commandes (la sélection reste)
   toggleDiplo() {
     this.diplo = !this.diplo;
@@ -1499,14 +1524,14 @@ export class RtsScene extends MiniScene {
     if (ex || ey) { this.edgeAt ??= this.now; if (this.now - this.edgeAt > 250) { dx += ex; dy += ey; } } else this.edgeAt = null;
     if (dx || dy) this.scroll((dx * 260 * s) / this.zoom, (dy * 260 * s) / this.zoom);
     for (const p of this.pendingShots) if (p.at <= this.now) this.fire(p.sh);
-    this.pendingShots = this.pendingShots.filter((p) => p.at > this.now);
+    prune(this.pendingShots, (p) => p.at > this.now);
     for (const f of this.fx) {
       f.t += dt;
       if (f.vx != null) { f.x += f.vx * s; f.y += (f.vy || 0) * s; if (f.vy != null) f.vy += 60 * s; }
     }
-    this.fx = this.fx.filter((f) => f.t < f.life);
+    prune(this.fx, (f) => f.t < f.life);
     for (const tr of this.tracers) tr.t += dt;
-    this.tracers = this.tracers.filter((tr) => tr.t < 120);
+    prune(this.tracers, (tr) => tr.t < 120);
     for (const w of this.weeds) {
       w.x += w.sp * s;
       if (w.x > MW + 30) { w.x = -30 - Math.random() * 300; w.y = 20 + Math.random() * (MH - 40); }
@@ -1547,13 +1572,20 @@ export class RtsScene extends MiniScene {
     const now = this.now;
     if (!this.world || !this.snapB) { out.fillStyle = OUT; out.fillRect(0, 0, W, H); return; }
     const k = this.snapA ? clamp((now - this.snapB.at) / this.snapB.span, 0, 1) : 1;
-    const units = [];
+    // unités à leur position interpolée : un objet par unité, réutilisé d'une image à l'autre (jusqu'à 240 unités)
+    const units = (this.drawUnits ||= []), pool = (this.unitPool ||= new Map());
+    units.length = 0;
     for (const u of this.snapB.units.values()) {
       const a = this.snapA?.units.get(u.id);
-      const x = a ? a.x + (u.x - a.x) * k : u.x, y = a ? a.y + (u.y - a.y) * k : u.y;
-      units.push({ ...u, x, y, moving: a ? Math.hypot(u.x - a.x, u.y - a.y) > 0.3 : false });
+      let d = pool.get(u.id);
+      if (!d) pool.set(u.id, (d = { id: u.id, owner: 0, kind: '', x: 0, y: 0, hp: 0, face: 0, rank: 0, xp: 0, moving: false }));
+      d.owner = u.owner; d.kind = u.kind; d.hp = u.hp; d.face = u.face; d.rank = u.rank; d.xp = u.xp;
+      d.x = a ? a.x + (u.x - a.x) * k : u.x;
+      d.y = a ? a.y + (u.y - a.y) * k : u.y;
+      d.moving = a ? Math.hypot(u.x - a.x, u.y - a.y) > 0.3 : false;
+      units.push(d);
     }
-    this.drawUnits = units;
+    if (pool.size > units.length + 64) for (const id of pool.keys()) if (!this.snapB.units.has(id)) pool.delete(id);
     const ctx = this.amb.begin(out);
     this.inWorld(ctx, (c) => {
       const vw = Math.min(MW - this.cx, Math.ceil(this.vw) + 1), vh = Math.min(MH - this.cy, Math.ceil(this.vh) + 1);
@@ -1562,10 +1594,14 @@ export class RtsScene extends MiniScene {
       this.drawGround(c, now);
       this.drawSelGround(c, now);
       // bâtiments et unités visibles, du haut vers le bas de la carte
-      const items = [
-        ...this.snapB.blds.filter((b) => this.seen(bCenter(b).x, bCenter(b).y, 40)).map((b) => ({ y: (b.y + b.w) * TS, b })),
-        ...units.filter((u) => this.seen(u.x, u.y)).map((u) => ({ y: u.y, u })),
-      ].sort((a, b) => a.y - b.y);
+      // (tableau réutilisé, trié sur place : à égalité, les bâtiments restent avant les unités)
+      const items = (this.drawItems ||= []);
+      let n = 0;
+      const put = (y, b, u) => { const it = (items[n++] ||= { y: 0, b: null, u: null }); it.y = y; it.b = b; it.u = u; };
+      for (const b of this.snapB.blds) { const p = bCenter(b); if (this.seen(p.x, p.y, 40)) put((b.y + b.w) * TS, b, null); }
+      for (const u of units) if (this.seen(u.x, u.y)) put(u.y, null, u);
+      items.length = n;
+      items.sort(byY);
       for (const it of items) if (it.b) this.drawBuilding(c, it.b, now); else this.drawUnit(c, it.u, now);
       for (const p of this.pending) this.drawBuilding(c, { ...p, id: 0, owner: this.me, w: BUILDINGS[p.kind].w, build: BUILDINGS[p.kind].time, queue: '', lv: 1, up: 0 }, now);
       for (const w of this.weeds) if (this.seen(w.x, w.y)) S.tumbleweed(c, rd(w.x), rd(w.y), now);
@@ -1611,11 +1647,21 @@ export class RtsScene extends MiniScene {
 
   drawWater(ctx, now) {
     ctx.fillStyle = this.look.ripple;
-    for (const [x, y] of this.waterPx) {
-      if (!this.seen(x, y, 8)) continue;
-      const ph = (now / 900 + h2(x, y) * 8) % 8;
-      const yy = y + ((h2(y, x) * 8) | 0);
-      ctx.fillRect(x + (ph | 0), yy, 2, 1);
+    // seulement les rangées et colonnes à l'écran (même marge que seen(x, y, 8))
+    const cx = this.cx, cy = this.cy, x0 = cx - 8, x1 = cx + this.vw + 8, y0 = cy - 8, y1 = cy + this.vh + 12;
+    const t = now / 900;
+    for (let r = Math.max(0, Math.floor(y0 / TS)); r < ROWS; r++) {
+      const y = r * TS;
+      if (y >= y1) break;
+      if (y <= y0) continue;
+      const row = this.waterRows[r];
+      for (let i = 0; i < row.length; i += 3) {
+        const x = row[i];
+        if (x <= x0) continue;
+        if (x >= x1) break;
+        const ph = (t + row[i + 1]) % 8;
+        ctx.fillRect(x + (ph | 0), row[i + 2], 2, 1);
+      }
     }
   }
 
@@ -1795,13 +1841,7 @@ export class RtsScene extends MiniScene {
     ctx.fillStyle = col;
     ctx.fillRect(rd(u.x) - rw, rd(u.y) - 1, rw * 2 + 1, 2);
     const x = rd(u.x - (u.face < 0 ? spr.width - spr.ox : spr.ox)), y = rd(u.y - spr.oy);
-    if (u.face < 0) {
-      ctx.save();
-      ctx.translate(x + spr.width, y);
-      ctx.scale(-1, 1);
-      ctx.drawImage(spr, 0, 0);
-      ctx.restore();
-    } else ctx.drawImage(spr, x, y);
+    ctx.drawImage(u.face < 0 ? flipped(spr) : spr, x, y);
   }
 
   drawFx(ctx, now) {
@@ -1846,11 +1886,16 @@ export class RtsScene extends MiniScene {
   // barres de vie (bâtiments abîmés, unités blessées ou choisies) et galons
   drawBars(ctx) {
     // joueurs trahis il y a moins d'une minute : un cœur brisé qui clignote au-dessus de leurs bâtiments et de leurs unités
-    const weak = new Set(this.others().filter((j) => this.weakS(j)));
-    if (this.weakS(this.me)) weak.add(this.me);
+    // (un bit par joueur, moi compris)
+    let weak = 0;
+    for (let j = 0; j < this.n; j++) if (this.weakS(j)) weak |= 1 << j;
     const pulse = Math.floor(this.now / 350) % 2;
-    if (weak.size && pulse) {
-      for (const b of this.snapB.blds) if (weak.has(b.owner) && this.seen(bCenter(b).x, bCenter(b).y, 20)) ctx.drawImage(icon('weak'), rd(bCenter(b).x) - 4, this.bldTop(b) - 13);
+    if (weak && pulse) {
+      for (const b of this.snapB.blds) {
+        if (!(weak & (1 << b.owner))) continue;
+        const p = bCenter(b);
+        if (this.seen(p.x, p.y, 20)) ctx.drawImage(icon('weak'), rd(p.x) - 4, this.bldTop(b) - 13);
+      }
     }
     for (const b of this.snapB.blds) {
       const chosen = b.id === this.selB;
@@ -1871,7 +1916,7 @@ export class RtsScene extends MiniScene {
         ctx.fillStyle = u.hp / max > 0.4 ? '#7ac860' : '#f0705a'; ctx.fillRect(x, top, Math.max(1, rd((6 * u.hp) / max)), 1);
       }
       if (u.rank) chevrons(ctx, rd(u.x) - Math.floor((u.rank * 3 - 1) / 2), top - 4, u.rank);
-      if (pulse && weak.has(u.owner)) {
+      if (pulse && weak & (1 << u.owner)) {
         // petite flèche violette vers le bas : affaibli
         ctx.fillStyle = WEAK_COL;
         const x = rd(u.x) + 5;

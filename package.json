@@ -5,6 +5,6 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "deploy": "surge public saloon-roulette.surge.sh"
+    "deploy": "node tools/stamp.mjs -- surge public saloon-roulette.surge.sh"
   }
 }

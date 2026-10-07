@@ -457,9 +457,9 @@ Les murs ont des hauteurs différentes : on tire par-dessus les comptoirs, les b
 
 | Emplacement | Au choix |
 |---|---|
-| Arme blanche (1) | Couteau Bowie (rapide), tomahawk (lent mais fort), sabre (plus d'allonge), pioche (très lente, casse d'un coup tonneaux, caisses, rochers et barils de poudre), lasso (se lance à 5 cases ; la cible prise est désarçonnée, et tant qu'on maintient le clic elle est ramenée vers soi au bout de la corde ; relâchée, elle reste ligotée 2,5 s) |
+| Arme blanche (1) | Couteau Bowie (rapide), tomahawk (lent mais fort), sabre (plus d'allonge), pioche (très lente, casse d'un coup tonneaux, caisses, rochers et barils de poudre), lasso (se lance à 5 cases ; la cible prise est désarçonnée, et tant qu'on maintient le clic elle est ramenée vers soi au bout de la corde, sans pouvoir ni bouger ni tirer ; relâchée, elle reste étourdie 1,5 s) |
 | Arme de poing (2) | Colt (6 coups), Schofield (recharge éclair), Derringer (2 coups, très fort de près), LeMat (9 coups, et un canon à chevrotine au clic droit, rechargé avec le barillet : la cartouche s'enfonce par la bouche), Peacemaker (précis ; clic droit maintenu : *fanning*, le barillet vidé en une demi-seconde, n'importe où) |
-| Arme d'épaule (3) | Winchester (12 coups, précise), fusil à pompe (gerbe de plombs), canon scié (2 coups dévastateurs au contact), carabine Sharps (1 coup, lunette au clic droit), arc (silencieux ; on le bande en maintenant le tir et on décoche en relâchant : plus il est bandé, plus la flèche fait mal, et bandé à fond elle part enflammée), fusil à harpon (1 coup lourd ; tant qu'on maintient le clic, la cible harponnée est ramenée au bout du câble, et relâché, il la libère) |
+| Arme d'épaule (3) | Winchester (12 coups, précise), fusil à pompe (gerbe de plombs), canon scié (2 coups dévastateurs au contact), carabine Sharps (1 coup, lunette au clic droit), arc (silencieux ; on le bande en maintenant le tir et on décoche en relâchant : plus il est bandé, plus la flèche fait mal, et bandé à fond elle part enflammée), fusil à harpon (1 coup de 45 dégâts ; tant qu'on maintient le clic, la cible harponnée est ramenée au bout du câble sans pouvoir ni bouger ni tirer ; relâchée, elle reste étourdie 1,25 s) |
 | Équipement | Dynamite (3 bâtons à lancer, **G**), cocktail de tord-boyaux (3 bouteilles : une grande flaque de feu, sans souffle), pièges à loup (2 à poser au sol : 25 dégâts et 2,2 s sur place pour qui marche dessus, sauf son poseur), gilet de cuir (+50 d'armure), gourde (les PV reviennent à l'abri), éperons (+15 % de vitesse), cartouchière (munitions ×1,6) |
 
 Plus de balles : l'autre arme à feu prend le relais, puis l'arme blanche.
@@ -563,4 +563,5 @@ Les bruitages enregistrés vont dans `public/sfx/` (liste `SAMPLES` dans `public
 ## Jouer à distance
 
 Une fois le site sur Surge, il suffit d’envoyer le lien `https://saloon-roulette.surge.sh/?lobby=CODE`.
+À la table, **Copier** et **Partager** envoient une invitation complète : un message, le code et le lien. Le message décrit la table (jeu ou déroulé, chaises libres) ; le lien « ton message » permet d’écrire le sien, gardé sur ce navigateur (vide = message automatique).
 Si l’hôte ferme son onglet, la table est fermée.
