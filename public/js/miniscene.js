@@ -258,7 +258,9 @@ export class MiniScene {
   drawRules(ctx, t) {
     ctx.fillStyle = 'rgba(26,15,10,0.72)';
     ctx.fillRect(0, 30, W, 138);
-    if (this.env && this.showEnv) canvasText(ctx, this.env.name, W / 2, 34, { color: '#c8b8e8' });
+    // l'ambiance (heure, météo) et la variante du jeu (abords, carte, salle…), s'il en a une
+    const where = [this.env && this.showEnv && this.env.name, this.variantName?.()].filter(Boolean).join(' - ');
+    if (where) canvasText(ctx, where, W / 2, 34, { color: '#c8b8e8' });
     canvasText(ctx, this.title(), W / 2, 50, { size: 16, color: '#f8d070' });
     this.help().forEach((l, i) => canvasText(ctx, l, W / 2, 72 + i * 11, { color: '#fdf6e0' }));
     const c = Math.ceil(-t / 1000);

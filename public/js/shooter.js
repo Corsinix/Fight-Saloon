@@ -754,6 +754,7 @@ export class ShooterScene extends MiniScene {
   }
 
   title() { return 'FUSILLADE À DUSTY GULCH'; }
+  variantName() { return this.world?.layout.edge.name; }
   help() {
     return [
       this.touch ? 'TOUCHE L\'ÉCRAN : TIRER À CET ENDROIT' : 'SOURIS : VISER - CLIC : TIRER',
@@ -778,7 +779,7 @@ export class ShooterScene extends MiniScene {
   goText() { return 'DÉGAINEZ !'; }
 
   setup(seed) {
-    this.world = shooterWorld(seed, this.n);
+    this.world = shooterWorld(seed, this.n, this.state.variant);
     this.deco = new Deco(this.world, seed);
     this.spots = this.world.spots;
     this.boss = this.world.targets.find((tg) => tg.kind === 'boss');

@@ -184,13 +184,14 @@ export function modLabel(id, m) {
   return MODS[id].label;
 }
 
-export function modsFor(seed, n, rounds) {
+// roomId : salle imposée par l'hôte (lobby), sinon tirée de la graine
+export function modsFor(seed, n, rounds, roomId = null) {
   const m = { list: [], mult: 1, lay: counterFor(seed, n) };
   if (n <= 1) return m;
   const { L, MU } = PINTE;
   const G = counterOf(m);
   const R = rng((seed ^ Math.imul(n, 0x9e3779b1)) >>> 0);
-  const room = roomIdFor(seed), env = pickEnv(seed, 'roulette').id;
+  const room = roomIdFor(seed, roomId), env = pickEnv(seed, 'roulette').id;
   const windy = env === 'poussiere' || env === 'orage' || env === 'neige';
   const pool = [
     ['flaque', 3], ['sciure', 2], ['vent', windy ? 4 : 2], ['souffle', windy ? 2 : 1.2],
@@ -437,9 +438,11 @@ function aimAt(pt, mods, b) {
 
 // ------------------------------------------------------------ arbitre (navigateur de l'hôte)
 export class PinteGame {
-  constructor(players) {
+  // variant : salle imposée par l'hôte (lobby), sinon tirée de la graine
+  constructor(players, variant = null) {
     this.kind = 'pinte';
     this.seed = Math.floor(Math.random() * 2 ** 31);
+    this.variant = variant;
     this.duration = MODES.pinte.duration;
     this.rounds = pinteRounds(players.length);
     this.p = players.map((pl) => ({
@@ -474,7 +477,7 @@ export class PinteGame {
 
   view(i) {
     return {
-      kind: this.kind, me: i, phase: this.phase, winner: this.winner, ranking: this.ranking,
+      kind: this.kind, me: i, phase: this.phase, winner: this.winner, ranking: this.ranking, variant: this.variant,
       players: this.p.map((p) => ({ key: p.key, name: p.name, character: p.character, score: p.score, left: p.left, bot: p.bot })),
     };
   }
@@ -560,7 +563,7 @@ export class PinteGame {
     const n = (this.cur?.n || 0) + 1;
     const k = ((n - 1) * this.shift) % this.base.length;
     const order = [...this.base.slice(k), ...this.base.slice(0, k)].filter((i) => !this.p[i].left);
-    const mods = modsFor(this.seed, n, this.rounds);
+    const mods = modsFor(this.seed, n, this.rounds, this.variant);
     const beers = order.map((_, k) => beerFor(this.seed, n, k));
     // plus de surprises à annoncer (le comptoir compte pour une) : l'annonce de la manche dure un peu plus
     const intro = PINTE.INTRO + 900 * (mods.list.length + (mods.lay !== 'droit'));

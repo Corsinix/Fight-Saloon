@@ -698,6 +698,7 @@ export class RtsScene extends MiniScene {
   }
 
   title() { return 'CONQUÊTE DE L\'OUEST'; }
+  variantName() { return this.world ? BIOMES[this.world.biome].name : null; }
   help() {
     return this.touch ? [
       'TOUCHE TES UNITÉS (DEUX FOIS : TOUTES CELLES-LÀ) OU « TOUS »',
@@ -726,7 +727,7 @@ export class RtsScene extends MiniScene {
   goText() { return 'À LA CONQUÊTE !'; }
 
   setup(seed) {
-    this.world = rtsWorld(seed, this.n);
+    this.world = rtsWorld(seed, this.n, this.state.variant);
     // le décor de la carte décide des ambiances possibles (pas de neige dans le bayou…)
     const bi = BIOMES[this.world.biome];
     if (bi.envs && !bi.envs.includes(this.env.id)) { this.env = envFor(seed, bi.envs); this.amb = new Ambience(this.env); }

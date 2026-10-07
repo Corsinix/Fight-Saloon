@@ -24,6 +24,8 @@ import * as A from './fpsart.js';
 import './fpsartFort.js';
 import './fpsartCanyon.js';
 import './fpsartPueblo.js';
+import './fpsartGhost.js';
+import './fpsartPort.js';
 import { drawHud } from './fpshud.js';
 import { FpsInput } from './fpsinput.js';
 import { AutoRes } from './fpsperf.js';

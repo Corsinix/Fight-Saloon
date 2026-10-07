@@ -77,8 +77,10 @@ export const maxReach = (t) => Math.max(0, t) * COURSE.v1 * (1 + COURSE.whip.gai
 // La piste : des obstacles de plus en plus rapprochés, des carottes au sol entre deux obstacles, et parfois une
 // carotte en l'air au-dessus d'un obstacle (on l'attrape en sautant pile au bon moment). Les écarts laissent
 // toujours le temps de retomber avant le prochain obstacle, même au grand galop.
-export function courseWorld(seed) {
-  return courseVariant(seed) === 'wild' ? wildWorld(seed) : trackWorld(seed);
+export const COURSE_VARIANTS = { track: 'LE CHAMP DE COURSES', wild: 'LA CHEVAUCHÉE SAUVAGE' };
+// v : terrain imposé par l'hôte (lobby), sinon tiré de la graine
+export function courseWorld(seed, v = null) {
+  return (COURSE_VARIANTS[v] ? v : courseVariant(seed)) === 'wild' ? wildWorld(seed) : trackWorld(seed);
 }
 
 function trackWorld(seed) {
@@ -276,9 +278,11 @@ export function stepHorse(h, world, dt, t, got, crashed) {
 
 // ------------------------------------------------------------ arbitre (navigateur de l'hôte)
 export class CourseGame {
-  constructor(players) {
+  // variant : terrain imposé par l'hôte (lobby), sinon tiré de la graine
+  constructor(players, variant = null) {
     this.kind = 'course';
     this.seed = Math.floor(Math.random() * 2 ** 31);
+    this.variant = variant;
     this.duration = MODES.course.duration;
     this.p = players.map((pl) => ({
       key: pl.key, name: pl.name, character: pl.character, bot: !!pl.bot,
@@ -287,7 +291,7 @@ export class CourseGame {
       // le bot a son propre registre d'obstacles percutés : celui du joueur sert à l'arbitre
       ai: pl.bot ? { horse: newHorse(), lastT: 0, plan: null, keep: rnd(22, 55), crashed: new Set(), ty: 0, look: rnd(0.7, 1.1), cid: -1, cgo: false, creek: null, blind: new Map() } : null,
     }));
-    this.world = courseWorld(this.seed);
+    this.world = courseWorld(this.seed, variant);
     if (this.world.wild) {
       this.p.forEach((p, i) => {
         p.y = startY(i, players.length);
@@ -319,7 +323,7 @@ export class CourseGame {
 
   view(i) {
     return {
-      kind: this.kind, me: i, phase: this.phase, winner: this.winner, ranking: this.ranking,
+      kind: this.kind, me: i, phase: this.phase, winner: this.winner, ranking: this.ranking, variant: this.variant,
       players: this.p.map((p) => ({ key: p.key, name: p.name, character: p.character, score: p.score, left: p.left, bot: p.bot, rank: p.rank, time: p.time })),
     };
   }

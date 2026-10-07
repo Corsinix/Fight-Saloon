@@ -393,6 +393,7 @@ export class PinteScene extends MiniScene {
   }
 
   title() { return 'LA PINTE'; }
+  variantName() { return this.room?.def.name; }
   help() {
     return [
       'FAIS GLISSER TA CHOPE AU RAS DU BOUT DU COMPTOIR',
@@ -418,7 +419,7 @@ export class PinteScene extends MiniScene {
 
   setup(seed) {
     this.showEnv = true;
-    this.room = new Room(seed);
+    this.room = new Room(seed, this.state.variant);
     // le comptoir est celui de la salle : son ambiance (météo) est celle qu'on annonce et qui choisit les surprises
     this.env = this.room.env;
     this.amb = this.room.amb;

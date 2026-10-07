@@ -8,7 +8,7 @@ import { MiniScene, ring, pixelSprite as sprite } from './miniscene.js';
 import { skyDeco } from './env.js';
 import {
   W, H, MODES, rng, LASSO, LASSO_HORIZON, ANIMALS, lassoWorld, animalPos, animalVisible, obstacleX,
-  lassoHand, lassoStart, groundSpeed, biomeAt, TWISTS, OUTLAW, LASSO_CATCHUP, lassoRush, lassoTrailing,
+  lassoHand, lassoStart, groundSpeed, biomeAt, TWISTS, OUTLAW, LASSO_CATCHUP, lassoRush, lassoTrailing, LASSO_BIOME_NAMES,
 } from './worlds.js';
 
 const HORIZON = LASSO_HORIZON;
@@ -616,6 +616,7 @@ export class LassoScene extends MiniScene {
   }
 
   title() { return 'RODÉO AU LASSO'; }
+  variantName() { return LASSO_BIOME_NAMES[this.state?.variant] || null; }
   help() {
     return [
       this.touch ? 'STICK : DIRIGER LE CHEVAL' : 'ZQSD OU FLÈCHES : DIRIGER LE CHEVAL',
@@ -629,7 +630,7 @@ export class LassoScene extends MiniScene {
   goText() { return 'YEE-HAW !'; }
 
   setup(seed) {
-    this.world = lassoWorld(seed, this.n);
+    this.world = lassoWorld(seed, this.n, this.state.variant);
     this.caught = new Map(); // id -> { by, at }
     this.pend = new Set();
     this.hitObs = new Set();

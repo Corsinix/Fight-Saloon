@@ -435,6 +435,7 @@ export class FortScene extends MiniScene {
   get mapInfo() { return FORT_MAPS[this.world?.map || this.state?.map] || FORT_MAPS.desert; }
 
   title() { return 'ASSAUT DU FORT'; }
+  variantName() { return this.mapInfo.name; }
   help() {
     const team = fortTeam(this.me);
     // équipe en infériorité numérique : on annonce son avantage

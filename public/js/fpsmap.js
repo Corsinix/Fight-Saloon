@@ -89,6 +89,7 @@ function baseMap(w) {
         // mur bas (comptoir, barrière, foin, caisses) : on tire par-dessus
         const r = pick(LW, tid) || [null, '#7a5a3a'];
         if (r[2] === 'dots') { if ((x + y) % 2 === 0) { col = hex(r[1]); k = 1; } }
+        else if (r[2] === 'flat') { col = hex(r[1]); k = 0.94 + hash(X, Y) * 0.1; } // l'eau (port) : un aplat, sans bordure
         else if (x > 0 && y > 0 && x < K - 1 && y < K - 1) { col = hex(r[1]); k = 1; } else { col = [60, 40, 26]; k = 1; }
       } else if (C.b[i] > 0) {
         const rh = run(cx, cy, 1, 0), rv = run(cx, cy, 0, 1);

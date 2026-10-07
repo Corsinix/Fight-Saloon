@@ -332,9 +332,10 @@ const GEN = {
   },
 };
 
-export function rtsWorld(seed, n) {
+export function rtsWorld(seed, n, force = null) {
   const R = rng((seed ^ 0x6a09e667) >>> 0);
-  const biome = BIOME_IDS[Math.floor(R() * BIOME_IDS.length)];
+  const drawn = BIOME_IDS[Math.floor(R() * BIOME_IDS.length)]; // toujours tiré : la suite de la graine ne bouge pas
+  const biome = BIOMES[force] ? force : drawn;
   const forts = fortSpots(n, R);
   const tiles = new Uint8Array(COLS * ROWS);
   const K = mapKit(R, tiles);
@@ -489,12 +490,14 @@ export const qOf = (ch) => (ch >= 'a' ? `+${UNIT_IDS[ch.charCodeAt(0) - 97]}` : 
 
 // ------------------------------------------------------------ arbitre (navigateur de l'hôte)
 export class RtsGame {
-  constructor(players) {
+  // variant : carte imposée par l'hôte (lobby), sinon tirée de la graine
+  constructor(players, variant = null) {
     this.kind = 'rts';
     this.seed = Math.floor(Math.random() * 2 ** 31);
+    this.variant = variant;
     this.duration = MODES.rts.duration;
     const n = players.length;
-    this.world = rtsWorld(this.seed, n);
+    this.world = rtsWorld(this.seed, n, variant);
     this.p = players.map((pl, i) => ({
       key: pl.key, name: pl.name, character: pl.character, bot: !!pl.bot,
       score: 0, left: false, alive: true, out: null,
@@ -541,7 +544,7 @@ export class RtsGame {
 
   view(i) {
     return {
-      kind: this.kind, me: i, phase: this.phase, winner: this.winner, ranking: this.ranking, n: this.p.length,
+      kind: this.kind, me: i, phase: this.phase, winner: this.winner, ranking: this.ranking, n: this.p.length, variant: this.variant,
       players: this.p.map((p) => ({ key: p.key, name: p.name, character: p.character, score: Math.round(p.score), left: p.left, bot: p.bot, alive: p.alive })),
     };
   }

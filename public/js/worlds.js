@@ -270,10 +270,12 @@ export const EDGES = {
     slots: [[250, ['ore']], [320, ['crates', 'tnt']], [404, ['rock']], [680, ['ore']], [1010, ['tnt', 'crates']], [1080, ['barrels']], [1250, ['crates', 'rock']], [1460, ['ore']]],
   },
 };
-export function edgeLayout(seed) {
+// force : abords imposés par l'hôte (lobby) ; le tirage est fait quand même, pour ne pas décaler la suite
+export function edgeLayout(seed, force = null) {
   const R = rng((seed ^ 0x3c6ef372) >>> 0);
   const pick = (arr) => arr[Math.floor(R() * arr.length)];
-  const kind = pick(Object.keys(EDGES));
+  const drawn = pick(Object.keys(EDGES));
+  const kind = EDGES[force] ? force : drawn;
   const E = EDGES[kind];
   return {
     kind, name: E.name, houses: E.houses, seed,
@@ -395,10 +397,10 @@ export function bossX(t) {
   return a + (b - a) * smooth(u);
 }
 
-export function shooterWorld(seed, n) {
+export function shooterWorld(seed, n, edge = null) {
   const layout = streetLayout(seed);
   layout.train = stationTrain(seed);
-  layout.edge = edgeLayout(seed);
+  layout.edge = edgeLayout(seed, edge);
   const spots = buildSpots(layout);
   const R = rng(seed);
   const ri = (a, b) => a + Math.floor(R() * (b - a + 1));
@@ -720,13 +722,15 @@ export const LASSO_BIOMES = {
   canyon: ['boulder', 'rock', 'stump', 'boulder'],
   ranch: ['barrel', 'hay', 'fence', 'barrel'],
 };
+export const LASSO_BIOME_NAMES = { desert: 'LE DÉSERT', prairie: 'LA PRAIRIE', canyon: 'LE CANYON', ranch: 'LE RANCH' };
 export const biomeAt = (biomes, t) => {
   let b = biomes[0];
   for (const x of biomes) if (t >= x.at) b = x;
   return b;
 };
 
-export function lassoWorld(seed, n = 4) {
+// route : une seule région imposée par l'hôte (lobby) ; sinon le grand tour des 4 régions
+export function lassoWorld(seed, n = 4, route = null) {
   const R = rng(seed);
   const between = (a, b) => a + R() * (b - a);
   const dur = MODES.lasso.duration;
@@ -751,7 +755,8 @@ export function lassoWorld(seed, n = 4) {
   }
   const order = Object.keys(LASSO_BIOMES);
   for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-  const biomes = order.map((id, i) => ({ id, at: i === 0 ? -1e9 : Math.round((i * dur) / order.length) }));
+  const biomes = LASSO_BIOMES[route] ? [{ id: route, at: -1e9 }]
+    : order.map((id, i) => ({ id, at: i === 0 ? -1e9 : Math.round((i * dur) / order.length) }));
   const obstacles = [];
   for (let t = 2500; t < dur; t += between(1500, 2800)) {
     const list = LASSO_BIOMES[biomeAt(biomes, t).id];

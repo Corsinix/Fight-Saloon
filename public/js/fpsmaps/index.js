@@ -3,5 +3,7 @@
 import { fortWorld } from './fort.js';
 import { canyonWorld } from './canyon.js';
 import { puebloWorld } from './pueblo.js';
+import { ghostWorld } from './ghost.js';
+import { portWorld } from './port.js';
 
-export const EXTRA_MAPS = { fort: fortWorld, canyon: canyonWorld, pueblo: puebloWorld };
+export const EXTRA_MAPS = { fort: fortWorld, canyon: canyonWorld, pueblo: puebloWorld, ghost: ghostWorld, port: portWorld };

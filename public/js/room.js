@@ -915,8 +915,10 @@ const ROOMS = {
   },
 };
 const ROOM_IDS = Object.keys(ROOMS);
+export const ROOM_NAMES = Object.fromEntries(ROOM_IDS.map((id) => [id, ROOMS[id].name]));
 // Salle tirée de la graine, sans rien dessiner (même tirage que le constructeur de Room) : sert aux règles de la pinte.
-export const roomIdFor = (seed) => ROOM_IDS[Math.floor(rng((seed ^ 0x9e3779b9) >>> 0)() * ROOM_IDS.length)];
+// force : salle imposée par l'hôte (lobby).
+export const roomIdFor = (seed, force = null) => (ROOMS[force] ? force : ROOM_IDS[Math.floor(rng((seed ^ 0x9e3779b9) >>> 0)() * ROOM_IDS.length)]);
 
 // ------------------------------------------------------------ dehors
 const OUTSIDE = new Map();
@@ -933,10 +935,11 @@ function outsideArt(key, w, env, train) {
 }
 
 export class Room {
-  constructor(seed) {
+  constructor(seed, force = null) {
     this.seed = seed;
     const R = rng((seed ^ 0x9e3779b9) >>> 0);
-    this.id = ROOM_IDS[Math.floor(R() * ROOM_IDS.length)];
+    const drawn = ROOM_IDS[Math.floor(R() * ROOM_IDS.length)];
+    this.id = ROOMS[force] ? force : drawn;
     this.def = ROOMS[this.id];
     this.band = MARIACHI[Math.floor(R() * MARIACHI.length)];
     this.env = pickEnv(seed, 'roulette');

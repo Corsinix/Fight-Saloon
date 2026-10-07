@@ -23,7 +23,8 @@ export const MW = 60, MH = 48;
 //              5 cases de large autour de y) où la bande s'avance et où tout le monde se fait face ;
 //              open : { x, y, dx } (facultatif) travelling d'ouverture, dégagé de x à x + dx
 //   radar    : couleurs du radar pour les textures de la carte (fpsmap.js) :
-//              { floor: { id: '#rrggbb' }, wall: [[/regex/, '#rrggbb']], low: [[/regex/, '#rrggbb']], deco: { id: ['#rrggbb', 's'|'d'|'p'|'c'|'w'] } }
+//              { floor: { id: '#rrggbb' }, wall: [[/regex/, '#rrggbb']], low: [[/regex/, '#rrggbb', 'dots'|'flat']], deco: { id: ['#rrggbb', 's'|'d'|'p'|'c'|'w'] } }
+//              (low 'flat' : un aplat sans bordure, pour l'eau du port : voir water() dans fpsmaps/port.js)
 //   after    : () => {} appelé après que les recoins inaccessibles sont murés (affiches sur les murs...)
 //   bare     : Set(case) : linteaux sans embrasure de bois (fps.js n'y pose ni traverse ni montants : arcades, auvents)
 //   upBack   : Map(case -> [côté 'n'|'s'|'e'|'w', texture]) : le haut de la case (up, une enseigne) ne se lit que de ce

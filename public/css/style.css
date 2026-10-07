@@ -458,6 +458,8 @@ label, small { color: var(--sand); }
 .seg button:disabled { cursor: default; }
 .seg button:disabled:not(.on) { opacity: 0.55; }
 .seg .lbl { font-size: 17px; color: var(--muted); margin-right: 6px; }
+/* variante du jeu choisi (carte, région, salle…) : peut passer à la ligne */
+.seg.variants { display: flex; flex-wrap: wrap; row-gap: 4px; margin: 4px 0 2px; }
 .mini-link { font-family: var(--body); font-size: 17px; color: var(--yellow); background: none; border: 0; padding: 0 2px; text-decoration: underline; cursor: pointer; }
 .mini-link:hover { color: var(--cream); }
 

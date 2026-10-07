@@ -10,9 +10,11 @@ import {
 const rnd = (a, b) => a + Math.random() * (b - a);
 
 export class MiniGame {
-  constructor(kind, players) {
+  // variant : abords (fusillade) ou région (lasso) imposés par l'hôte (lobby), sinon tirés de la graine
+  constructor(kind, players, variant = null) {
     this.kind = kind;
     this.seed = Math.floor(Math.random() * 2 ** 31);
+    this.variant = variant;
     this.duration = MODES[kind].duration;
     const n = players.length;
     // au-delà de 3 bots, chacun ralentit un peu : à 4 ou 5 bots, la bande ne rafle pas plus que 3 bots
@@ -23,7 +25,7 @@ export class MiniGame {
       power: null, powerUntil: 0, sandUntil: 0, gunAmmo: 0, // bonus de la fusillade
       ai: pl.bot ? this.newBot(i, n) : null,
     }));
-    this.world = kind === 'shooter' ? shooterWorld(this.seed, n) : kind === 'lasso' ? lassoWorld(this.seed, n) : null;
+    this.world = kind === 'shooter' ? shooterWorld(this.seed, n, variant) : kind === 'lasso' ? lassoWorld(this.seed, n, variant) : null;
     this.hp = new Map(); // fusillade : PV restants des cibles touchées
     this.claimed = new Map(); // id -> joueur (cible abattue ou bête attrapée)
     this.fires = kind === 'shooter'
@@ -63,7 +65,7 @@ export class MiniGame {
 
   view(i) {
     return {
-      kind: this.kind, me: i, phase: this.phase, winner: this.winner, ranking: this.ranking,
+      kind: this.kind, me: i, phase: this.phase, winner: this.winner, ranking: this.ranking, variant: this.variant,
       players: this.p.map((p) => ({ key: p.key, name: p.name, character: p.character, score: p.score, left: p.left, bot: p.bot })),
     };
   }

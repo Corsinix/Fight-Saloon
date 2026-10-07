@@ -18,6 +18,7 @@ import { RtsScene } from './rts.js';
 import { FpsScene, FpsDmScene } from './fps.js';
 import { TEAM_NAMES } from './fortgame.js';
 import { MODES, PLAYER_COLORS } from './worlds.js';
+import { VARIANTS, variantName } from './variants.js';
 import { gameIcon } from './gameicons.js';
 import { TouchPad } from './touch.js';
 
@@ -503,6 +504,14 @@ function showLobby() {
   if (single && l.mode !== modesShown) modesPage = Math.floor(Math.max(0, soloIds.indexOf(l.mode)) / MODES_PAGE);
   modesShown = single ? l.mode : null;
   renderModes();
+  // un jeu à variantes : l'hôte peut imposer la carte, la région, la salle… (sinon tirée au hasard)
+  const V = single ? VARIANTS[l.mode] : null;
+  const variant = V ? l.variants?.[l.mode] ?? null : null;
+  $('variants').classList.toggle('hidden', !V);
+  if (V) {
+    $('variants').innerHTML = `<span class="lbl">${esc(V.label)} :</span>` + [{ id: '', name: V.any || 'Aléatoire' }, ...V.list].map((v) =>
+      `<button type="button" class="${(variant ?? '') === v.id ? 'on' : ''}" data-variant="${v.id}" ${lock ? 'disabled' : ''}>${esc(v.name)}</button>`).join('');
+  }
 
   renderSeats(l, isHost);
   renderChampBoard(l, isHost);
@@ -514,7 +523,7 @@ function showLobby() {
   if (single) {
     const tooMany = n > mode.max;
     start.disabled = n < mode.min || tooMany || l.spinning;
-    start.textContent = `Lancer : ${SOLO[l.mode]?.[0] || mode.name}`;
+    start.textContent = `Lancer : ${SOLO[l.mode]?.[0] || mode.name}${variant ? ` — ${variantName(l.mode, variant)}` : ''}`;
     hint = tooMany
       ? `${mode.name} se joue à ${mode.max} maximum. ${isHost ? 'Choisis un autre jeu.' : 'L’hôte doit choisir un autre jeu.'}`
       : n < mode.min
@@ -713,6 +722,10 @@ $('formats').onclick = async (e) => {
 $('rounds').onclick = (e) => {
   const b = e.target.closest('[data-rounds]');
   if (b && lobby && isHostOf(lobby)) net.send({ t: 'rounds', n: +b.dataset.rounds });
+};
+$('variants').onclick = (e) => {
+  const b = e.target.closest('[data-variant]');
+  if (b && !b.disabled && lobby && isHostOf(lobby)) net.send({ t: 'variant', mode: lobby.mode, id: b.dataset.variant || null });
 };
 $('btn-lock').onclick = () => { if (lobby && isHostOf(lobby)) net.send({ t: 'lock' }); };
 

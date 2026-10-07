@@ -147,7 +147,7 @@ export const PROPS = {
   bottle: { hp: 1, r: 0.1, pass: true, blast: 2.4 }, // bouteille : en mille morceaux
 };
 const PROP_DECO = { barrelTnt: 'tnt', barrel: 'barrel', hayBale: 'hay', safe: 'safe', lantern: 'lantern', chandelier: 'chandelier', lamp: 'lamp', bottle: 'bottle' };
-const PROP_CELL = { tnt: 'tnt', crates: 'crates', hay: 'hay', canyonBoulder: 'boulder' };
+const PROP_CELL = { tnt: 'tnt', crates: 'crates', hay: 'hay', canyonBoulder: 'boulder', ghostRubble: 'crates', portCotton: 'hay', portCordwood: 'crates' };
 
 // État d'un objet du décor : 'ok' (ou rien), 'gone' (détruit), 'burn' (en feu), 'broken' (réverbère sans vitre),
 // 'fallen' (lustre au sol), 'open' (coffre éventré). Un objet détruit n'arrête plus personne ; un mur bas détruit

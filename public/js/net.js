@@ -7,14 +7,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { Game, personalize } from './game.js';
 import { Bot, botPlayer } from './bot.js';
-import { MiniGame } from './mini.js';
-import { FortGame } from './fortgame.js';
-import { WagonGame } from './wagongame.js';
-import { PinteGame } from './pintegame.js';
-import { MineGame } from './minegame.js';
-import { CourseGame } from './coursegame.js';
-import { RtsGame } from './rtsgame.js';
-import { FpsGame } from './fpsgame.js';
+import { makeGame } from './games.js';
+import { variantOk } from './variants.js';
 import { MODES, MAX_PLAYERS } from './worlds.js';
 import { CHAR_PARTS, CHAR_COLORS } from './data.js';
 
@@ -75,6 +69,7 @@ function lobbyBase(code, host) {
     code, host, solo: false, mode: 'roulette', players: [], game: null, bot: null, botTimer: null, miniTimer: null,
     rematch: new Set(), dcTimers: {}, lockUntil: 0,
     format: 'single', pool: Object.keys(MODES), rounds: 5, locked: false, banned: new Set(),
+    variants: {}, // mode -> variante imposée par l'hôte (format « Un jeu » ; voir variants.js)
     champ: null, spinning: false, spinTimer: 0, lastPick: null, formerHost: null,
   };
 }
@@ -307,6 +302,7 @@ export class Net {
     l.format = FORMATS.includes(v.format) ? v.format : 'single';
     if (Array.isArray(v.pool) && v.pool.some((id) => MODES[id])) l.pool = v.pool.filter((id) => MODES[id]);
     l.rounds = ROUNDS.includes(v.rounds) ? v.rounds : 5;
+    l.variants = Object.fromEntries(Object.entries(v.variants || {}).filter(([mode, id]) => variantOk(mode, id)));
     l.locked = !!v.locked;
     l.banned = new Set(Array.isArray(v.banned) ? v.banned : []);
     l.champ = v.champ && typeof v.champ === 'object' ? v.champ : null;
@@ -401,6 +397,9 @@ export class Net {
     const me = { key: this.user.key, name: this.user.name, character: this.character, connected: true };
     const l = Object.assign(lobbyBase(code, me.key), { solo, mode, players: [me] });
     if (solo) {
+      // ?variant=canyon dans l'adresse : impose la variante du jeu solo (pour l'essayer)
+      const v = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('variant') : null;
+      if (variantOk(mode, v)) l.variants[mode] = v;
       // Le jeu solo se joue entièrement dans ce navigateur.
       const n = Math.min(SOLO_BOTS, MODES[mode].max - 1);
       for (let k = 0; k < n; k++) {
@@ -468,6 +467,7 @@ export class Net {
       format: l.format,
       pool: l.pool,
       rounds: l.rounds,
+      variants: l.variants,
       locked: !!l.locked,
       banned: [...l.banned],
       champ: l.champ,
@@ -592,6 +592,14 @@ export class Net {
       case 'rounds':
         if (!isHost || busy || !ROUNDS.includes(m.n) || (l.champ && !l.champ.done)) return;
         l.rounds = m.n;
+        this.broadcastLobby(l);
+        break;
+      // variante du jeu (carte, région, salle…) ; id null : de nouveau tirée au hasard
+      case 'variant':
+        if (!isHost || busy || !MODES[m.mode]) return;
+        if (m.id == null) delete l.variants[m.mode];
+        else if (variantOk(m.mode, m.id)) l.variants[m.mode] = m.id;
+        else return;
         this.broadcastLobby(l);
         break;
       case 'champReset':
@@ -774,9 +782,8 @@ export class Net {
       if (bi >= 0) l.bot = new Bot(bi);
     } else {
       // Mini-jeu en temps réel : l'hôte fait avancer l'horloge (tirs des bandits, bots, fin de partie).
-      const g = l.mode === 'fort' ? new FortGame(players) : l.mode === 'wagon' ? new WagonGame(players)
-        : l.mode === 'pinte' ? new PinteGame(players) : l.mode === 'mine' ? new MineGame(players) : l.mode === 'course' ? new CourseGame(players)
-        : l.mode === 'rts' ? new RtsGame(players) : l.mode === 'fps' || l.mode === 'fpsdm' ? new FpsGame(players, l.mode) : new MiniGame(l.mode, players);
+      // la variante choisie par l'hôte ne vaut que pour « Un jeu » : la roue et le championnat restent des surprises
+      const g = makeGame(l.mode, players, l.format === 'single' ? l.variants[l.mode] ?? null : null);
       l.game = g;
       l.miniTimer = setInterval(() => {
         if (this.hosting !== l || l.game !== g) return clearInterval(l.miniTimer);

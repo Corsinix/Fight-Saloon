@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="css/fonts.css"></head>
+<body style="margin:0;background:#000;color:#fdf6e0;font:14px monospace">
+<canvas id="game" width="384" height="216" style="width:768px;height:432px;image-rendering:pixelated"></canvas><div id="touchpad"></div>
+<div id="hud" style="padding:4px 8px"></div>
+<script type="module">
+// Banc d'essai des mini-jeux, sans Supabase : l'arbitre et la scène tournent dans cette page, les adversaires sont des bots.
+// ?game=lasso : le jeu (voir MODES dans worlds.js) ; &variant=canyon : la variante (voir variants.js) ;
+// &bots=5 : nombre de bots (3 par défaut, 1 pour les jeux à deux) ; &seed=123 : toujours le même monde.
+// Le FPS a son propre banc d'essai : fps-test.html.
+import { MODES } from './js/worlds.js';
+import { makeGame } from './js/games.js';
+import { VARIANTS } from './js/variants.js';
+import { ShooterScene } from './js/shooter.js';
+import { LassoScene } from './js/lasso.js';
+import { DuelScene } from './js/duel.js';
+import { CharlieScene } from './js/charlie.js';
+import { FortScene } from './js/fort.js';
+import { WagonScene } from './js/wagon.js';
+import { PinteScene } from './js/pinte.js';
+import { MineScene } from './js/mine.js';
+import { CourseScene } from './js/course.js';
+import { RtsScene } from './js/rts.js';
+const SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene };
+window.onerror = (m, s, l, c, e) => { (window.errs ||= []).push(String(e?.stack || m)); };
+const q = new URLSearchParams(location.search);
+const game = SCENES[q.get('game')] ? q.get('game') : 'lasso';
+const M = MODES[game];
+const nBots = Math.max(M.min - 1, Math.min(M.max - 1, q.has('bots') ? +q.get('bots') : 3));
+const players = [{ key: 'me', name: 'Moi', character: {} }, ...Array.from({ length: nBots }, (_, i) => ({ key: `b${i + 1}`, name: `Bot${i + 1}`, bot: true, character: i ? {} : { hat: 'sombrero' } }))];
+const variant = q.get('variant');
+if (variant && !VARIANTS[game]?.list.some((v) => v.id === variant)) (window.errs ||= []).push(`variante inconnue : ${variant} (${(VARIANTS[game]?.list || []).map((v) => v.id).join(', ') || 'aucune'})`);
+// &seed : les arbitres tirent leur graine avec Math.random() dans le constructeur ; on la leur souffle
+let g;
+if (q.has('seed')) {
+  const mr = Math.random;
+  let first = true, s = +q.get('seed') >>> 0;
+  Math.random = () => { if (first) { first = false; return (+q.get('seed') >>> 0) / 2 ** 31; } s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; };
+  try { g = makeGame(game, players, variant); } finally { Math.random = mr; }
+} else g = makeGame(game, players, variant);
+const cv = document.getElementById('game');
+const hud = document.getElementById('hud');
+let scene;
+const deliver = (evs) => { for (const e of evs) { const { states, private: priv, ...rest } = e; try { scene.event({ ...rest, state: states[0], ...(priv && priv.to === 0 ? { ...priv.data, secret: true } : priv ? { hidden: true } : {}) }); } catch (err) { (window.errs ||= []).push(String(err.stack)); } } };
+const showHud = () => {
+  const st = scene?.state;
+  if (st) hud.textContent = `${game}${variant ? ` (${variant})` : ''} - graine ${g.seed} - ` + st.players.map((p, i) => `${i === st.me ? 'Toi' : p.name} ${p.score}`).join('  ');
+};
+scene = new SCENES[game](cv, {
+  send: (a) => { const r = g.act(0, a); if (r?.error) (window.acterr ||= []).push(r.error + JSON.stringify(a)); deliver(r?.events || []); },
+  live: (d) => g.onLive?.('me', d),
+  onState: showHud,
+  onEnd(e) { window.ended = e; showHud(); },
+});
+deliver(g.start());
+setInterval(() => { try { deliver(g.tick()); for (const o of g.liveOut.splice(0)) scene.onLive(o.key, o.d); } catch (err) { (window.errs ||= []).push(String(err.stack)); } }, 100);
+window.g = g; window.scene = scene;
+// les erreurs, recopiées dans la page (chrome --headless --dump-dom les montre)
+const errBox = document.body.appendChild(document.createElement('pre'));
+errBox.id = 'errlog'; errBox.style.color = '#f66';
+setInterval(() => { errBox.textContent = [...(window.errs || []), ...(window.acterr || [])].join('\n'); }, 250);
+</script></body></html>

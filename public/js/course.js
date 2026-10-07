@@ -130,7 +130,7 @@ export class CourseScene extends MiniScene {
   goText() { return 'PARTEZ !'; }
 
   setup(seed) {
-    this.world = courseWorld(seed);
+    this.world = courseWorld(seed, this.state.variant);
     this.wild = !!this.world.wild;
     this.lanes = LANES[clamp(this.n, 1, 6)];
     this.hx = HX; // colonne de ton cheval à l'écran (dans la prairie, il avance quand il galope, recule quand on le retient)
