@@ -1,6 +1,7 @@
 // Base commune des scènes de mini-jeux : horloge partagée, compte à rebours, entrées,
 // curseurs/positions des autres joueurs, petits textes de points.
 import { canvasText, canvasPos, due60 } from './scene.js';
+import { ruleLines, drawRuleLines } from './ruletext.js';
 import { sfx } from './audio.js';
 import { W, H, PLAYER_COLORS, MODES, CUT_MS, HELP_MS } from './worlds.js';
 import { pickEnv, Ambience, ENVS } from './env.js';
@@ -262,9 +263,13 @@ export class MiniScene {
     const where = [this.env && this.showEnv && this.env.name, this.variantName?.()].filter(Boolean).join(' - ');
     if (where) canvasText(ctx, where, W / 2, 34, { color: '#c8b8e8' });
     canvasText(ctx, this.title(), W / 2, 50, { size: 16, color: '#f8d070' });
-    this.help().forEach((l, i) => canvasText(ctx, l, W / 2, 72 + i * 11, { color: '#fdf6e0' }));
+    // touches en relief, souris, points en couleur (ruletext.js) ; plus de 5 lignes : on serre et on remonte
+    const lines = ruleLines(this.help(), W - 12);
+    const many = lines.length > 5;
+    drawRuleLines(ctx, lines, W / 2, many ? 68 : 72, { lh: lines.length > 8 ? 10 : 11, maxW: W - 12 });
+    // le compte à rebours : sous les règles s'il y a la place, sinon dans le coin
     const c = Math.ceil(-t / 1000);
-    if (c <= 3) canvasText(ctx, String(c), W / 2, 136, { size: 24, color: '#f0705a' });
+    if (c <= 3) canvasText(ctx, String(c), many ? W - 22 : W / 2, many ? 34 : 136, { size: many ? 16 : 24, color: '#f0705a' });
   }
 
   goText() { return 'GO !'; }

@@ -5,12 +5,12 @@ import { randomCharacter } from './data.js';
 const NAMES = ['Le Croque-mort', 'El Tuerto', 'Calamity Rose', 'Vieux Jeb', 'Hank la Gâchette', 'Señor Mezcal', 'Doc Vautour', 'Miss Dynamite'];
 
 const LINES = {
-  hitOpp: ['Rien de personnel, l’ami.', 'Un de moins.', 'Ça pique, hein ?', 'Le fusil m’aime bien ce soir.'],
-  selfBlank: ['Hé hé… encore à moi.', 'Je savais qu’elle était blanche.', 'Le diable me sourit.'],
+  hitOpp: ['Rien de personnel, l’ami.', 'Un de moins.', 'Ça pique, hein ?', 'Le fusil m’aime bien ce soir.', 'Mes amitiés à El Diablo, là-dessous.'],
+  selfBlank: ['Hé hé… encore à moi.', 'Je savais qu’elle était blanche.', 'El Diablo me sourit.', 'Même El Diablo n’a pas cette chance.'],
   gotHit: ['Argh ! Tu vas me le payer.', 'Ouch… joli coup.', 'Simple égratignure !', 'Tu commences à m’agacer.'],
   oppMiss: ['Raté, cowboy.', 'Pas de chance.', 'Tes mains tremblent ?'],
-  win: ['Le saloon est à moi.', 'Reviens quand tu sauras tenir un fusil.', 'Un verre pour le vainqueur !'],
-  lose: ['Bien joué… pour cette fois.', 'Tu as eu de la chance, gamin.', 'Je veux ma revanche.'],
+  win: ['Le saloon est à moi.', 'Reviens quand tu sauras tenir un fusil.', 'Un verre pour le vainqueur !', 'El Diablo lui-même n’aurait pas fait mieux.'],
+  lose: ['Bien joué… pour cette fois.', 'Tu as eu de la chance, gamin.', 'Je veux ma revanche.', 'File, avant qu’El Diablo apprenne que j’ai perdu.'],
 };
 
 const rnd = (n) => Math.floor(Math.random() * n);

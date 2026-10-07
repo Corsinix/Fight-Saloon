@@ -91,6 +91,13 @@ export class Editor {
     }
     const colors = $('ed-colors');
     colors.innerHTML = '';
+    // une galerie ouverte replie les couleurs (tout tient sans faire défiler) ; un clic sur le titre les rouvre
+    const fold = !!this.openKey;
+    colors.classList.toggle('hidden', fold);
+    const head = $('ed-colors-head');
+    head.classList.toggle('fold', fold);
+    head.title = fold ? 'Afficher les couleurs' : '';
+    head.onclick = fold ? () => { sfx('ui'); this.openKey = null; this.refresh(); } : null;
     for (const p of CHAR_COLORS) {
       const row = document.createElement('div');
       row.className = 'ed-colors-row';

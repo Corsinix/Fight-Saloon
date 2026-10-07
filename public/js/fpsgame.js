@@ -24,7 +24,8 @@ export const fpsCutLen = (n) => FPS_CUT + Math.max(0, n - 4) * FPS_CUT_EXTRA;
 export const FPS = {
   hp: 100, maxArmor: 50,
   speed: 3.3, sprint: 1.35, radius: 0.24,
-  eye: 0.5, eyeHorse: 0.72, eyeCart: 0.62, ceil: 1.3,
+  // hauteur des yeux (rendu seulement : les balles volent toujours à 0,5, d'où le tir par-dessus les murets)
+  eye: 0.62, eyeHorse: 0.84, eyeCart: 0.72, ceil: 1.3,
   respawn: 3000, autoSpawn: 12000, // délai avant de pouvoir revenir ; retour automatique si on traîne dans l'armurerie
   shield: 9000, shieldTake: 0.35, // étoile du shérif : on n'encaisse plus qu'un tiers des dégâts
   regen: { wait: 3500, per: 3 }, // gourde (équipement) : +3 PV/s quand on n'a pas été touché depuis 3,5 s
@@ -35,8 +36,19 @@ export const FPS = {
   barrel: { radius: 3.0, dmg: 100, min: 25, self: 0.6 }, // baril de poudre (ou caisse de TNT) qui saute
   // canon (E pour le servir) : un coup toutes les 8 s, portée réglée par la hausse de near à range cases
   cannon: { radius: 2.4, dmg: 90, min: 20, self: 0.6, near: 3, range: 22, every: 8000 },
+  // mortier Coehorn (arme de caisse) : l'obus part en cloche, la portée suit le regard (levé : loin, baissé : près)
+  mortar: { radius: 2.2, dmg: 80, min: 18, self: 0.6, near: 3, range: 16 },
+  // cocktail de tord-boyaux : la bouteille éclate et laisse une grande flaque de feu (pas de souffle)
+  mol: { fire: 7000, r: 1.25 },
+  // pièges à loup (équipement) : posés au sol ; qui marche dessus est bloqué snare ms et perd dmg PV
+  trap: { dmg: 25, snare: 2200, r: 0.42, life: 90000, max: 3 },
   fire: { life: 6000, r: 0.8, dmg: 8, every: 450, hay: 8000, lamp: 3500 }, // flaques de feu : dégâts toutes les 450 ms
   prop: { back: 45000, fall: 380, crush: 70, loot: 0.3 }, // décor détruit : il revient au bout de 45 s
+  // accroupi (C) : l'œil et le corps passent sous le haut des barrières, murets et sacs de sable (0,5) ; on avance au pas
+  crouch: { eye: 0.3, z: 0.3, speed: 0.45 },
+  // braquage : qui fait sauter le coffre à la dynamite empoche le magot d'El Diablo (pts), des sacs d'or roulent
+  // autour (au premier qui passe, bagLife ms), et les hommes d'El Diablo (posse) traquent le braqueur pendant hunt ms
+  heist: { pts: 100, bags: 4, bagLife: 20000, hunt: 15000, posse: 2 },
   bar: { hp: 25, every: 25000 }, // un whisky au comptoir du saloon ou de la cantina (E), toutes les 25 s
   // bandits simultanés : base + per par joueur (au-delà de 4 joueurs, la moitié : voir fpsCrowd)
   npc: { base: 4, per: 2, every: [2200, 3600], first: 4000 },
@@ -46,40 +58,66 @@ export const FPS = {
 // slot : 1 arme blanche, 2 arme de poing, 3 arme d'épaule, 5 arme de caisse (temporaire).
 // dmg par balle (ou par plomb : pellets), rate : ms entre deux tirs, mag : chargeur, reserve : munitions de départ,
 // reload : ms (rl : son de recharge), spread : dispersion (rad), range : portée utile (au-delà, dégâts divisés par deux).
+// Particularités : breaks (la pioche casse le décor), tether (lasso, harpon : la cible touchée reste au bout de la corde
+// et ne peut plus avancer ; tant que le tir est maintenu, elle est ramenée vers le tireur à speed cases/s, au plus max ms ;
+// relâchée, elle reste encore entravée keep ms), alt (second canon au clic droit, ses propres munitions), fan (clic
+// droit maintenu : on vide le barillet en tapant le chien), charge (ms : l'arc se bande en maintenant le tir, pleine
+// tension : flèche enflammée), lob (le mortier tire en cloche), kick (cases de recul du tireur), leech (part des
+// dégâts rendue en PV), quiet (on ne l'entend que de près), swing (ms de chaque image du geste, 110 sinon ; le coup porte
+// à hitAt, sinon à la fin de la première).
 export const WEAPONS = {
   bowie: { slot: 1, name: 'COUTEAU BOWIE', melee: true, dmg: 34, rate: 380, range: 1.35, sfx: 'swish' },
   tomahawk: { slot: 1, name: 'TOMAHAWK', melee: true, dmg: 55, rate: 720, range: 1.35, sfx: 'swish' },
   saber: { slot: 1, name: 'SABRE', melee: true, dmg: 42, rate: 560, range: 1.8, sfx: 'swish' },
+  pickaxe: { slot: 1, name: 'PIOCHE', melee: true, dmg: 62, rate: 950, range: 1.45, sfx: 'swish', breaks: true, swing: [240, 120, 290] },
+  lasso: { slot: 1, name: 'LASSO', melee: true, dmg: 12, rate: 1500, range: 5, cone: 0.32, sfx: 'whip', tether: { speed: 3.2, max: 4500, keep: 2500 }, swing: [200, 200, 200], hitAt: 260 },
   colt: { slot: 2, name: 'COLT', dmg: 24, rate: 300, mag: 6, reserve: 30, reload: 1300, spread: 0.012, range: 22, sfx: 'colt', rl: 'reload' },
   schofield: { slot: 2, name: 'SCHOFIELD', dmg: 21, rate: 270, mag: 6, reserve: 30, reload: 650, spread: 0.018, range: 20, sfx: 'schofield', rl: 'reload' },
   derringer: { slot: 2, name: 'DERRINGER', dmg: 48, rate: 260, mag: 2, reserve: 16, reload: 900, spread: 0.03, range: 10, sfx: 'derringer', rl: 'breakopen' },
+  lemat: {
+    slot: 2, name: 'LEMAT', dmg: 22, rate: 320, mag: 9, reserve: 27, reload: 1800, spread: 0.014, range: 20, sfx: 'colt', rl: 'reload',
+    alt: { dmg: 9, pellets: 8, rate: 700, spread: 0.1, range: 9, mag: 1, reserve: 6, sfx: 'sawed' },
+  },
+  peacemaker: { slot: 2, name: 'PEACEMAKER', dmg: 26, rate: 380, mag: 6, reserve: 30, reload: 1400, spread: 0.01, range: 22, sfx: 'colt', rl: 'reload', fan: { rate: 85, spread: 0.09 } },
   winchester: { slot: 3, name: 'WINCHESTER', dmg: 30, rate: 480, mag: 12, reserve: 36, reload: 2000, spread: 0.006, range: 30, sfx: 'winchester', rl: 'shells' },
   pump: { slot: 3, name: 'FUSIL À POMPE', dmg: 10, pellets: 8, rate: 850, mag: 6, reserve: 24, reload: 2200, spread: 0.075, range: 12, sfx: 'shotgun', rl: 'shells' },
   sawed: { slot: 3, name: 'CANON SCIÉ', dmg: 11, pellets: 10, rate: 280, mag: 2, reserve: 20, reload: 1600, spread: 0.13, range: 8, sfx: 'sawed', rl: 'breakopen' },
   sharps: { slot: 3, name: 'CARABINE SHARPS', dmg: 95, rate: 1300, mag: 1, reserve: 15, reload: 1100, spread: 0.002, range: 45, zoom: true, sfx: 'sharps', rl: 'breakopen' },
+  bow: { slot: 3, name: 'ARC', dmg: 72, rate: 300, mag: 1, reserve: 20, reload: 420, spread: 0.003, range: 30, charge: 850, quiet: true, sfx: 'bow', rl: 'nock' },
+  harpoon: { slot: 3, name: 'FUSIL À HARPON', dmg: 70, rate: 1400, mag: 1, reserve: 10, reload: 1500, spread: 0.003, range: 16, tether: { speed: 4.2, max: 3500, keep: 0 }, sfx: 'harpoon', rl: 'breakopen' },
   // armes de caisse : elles remplacent le reste jusqu'à la fin de leur temps ou de leur chargeur
   gatling: { slot: 5, temp: true, name: 'GATLING', dmg: 9, rate: 85, mag: 90, spread: 0.05, range: 24, auto: true, ms: 15000, slow: 0.7, sfx: 'gatling' },
   akimbo: { slot: 5, temp: true, name: 'DEUX COLTS', dmg: 24, rate: 210, mag: 32, spread: 0.02, range: 22, dual: true, ms: 15000, sfx: 'akimbo' },
   goldwin: { slot: 5, temp: true, name: 'WINCHESTER DORÉE', dmg: 45, rate: 340, mag: 15, spread: 0.004, range: 40, pierce: true, ms: 20000, sfx: 'goldwin' },
+  coehorn: { slot: 5, temp: true, name: 'MORTIER', dmg: 0, rate: 1200, mag: 4, spread: 0, range: 16, lob: true, ms: 25000, slow: 0.8, sfx: 'mortar' },
+  puntgun: { slot: 5, temp: true, name: 'CANARDIÈRE', dmg: 8, pellets: 22, rate: 1500, mag: 3, spread: 0.16, range: 14, kick: 2.6, ms: 20000, slow: 0.75, sfx: 'punt' },
+  diablo: { slot: 5, temp: true, name: 'PISTOLET DU DIABLE', dmg: 32, rate: 250, mag: 24, spread: 0.01, range: 26, leech: 0.4, ms: 25000, sfx: 'diablo' },
 };
-export const MELEE = ['bowie', 'tomahawk', 'saber'];
-export const PISTOLS = ['colt', 'schofield', 'derringer'];
-export const LONGS = ['winchester', 'pump', 'sawed', 'sharps'];
+export const MELEE = ['bowie', 'tomahawk', 'saber', 'pickaxe', 'lasso'];
+export const PISTOLS = ['colt', 'schofield', 'derringer', 'lemat', 'peacemaker'];
+export const LONGS = ['winchester', 'pump', 'sawed', 'sharps', 'bow', 'harpoon'];
+export const TEMPS = Object.keys(WEAPONS).filter((id) => WEAPONS[id].temp);
 // dégâts maximum annoncés en un tir (vérifiés par l'hôte)
 export const maxShot = (id) => {
   const w = WEAPONS[id];
   if (id === 'horse') return FPS.horse.trample;
-  return w ? w.dmg * (w.pellets || 1) * (w.dual ? 2 : 1) * 2 : 0;
+  if (!w) return 0;
+  const alt = w.alt ? w.alt.dmg * (w.alt.pellets || 1) : 0;
+  return Math.max(w.dmg * (w.pellets || 1) * (w.dual ? 2 : 1), alt) * 2;
 };
 
-// Équipement (un seul, choisi à l'armurerie). La dynamite se lance (G) ; le reste est passif.
+// Équipement (un seul, choisi à l'armurerie). Dynamite, cocktails et pièges se lancent ou se posent (G) ; le reste
+// est passif. THROWN : ce qui se tient en main à l'emplacement 4 (n : nombre au départ, clé du compteur).
 export const EQUIP = {
   dynamite: { name: 'DYNAMITE', desc: '3 BÂTONS À LANCER (G)', dyn: 3 },
+  molotov: { name: 'COCKTAIL', desc: '3 BOUTEILLES DE FEU À LANCER (G)', mol: 3 },
+  traps: { name: 'PIÈGES À LOUP', desc: '2 PIÈGES À POSER AU SOL (G)', traps: 2 },
   vest: { name: 'GILET DE CUIR', desc: `+${FPS.maxArmor} D'ARMURE`, armor: FPS.maxArmor },
   flask: { name: 'GOURDE', desc: 'REGAGNE DES PV À L\'ABRI' },
   spurs: { name: 'ÉPERONS', desc: 'COURT 15 % PLUS VITE' },
   bandolier: { name: 'CARTOUCHIÈRE', desc: 'MUNITIONS x1,6' },
 };
+export const THROWN = { dynamite: { key: 'dyn', name: 'DYNAMITE' }, molotov: { key: 'mol', name: 'COCKTAIL' }, trap: { key: 'traps', name: 'PIÈGE À LOUP' } };
 export const EQUIPS = Object.keys(EQUIP);
 export const DEFAULT_LOADOUT = { m: 'bowie', p: 'colt', l: 'winchester', e: 'dynamite' };
 export function cleanLoadout(lo = {}) {
@@ -102,8 +140,12 @@ export const LOOT = {
   gatling: { name: 'GATLING !', w: 6, gun: 'gatling' },
   akimbo: { name: 'DEUX COLTS !', w: 7, gun: 'akimbo' },
   goldwin: { name: 'WINCHESTER DORÉE !', w: 5, gun: 'goldwin' },
+  coehorn: { name: 'MORTIER ! LÈVE LES YEUX POUR TIRER LOIN', w: 5, gun: 'coehorn' },
+  puntgun: { name: 'CANARDIÈRE ! GARE AU RECUL', w: 5, gun: 'puntgun' },
+  // le pistolet d'El Diablo : seulement dans la caisse qu'il lâche en tombant
+  diablo: { name: 'LE PISTOLET DU DIABLE !', w: 0, gun: 'diablo' },
 };
-const LOOT_SETS = { power: ['gatling', 'akimbo', 'goldwin', 'star'], heal: ['whisky', 'armor'], ammo: ['ammo', 'dynamite'] };
+const LOOT_SETS = { power: ['gatling', 'akimbo', 'goldwin', 'coehorn', 'puntgun', 'star'], heal: ['whisky', 'armor'], ammo: ['ammo', 'dynamite'], diablo: ['diablo'] };
 function rollLoot(force) {
   const ids = force && LOOT_SETS[force] ? LOOT_SETS[force] : Object.keys(LOOT);
   let x = Math.random() * ids.reduce((s, id) => s + LOOT[id].w, 0);
@@ -146,6 +188,8 @@ export const PROPS = {
   lamp: { hp: 1, r: 0.12, pass: true, blast: 2 }, // réverbère : la vitre éclate, l'huile flambe au pied
   bottle: { hp: 1, r: 0.1, pass: true, blast: 2.4 }, // bouteille : en mille morceaux
 };
+// ce que la pioche casse d'un coup (pas le coffre : il faut de la dynamite ; pas le foin : il prendrait feu)
+export const PICKABLE = new Set(['tnt', 'barrel', 'crates', 'boulder', 'bottle', 'lamp', 'lantern']);
 const PROP_DECO = { barrelTnt: 'tnt', barrel: 'barrel', hayBale: 'hay', safe: 'safe', lantern: 'lantern', chandelier: 'chandelier', lamp: 'lamp', bottle: 'bottle' };
 const PROP_CELL = { tnt: 'tnt', crates: 'crates', hay: 'hay', canyonBoulder: 'boulder', ghostRubble: 'crates', portCotton: 'hay', portCordwood: 'crates' };
 
@@ -796,7 +840,8 @@ function finishWorld(kit, spec, seed, n, kind, map) {
   const zones = spec.zones || [zoneIds[0]];
   const world = {
     seed, map, name: spec.name || '', center: [cx + 0.5, cy + 0.5], w: MW, h: MH, cells: C, tex: texList, flats: kit.flatList, zoneNames: ZONES,
-    deco: deco.map((o, k) => ({ ...o, k })), horses, carts, rails, lamps, rooms: spec.rooms || [], districts: spec.districts || [], cars: spec.cars || [],
+    // (un lustre ou une lanterne sous un trou du toit pendrait à rien : le regard levé montrerait sa chaîne dans le ciel)
+    deco: deco.filter((o) => !o.hang || C.ceil[at(Math.floor(o.x), Math.floor(o.y))]).map((o, k) => ({ ...o, k })), horses, carts, rails, lamps, rooms: spec.rooms || [], districts: spec.districts || [], cars: spec.cars || [],
     labels: spec.labels || [], cut: spec.cut || null, radar: spec.radar || null, upBack: spec.upBack || null, bare: spec.bare || null,
     spawns, crateSpots, npcSpots, zones, pass, reach,
   };
@@ -877,6 +922,11 @@ export function cannonReach(w, x, y, a, want = FPS.cannon.range) {
   const { near, range } = FPS.cannon;
   return Math.max(1.5, Math.min(clamp(want, near, range), rayWall(w, x, y, a, range + 1, 0.95) - 0.35));
 }
+// Mortier : de même, la portée voulue (bornée) s'arrête devant le premier grand mur ; l'obus passe les murets
+export function mortarReach(w, x, y, a, want = FPS.mortar.range) {
+  const { near, range } = FPS.mortar;
+  return Math.max(1.5, Math.min(clamp(want, near, range), rayWall(w, x, y, a, range + 1, 0.95) - 0.35));
+}
 
 // Lancer de rayon sur la grille : distance jusqu'au premier mur qui arrête une balle (à hauteur z).
 // RAY.i : la case de ce mur (-1 si aucun), pour savoir si la balle a fini dans une caisse de TNT.
@@ -896,6 +946,9 @@ export function rayWall(w, x, y, a, max = 60, z = 0.5) {
   }
   return max;
 }
+
+// Hauteur à laquelle une balle atteint quelqu'un : accroupi (à pied), il passe sous le haut des barrières
+export const bodyZ = (p) => (p?.c && !p.m ? FPS.crouch.z : 0.5);
 
 // Ligne de vue dégagée entre deux points ?
 export function los(w, x0, y0, x1, y1, z = 0.5) {
@@ -947,7 +1000,8 @@ export function bountyLeader(players) {
 const addPts = (p, pts) => { p.score = Math.max(0, p.score + pts); return pts; };
 
 // Ce que les autres voient d'un joueur (live) : x, y, a en centièmes ; w arme ; f compteur de tirs ;
-// m monture ('h3' cheval n° 3, 'c1' wagonnet n° 1) ; s abscisse sur les rails ; z vise à la lunette ; v vitesse.
+// m monture ('h3' cheval n° 3, 'c1' wagonnet n° 1) ; s abscisse sur les rails ; z vise à la lunette ; v vitesse ;
+// c accroupi.
 export function liveOf(p) {
   const d = { x: Math.round(p.x * 100), y: Math.round(p.y * 100), a: Math.round(p.a * 100) };
   if (p.w) d.w = p.w;
@@ -955,6 +1009,7 @@ export function liveOf(p) {
   if (p.m) d.m = p.m;
   if (p.m && p.m[0] === 'c') d.s = Math.round(p.s * 100);
   if (p.v) d.v = Math.round(p.v * 10);
+  if (p.c && !p.m) d.c = 1;
   if (p.dead) d.dead = 1;
   return d;
 }
@@ -988,6 +1043,9 @@ export class FpsGame {
     this.gold = []; // sacs d'or des événements
     this.fires = []; // flaques de feu (lanterne, réverbère, foin, lustre)
     this.fireId = 0;
+    this.tethers = []; // cordes tendues (lasso, harpon) : { by, tg, w, until, release, next }
+    this.traps = []; // pièges à loup posés
+    this.trapId = 0;
     this.later = []; // ce qui arrive un instant plus tard : barils voisins qui sautent en chaîne, lustre qui touche le sol
     this.ledger = new FpsEventLedger();
     this.lastTick = 0;
@@ -1035,6 +1093,7 @@ export class FpsGame {
       pos: this.p.map((q) => ({ x: q.x, y: q.y, a: q.a, alive: q.alive, m: q.m })),
       props: this.world.props.filter((pr) => pr.st && pr.st !== 'ok').map((pr) => [pr.key, pr.st]),
       fires: this.fires.map((f) => ({ id: f.id, x: f.x, y: f.y, r: f.r, t1: f.t1 })),
+      traps: this.traps.map((q) => ({ id: q.id, x: q.x, y: q.y, by: q.by })),
       mine: { hp: p.hp, armor: p.armor, alive: p.alive, x: p.x, y: p.y, a: p.a },
     };
   }
@@ -1053,6 +1112,7 @@ export class FpsGame {
     if (Number.isFinite(d.x) && Number.isFinite(d.y)) { p.x = clamp(d.x / 100, 0, this.world.w); p.y = clamp(d.y / 100, 0, this.world.h); }
     if (Number.isFinite(d.a)) p.a = d.a / 100;
     p.v = Number.isFinite(d.v) ? d.v / 10 : 0;
+    p.c = !!d.c && !p.m;
     if (p.m) {
       if (p.m[0] === 'h') { const h = this.horses[+p.m.slice(1)]; if (h) { h.x = p.x; h.y = p.y; h.a = p.a; } }
       else if (Number.isFinite(d.s)) { const c = this.carts[+p.m.slice(1)]; if (c) c.s = d.s / 100; p.s = d.s / 100; }
@@ -1082,6 +1142,9 @@ export class FpsGame {
     else if (a.kind === 'mount' && typeof a.m === 'string') this.mount(i, a.m);
     else if (a.kind === 'dismount') this.dismount(i);
     else if (a.kind === 'throw' && num('x', 'y', 'a')) this.throwDyn(i, a, t);
+    else if (a.kind === 'trap' && num('tx', 'ty')) this.setTrap(i, { x: a.tx, y: a.ty }, t);
+    else if (a.kind === 'ignite' && num('tx', 'ty')) this.ignite(i, { x: a.tx, y: a.ty }, t);
+    else if (a.kind === 'reel') this.reel(i, !!a.on, t);
     else if (a.kind === 'prop' && typeof a.key === 'string' && num('dmg')) this.playerProp(i, a, t);
     else if (a.kind === 'use' && typeof a.key === 'string') this.use(i, a, t);
     else if (a.kind === 'shot') p.stats.throws++; // simple compteur (statistiques)
@@ -1124,6 +1187,7 @@ export class FpsGame {
       const n = this.npcs.find((q) => q.id === a.id && q.alive);
       if (!n || Math.hypot(n.x - p.x, n.y - p.y) > range) return;
       this.npcDamage(n, dmg, i, w, t);
+      this.onHit(i, { n }, w, dmg, t, !!a.hold);
     } else {
       const j = a.id;
       const q = this.p[j];
@@ -1131,8 +1195,82 @@ export class FpsGame {
       if (t - q.spawnedAt < 1500) return; // un instant d'invulnérabilité au retour
       p.stats.hits++;
       this.damage(j, dmg, { by: i, w });
+      this.onHit(i, { p: j }, w, dmg, t, !!a.hold);
     }
   }
+
+  // Ce que fait le coup en plus des dégâts (joueur i, cible { p } ou { n }) : le lasso et le harpon attachent la cible
+  // au bout de leur corde (le cavalier est désarçonné) ; hold : le tireur maintenait le tir quand le coup a porté (sinon
+  // la corde est lâchée aussitôt). Le pistolet du Diable rend au tireur une part des dégâts.
+  onHit(i, tg, w, dmg, t, hold = false) {
+    const W8 = WEAPONS[w], p = this.p[i];
+    if (!W8 || !p) return;
+    if (W8.leech && p.alive && p.hp < FPS.hp) {
+      p.hp = Math.min(FPS.hp, Math.round(p.hp + dmg * W8.leech));
+      this.push({ type: 'regen', who: i, hp: p.hp, leech: true });
+    }
+    const T = W8.tether;
+    if (!T || !p.alive) return;
+    const q = tg.p != null ? this.p[tg.p] : tg.n;
+    if (!q?.alive) return;
+    if (tg.p != null && q.m) this.dismount(tg.p);
+    for (const x of this.tethers.filter((x) => x.by === i)) this.untether(x, t); // une seule corde par tireur
+    // les bots tiennent la corde un moment puis la lâchent
+    if (p.bot) hold = true;
+    if (!hold) { if (T.keep) this.snare(tg, T.keep, t, w, i); return; }
+    this.tethers.push({ by: i, tg, w, until: t + T.max, release: p.bot ? t + rnd(700, 2000) : Infinity, next: 0 });
+    this.snare(tg, 450, t, w, i);
+    this.push({ type: 'tether', by: i, who: tg.p ?? -1, npc: tg.n ? tg.n.id : -1, w });
+  }
+
+  // Le tireur relâche le tir (on = false) : la corde est lâchée
+  reel(i, on, t) {
+    if (on) return;
+    for (const x of this.tethers.filter((x) => x.by === i)) this.untether(x, t);
+  }
+
+  // Corde lâchée (ou rompue) : le harpon libère la cible, le lasso la laisse ligotée encore keep ms
+  untether(x, t) {
+    const k = this.tethers.indexOf(x);
+    if (k < 0) return;
+    this.tethers.splice(k, 1);
+    const q = x.tg.p != null ? this.p[x.tg.p] : x.tg.n;
+    if (q?.alive) this.snare(x.tg, WEAPONS[x.w].tether.keep, t, x.w, x.by, true);
+    this.push({ type: 'untether', by: x.by });
+  }
+
+  // Cordes tendues : la cible est ramenée vers le tireur (sans le coller), et reste entravée ; la corde se rompt si
+  // l'un des deux tombe, si elle passe derrière un mur, ou au bout de max ms. La position de la cible est annoncée
+  // toutes les 150 ms (le joueur tiré la suit en douceur).
+  tetherTick(t, dt) {
+    for (const x of [...this.tethers]) {
+      const p = this.p[x.by], q = x.tg.p != null ? this.p[x.tg.p] : x.tg.n, W8 = WEAPONS[x.w];
+      if (!p?.alive || !q?.alive || t >= x.until || t >= x.release) { this.untether(x, t); continue; }
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d > W8.range + 3 || !los(this.world, p.x, p.y, q.x, q.y)) { this.untether(x, t); continue; }
+      if (d > 1.3) {
+        const step = Math.min(W8.tether.speed * dt, d - 1.3);
+        const r = move(this.world, q.x, q.y, ((p.x - q.x) / d) * step, ((p.y - q.y) / d) * step, x.tg.n ? 0.26 : FPS.radius);
+        q.x = r.x; q.y = r.y;
+      }
+      q.snareUntil = t + 450;
+      if (t >= x.next) { x.next = t + 150; this.snare(x.tg, 450, t, x.w, x.by, true); }
+    }
+  }
+
+  // Une cible entravée (lasso, harpon, piège) : elle ne peut plus avancer pendant ms (elle tire encore) ; quiet : mise à
+  // jour d'une corde déjà tendue (pas d'annonce ni de bruit chez les joueurs)
+  snare(tg, ms, t, w, by = -1, quiet = false) {
+    if (tg.n) {
+      tg.n.snareUntil = t + ms;
+      this.push({ type: 'snare', npc: tg.n.id, ms, x: tg.n.x, y: tg.n.y, w, by, quiet: quiet || undefined });
+    } else {
+      const q = this.p[tg.p];
+      q.snareUntil = t + ms;
+      this.push({ type: 'snare', who: tg.p, ms, x: q.x, y: q.y, w, by, quiet: quiet || undefined });
+    }
+  }
+
 
   // Dégâts subis par un joueur (by : joueur, npc : bandit, train, dyn).
   damage(j, dmg, src = {}) {
@@ -1140,6 +1278,7 @@ export class FpsGame {
     const t = this.t;
     if (!q.alive) return;
     if (t < q.shieldUntil) dmg *= t - q.spawnedAt < 1600 ? 0 : FPS.shieldTake;
+    let horse = null; // la part du cheval, annoncée avec le coup (sa barre de vie, chez le cavalier et chez le tireur)
     if (q.m) {
       // la monture encaisse sa part
       if (q.m[0] === 'h') {
@@ -1148,7 +1287,8 @@ export class FpsGame {
         dmg -= hd;
         if (h) {
           h.hp -= hd;
-          if (h.hp <= 0) this.horseDown(h, t);
+          horse = { id: h.id, hp: Math.max(0, Math.round(h.hp)), dmg: Math.round(hd) };
+          if (h.hp <= 0) this.horseDown(h, t, src.by ?? -1);
         }
       } else dmg *= 1 - FPS.cart.share;
     }
@@ -1160,7 +1300,7 @@ export class FpsGame {
     q.stats.hurt++;
     if (src.by != null) q.lastBy = src.by;
     if (q.hp <= 0) return this.kill(j, src);
-    this.push({ type: 'hurt', who: j, dmg: Math.round(dmg), hp: q.hp, armor: q.armor, by: src.by ?? -1, npc: src.npc ?? -1, fx: src.fx, fy: src.fy });
+    this.push({ type: 'hurt', who: j, dmg: Math.round(dmg), hp: q.hp, armor: q.armor, by: src.by ?? -1, npc: src.npc ?? -1, fx: src.fx, fy: src.fy, horse });
   }
 
   kill(j, src) {
@@ -1272,34 +1412,90 @@ export class FpsGame {
     else this.push({ type: 'dismount', who: i, m, x, y, silent: true });
   }
 
-  horseDown(h, t) {
+  // by : qui l'a abattu (-1 : un bandit, une explosion) ; rider : qui le montait (il se retrouve à pied)
+  horseDown(h, t, by = -1) {
     h.hp = 0;
     h.deadAt = t;
     const r = h.rider;
     if (r >= 0) this.dismount(r);
     h.rider = -1;
-    this.push({ type: 'horseDown', id: h.id, x: h.x, y: h.y });
+    this.push({ type: 'horseDown', id: h.id, x: h.x, y: h.y, by, rider: r });
   }
 
   // ---------------------------------------------------------- dynamite
+  // a.item : 'molotov' (cocktail : il éclate en touchant le sol), 'mortar' (obus du mortier, a.d : portée voulue),
+  // sinon un bâton de dynamite
   throwDyn(i, a, t) {
     const p = this.p[i];
     if (Math.hypot(a.x - p.x, a.y - p.y) > 3 || this.mods(t).melee) return;
+    if (a.item === 'mortar') {
+      const d = mortarReach(this.world, a.x, a.y, a.a, Number.isFinite(a.d) ? a.d : FPS.mortar.range);
+      this.addDyn({ by: i, x0: a.x, y0: a.y, x1: a.x + Math.cos(a.a) * d, y1: a.y + Math.sin(a.a) * d, at: t, ball: true, mortar: true, fuse: 450 + d * 55 });
+      return;
+    }
     const to = dynLanding(this.world, a.x, a.y, a.a, Number.isFinite(a.pow) ? a.pow : 1);
-    this.addDyn({ by: i, x0: a.x, y0: a.y, x1: to.x, y1: to.y, at: t });
+    if (a.item === 'molotov') this.addDyn({ by: i, x0: a.x, y0: a.y, x1: to.x, y1: to.y, at: t, mol: true, fuse: 650 });
+    else this.addDyn({ by: i, x0: a.x, y0: a.y, x1: to.x, y1: to.y, at: t });
     p.stats.throws++;
   }
 
-  // d.ball : boulet de canon (vole d.fuse ms, sans mèche)
+  // d.ball : boulet de canon ou obus de mortier (vole d.fuse ms, sans mèche) ; d.mol : cocktail (éclate à l'arrivée)
   addDyn(d) {
     d.id = this.dynId++;
     d.boomAt = d.at + (d.fuse || FPS.dyn.fuse);
     this.dyns.push(d);
-    this.push({ type: 'dyn', id: d.id, by: d.by, npc: d.npc ?? -1, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1, at: d.at, boomAt: d.boomAt, ball: d.ball || undefined });
+    this.push({ type: 'dyn', id: d.id, by: d.by, npc: d.npc ?? -1, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1, at: d.at, boomAt: d.boomAt, ball: d.ball || undefined, mortar: d.mortar || undefined, mol: d.mol || undefined });
   }
 
   explode(d, t) {
-    this.blast(d.x1, d.y1, { by: d.by, npc: d.npc, id: d.id, w: d.ball ? 'cannon' : 'dynamite', power: d.ball ? FPS.cannon : FPS.dyn }, t);
+    if (d.mol) {
+      // le verre éclate, le tord-boyaux s'enflamme : une grande flaque de feu (le foin et les barils voisins s'en chargent)
+      this.push({ type: 'boom', id: d.id, x: d.x1, y: d.y1, mol: true });
+      this.addFire(d.x1, d.y1, { by: d.by, npc: d.npc }, t, FPS.mol.fire, FPS.mol.r);
+      return;
+    }
+    const w = d.mortar ? 'coehorn' : d.ball ? 'cannon' : 'dynamite';
+    this.blast(d.x1, d.y1, { by: d.by, npc: d.npc, id: d.id, w, power: d.mortar ? FPS.mortar : d.ball ? FPS.cannon : FPS.dyn }, t);
+  }
+
+  // ---------------------------------------------------------- pièges à loup et flèches enflammées
+  setTrap(i, a, t) {
+    const p = this.p[i];
+    if (Math.hypot(a.x - p.x, a.y - p.y) > 2 || blocks(this.world, cellAt(this.world, a.x, a.y))) return;
+    // au-delà de max pièges posés par le même joueur, le plus ancien est ramassé
+    const mine = this.traps.filter((q) => q.by === i);
+    if (mine.length >= FPS.trap.max) this.dropTrap(mine[0]);
+    const q = { id: this.trapId++, x: a.x, y: a.y, by: i, t1: t + FPS.trap.life };
+    this.traps.push(q);
+    this.push({ type: 'trap', id: q.id, x: q.x, y: q.y, by: i });
+  }
+
+  dropTrap(q, ev = { type: 'trapGone' }) {
+    this.traps.splice(this.traps.indexOf(q), 1);
+    this.push({ ...ev, id: q.id, x: q.x, y: q.y });
+  }
+
+  // Le piège se referme sur le premier qui marche dessus (son poseur l'enjambe) ; il disparaît au bout de life ms
+  trapTick(t) {
+    for (const q of [...this.traps]) {
+      if (t >= q.t1) { this.dropTrap(q); continue; }
+      const j = this.p.findIndex((p, k) => p.alive && k !== q.by && !p.m && Math.hypot(p.x - q.x, p.y - q.y) < FPS.trap.r + FPS.radius);
+      const n = j < 0 ? this.npcs.find((m) => m.alive && Math.hypot(m.x - q.x, m.y - q.y) < FPS.trap.r + 0.3) : null;
+      if (j < 0 && !n) continue;
+      this.dropTrap(q, { type: 'trapped', who: j, npc: n ? n.id : -1, by: q.by });
+      const v = FPS.trap.dmg * this.mods(t).dmgMult;
+      if (n) { this.npcDamage(n, v, q.by, 'trap', t); if (n.alive) this.snare({ n }, FPS.trap.snare, t, 'trap', q.by); }
+      else { this.damage(j, v, { by: q.by >= 0 && q.by !== j ? q.by : undefined, w: 'trap', fx: q.x, fy: q.y }); if (this.p[j].alive) this.snare({ p: j }, FPS.trap.snare, t, 'trap', q.by); }
+    }
+  }
+
+  // Flèche enflammée (arc bandé à fond) : une petite flamme là où elle s'est plantée
+  ignite(i, a, t) {
+    const p = this.p[i];
+    if (Math.hypot(a.x - p.x, a.y - p.y) > WEAPONS.bow.range * 2 + 4 || this.mods(t).melee) return;
+    if (t - (p.igniteAt || -1e9) < 250) return;
+    p.igniteAt = t;
+    this.addFire(a.x, a.y, { by: i }, t, 2600, 0.45);
   }
 
   // Une explosion (dynamite, boulet, baril) : dégâts dégressifs à ceux qu'elle voit, puis le décor alentour.
@@ -1325,7 +1521,7 @@ export class FpsGame {
     }
     for (const h of this.horses) {
       if (h.deadAt || h.rider >= 0) continue;
-      if (Math.hypot(h.x - x, h.y - y) < radius * 0.6) this.horseDown(h, t);
+      if (Math.hypot(h.x - x, h.y - y) < radius * 0.6) this.horseDown(h, t, by);
     }
     // le décor : les barils voisins sautent à leur tour (un instant après : la réaction en chaîne se voit),
     // les caisses volent, le foin s'embrase, lanternes et bouteilles éclatent, le coffre s'ouvre
@@ -1346,6 +1542,13 @@ export class FpsGame {
     const max = maxShot(a.w);
     if (!pr || !max || (this.mods(t).melee && !WEAPONS[a.w]?.melee)) return;
     if (Math.hypot(pr.x - p.x, pr.y - p.y) > (WEAPONS[a.w]?.range || 2) * 2 + 4) return;
+    // la pioche : un coup suffit (tonneaux, caisses, rochers, murets de caisses... et barils de poudre, gare !)
+    if (WEAPONS[a.w]?.breaks) {
+      if (!PICKABLE.has(pr.kind) || (pr.st && pr.st !== 'ok') || pr.armed) return;
+      if (pr.kind === 'tnt') this.arm(pr, { by: i }, t, 0);
+      else this.propBreak(pr, { by: i }, t);
+      return;
+    }
     this.propHit(pr, clamp(a.dmg, 0, max), { by: i }, t);
   }
 
@@ -1405,10 +1608,37 @@ export class FpsGame {
         this.setProp(pr, 'open', t, { by });
         // le butin s'échappe : une arme de caisse (ou l'étoile), puis des munitions et des soins
         ['power', 'heal', 'ammo'].forEach((set, k) => this.dropCrate(pr.x, pr.y, t, set, k));
+        if (by >= 0 && this.p[by] && !this.dm) this.heist(pr, by, t);
         break;
       }
       default: this.setProp(pr, 'gone', t, { by }); // caisses, rochers, bouteilles
     }
+  }
+
+  // Braquage : le magot d'El Diablo pour le dynamiteur, des sacs d'or qui roulent autour du coffre (au premier
+  // arrivé), et ses hommes de main qui débarquent et traquent le braqueur un moment.
+  heist(pr, by, t) {
+    const H = FPS.heist, w = this.world;
+    const pts = addPts(this.p[by], H.pts);
+    const ev = { k: `heist${(this.heists = (this.heists || 0) + 1)}` }; // pour le registre : chaque sac ne se ramasse qu'une fois
+    // le coffre est contre un mur : on cherche autour, de plus en plus loin, des places libres et en vue du coffre
+    const bags = [];
+    for (const d of [0.75, 1.15, 1.55, 1.95, 2.4, 2.85]) {
+      for (let s = 0; s < 16 && bags.length < H.bags; s++) {
+        const a = (s / 16) * Math.PI * 2 + d;
+        const x = pr.x + Math.cos(a) * d, y = pr.y + Math.sin(a) * d;
+        if (blocks(w, cellAt(w, x, y)) || !los(w, pr.x, pr.y, x, y, 0.3) || bags.some((b) => Math.hypot(b.x - x, b.y - y) < 0.6)) continue;
+        const g = { id: this.gold.length, ev, n: bags.length, x, y, t1: t + H.bagLife };
+        this.gold.push(g);
+        bags.push({ id: g.id, x, y });
+      }
+    }
+    this.hunt = { p: by, until: t + H.hunt };
+    for (let k = 0; k < H.posse; k++) {
+      const n = this.spawnNpc(t, k ? 'rifleman' : 'bandit');
+      if (n) n.target = { p: by };
+    }
+    this.push({ type: 'heist', by, pts, x: pr.x, y: pr.y, gold: bags });
   }
 
   // le lustre touche le sol : ceux qui sont dessous sont écrasés, les bougies mettent le feu
@@ -1538,8 +1768,9 @@ export class FpsGame {
       this.p[by].stats.hits++;
     }
     this.push({ type: 'nkill', id: n.id, by, w, pts, x: n.x, y: n.y, kind: n.kind });
-    // un bandit sur six lâche une caisse en tombant
-    if (n.kind !== 'diablo' && Math.random() < 0.16) {
+    // El Diablo lâche son pistolet (dans une caisse) ; un bandit sur six lâche une caisse en tombant
+    if (n.kind === 'diablo') this.dropCrate(n.x, n.y, t, 'diablo');
+    else if (Math.random() < 0.16) {
       const c = { id: this.crateId++, x: n.x, y: n.y, t1: t + FPS.crateLife };
       this.crates.push(c);
       this.push({ type: 'crate', id: c.id, x: c.x, y: c.y, drop: true });
@@ -1600,11 +1831,12 @@ export class FpsGame {
   // Cibles possibles d'un bandit : les joueurs vivants (y compris les bots)
   npcTarget(n) {
     let best = null, bd = 1e9;
+    const hunted = this.hunt && this.t < this.hunt.until ? this.hunt.p : -1;
     this.p.forEach((p, j) => {
       if (!p.alive || p.left) return;
       const d = Math.hypot(p.x - n.x, p.y - n.y);
-      const seen = d < 18 && los(this.world, n.x, n.y, p.x, p.y);
-      const score = d - (seen ? 6 : 0) - (n.target?.p === j ? 3 : 0);
+      const seen = d < 18 && los(this.world, n.x, n.y, p.x, p.y, bodyZ(p));
+      const score = d - (seen ? 6 : 0) - (n.target?.p === j ? 3 : 0) - (j === hunted ? 10 : 0);
       if (score < bd) { bd = score; best = j; }
     });
     return best;
@@ -1625,7 +1857,7 @@ export class FpsGame {
     const tg = n.target && this.p[n.target.p];
     if (!tg || !tg.alive) { n.st = 0; n.target = null; return; }
     const dist = Math.hypot(tg.x - n.x, tg.y - n.y);
-    const seen = dist < k.range + 4 && los(this.world, n.x, n.y, tg.x, tg.y);
+    const seen = dist < k.range + 4 && los(this.world, n.x, n.y, tg.x, tg.y, bodyZ(tg));
     const aimA = Math.atan2(tg.y - n.y, tg.x - n.x);
     if (n.aimAt) {
       // il vise, puis tire (ou lance son bâton)
@@ -1656,6 +1888,8 @@ export class FpsGame {
       n.st = 2;
       return;
     }
+    // pris au lasso, cloué par un harpon, pied dans un piège : il se débat sur place
+    if (t < (n.snareUntil || 0)) { n.st = 0; if (seen) n.a = aimA; return; }
     // déplacement : il approche jusqu'à sa distance de tir (le tireur garde ses distances)
     n.st = 1;
     const keep = k.keep || (n.kind === 'brute' ? 1.6 : 5);
@@ -1715,6 +1949,8 @@ export class FpsGame {
         for (const l of due) l.fn(t);
       }
       this.fireTick(t);
+      this.trapTick(t);
+      this.tetherTick(t, dt);
       this.propTick(t);
       // chevaux abattus : un autre revient à l'écurie
       for (const h of this.horses) if (h.deadAt && t - h.deadAt > FPS.horse.back) {
@@ -1832,7 +2068,9 @@ export class FpsGame {
         const lo = { m: pick(MELEE), p: pick(PISTOLS), l: pick(LONGS), e: pick(EQUIPS) };
         this.spawn(i, lo, t);
         b.w = p.lo?.l;
-        b.dyn = p.lo?.e === 'dynamite' ? 3 : 0;
+        b.dyn = p.lo?.e === 'dynamite' ? EQUIP.dynamite.dyn : 0;
+        b.mol = p.lo?.e === 'molotov' ? EQUIP.molotov.mol : 0;
+        b.traps = p.lo?.e === 'traps' ? EQUIP.traps.traps : 0;
         b.temp = null;
       }
       return;
@@ -1860,7 +2098,7 @@ export class FpsGame {
       this.p.forEach((q, j) => {
         if (j === i || !q.alive) return;
         const d = Math.hypot(q.x - p.x, q.y - p.y) + 1.5; // les bandits d'abord, à distance égale
-        if (d < 20 && d < bd && los(w, p.x, p.y, q.x, q.y)) { bd = d; best = { p: j }; }
+        if (d < 20 && d < bd && los(w, p.x, p.y, q.x, q.y, bodyZ(q))) { bd = d; best = { p: j }; }
       });
       if (best && (best.n !== b.seenId?.n || best.p !== b.seenId?.p)) b.seenAt = t;
       b.seenId = best;
@@ -1888,13 +2126,16 @@ export class FpsGame {
     const wid = mods.melee ? p.lo.m : temp ? b.temp.id : b.w || p.lo.l;
     const W8 = WEAPONS[wid];
     p.w = wid;
-    let speed = FPS.speed * (p.lo.e === 'spurs' ? 1.15 : 1) * (mods.speed || 1) * (W8.slow || 1);
+    // entravé (lasso, harpon, piège) : il ne bouge plus, mais tire encore
+    let speed = t < (p.snareUntil || 0) ? 0 : FPS.speed * (p.lo.e === 'spurs' ? 1.15 : 1) * (mods.speed || 1) * (W8.slow || 1);
+    // pièges : posés en chemin, de temps en temps, loin de la cible
+    if (b.traps > 0 && !tgt && !p.m && Math.random() < dt * 0.25) { b.traps--; this.setTrap(i, { x: p.x, y: p.y }, t); }
     if (tgt && tgt.alive !== false) {
       const dist = Math.hypot(tgt.x - p.x, tgt.y - p.y);
       const aimA = Math.atan2(tgt.y - p.y, tgt.x - p.x);
       p.a = aimA;
-      // pas de côté pendant le combat, et on s'approche si l'arme est courte
-      const want = W8.melee ? 0.9 : Math.min(W8.range * 0.7, 9);
+      // pas de côté pendant le combat, et on s'approche si l'arme est courte (le lasso se lance de loin)
+      const want = W8.melee ? (W8.range > 2 ? W8.range * 0.7 : 0.9) : Math.min(W8.range * 0.7, 9);
       let mx = 0, my = 0;
       if (dist > want) { mx = Math.cos(aimA); my = Math.sin(aimA); } else if (dist < want * 0.5) { mx = -Math.cos(aimA) * 0.6; my = -Math.sin(aimA) * 0.6; }
       const side = aimA + (b.strafe * Math.PI) / 2 * (Math.floor(t / 1300 + i) % 2 ? 1 : -1);
@@ -1912,14 +2153,24 @@ export class FpsGame {
       }
       // tir, après un temps de réaction
       if (t - b.seenAt > b.react && t - b.lastShot >= W8.rate * rnd(1.05, 1.6)) {
-        if (b.dyn > 0 && dist > 4 && dist < FPS.dyn.range && Math.random() < 0.08) {
-          b.dyn--;
-          this.throwDyn(i, { x: p.x, y: p.y, a: aimA + rnd(-0.1, 0.1), pow: dist / FPS.dyn.range }, t);
+        const throwing = b.dyn > 0 ? 'dyn' : b.mol > 0 ? 'mol' : null;
+        if (throwing && dist > 4 && dist < FPS.dyn.range && Math.random() < 0.08) {
+          b[throwing]--;
+          this.throwDyn(i, { x: p.x, y: p.y, a: aimA + rnd(-0.1, 0.1), pow: dist / FPS.dyn.range, item: throwing === 'mol' ? 'molotov' : undefined }, t);
           b.lastShot = t;
+        } else if (W8.lob) {
+          // mortier : l'obus en cloche vers la cible (portée approximative)
+          if (dist < FPS.mortar.near + 0.5) return;
+          b.lastShot = t;
+          p.f = (p.f || 0) + 1;
+          if (temp) b.temp.ammo--;
+          this.throwDyn(i, { x: p.x, y: p.y, a: aimA + rnd(-0.06, 0.06), d: dist + rnd(-1.5, 1.5), item: 'mortar' }, t);
         } else if (!W8.melee || dist < W8.range) {
           b.lastShot = t;
           p.f = (p.f || 0) + 1;
           if (temp) b.temp.ammo -= W8.dual ? 2 : 1;
+          // canardière : le recul repousse le bot
+          if (W8.kick) { const r = move(w, p.x, p.y, -Math.cos(aimA) * W8.kick, -Math.sin(aimA) * W8.kick); p.x = r.x; p.y = r.y; }
           // un baril de poudre tout près de la cible : le bot tire dedans
           const keg = !W8.melee && Math.random() < 0.6 ? this.kegNear(p, tgt, W8) : null;
           if (keg) { this.propHit(keg, PROPS.tnt.hp, { by: i }, t); return; }
@@ -1929,8 +2180,8 @@ export class FpsGame {
           for (let k = 0; k < (W8.pellets || 1) * (W8.dual ? 2 : 1); k++) if (Math.random() < acc) dmg += W8.dmg * fall;
           if (dmg > 0) {
             dmg *= mods.dmgMult;
-            if (b.tg.n != null) this.npcDamage(tgt, dmg, i, wid, t);
-            else if (t - tgt.spawnedAt >= 1500) this.damage(b.tg.p, dmg, { by: i, w: wid });
+            if (b.tg.n != null) { this.npcDamage(tgt, dmg, i, wid, t); this.onHit(i, { n: tgt }, wid, dmg, t); }
+            else if (t - tgt.spawnedAt >= 1500) { this.damage(b.tg.p, dmg, { by: i, w: wid }); this.onHit(i, { p: b.tg.p }, wid, dmg, t); }
           }
         }
       }

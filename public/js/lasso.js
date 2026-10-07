@@ -749,7 +749,7 @@ export class LassoScene extends MiniScene {
         if (h) h.stinkUntil = this.t + 1500;
       }
       if (a.kind === 'outlaw') {
-        this.announce(ev.by === this.me ? 'HORS-LA-LOI CAPTURÉ !' : `${this.name(ev.by).toUpperCase()} L'A CAPTURÉ !`, `+${ev.pts} - LE BUTIN EST SAUF`, '#b8e070', 2400);
+        this.announce(ev.by === this.me ? 'HORS-LA-LOI CAPTURÉ !' : `${this.name(ev.by).toUpperCase()} L'A CAPTURÉ !`, `+${ev.pts} - EL DIABLO N'AURA PAS LE BUTIN`, '#b8e070', 2400);
         sfx('good');
       }
       if (ev.by === this.me) {
@@ -772,9 +772,9 @@ export class LassoScene extends MiniScene {
         const h = this.horse(ev.from);
         if (h) this.popup(h.x, h.y - 66, `-${ev.pts}`, '#f0705a', true);
         const who = ev.from === this.me ? 'TOI' : this.name(ev.from).toUpperCase();
-        this.announce('LE HORS-LA-LOI S\'ENFUIT !', `IL VOLE ${ev.pts} PTS À ${who}`, '#f0705a', 2600);
+        this.announce('LE HORS-LA-LOI S\'ENFUIT !', `IL APPORTE ${ev.pts} PTS DE ${who} À EL DIABLO`, '#f0705a', 2600);
         sfx(ev.from === this.me ? 'bad' : 'revolver');
-      } else this.announce('LE HORS-LA-LOI S\'ENFUIT !', 'LES POCHES VIDES', '#f0705a', 2200);
+      } else this.announce('LE HORS-LA-LOI S\'ENFUIT !', 'LES POCHES VIDES : EL DIABLO SERA FURIEUX', '#f0705a', 2200);
     } else if (ev.type === 'left') {
       const r = this.remote[ev.who];
       if (r) r.left = true;

@@ -137,7 +137,7 @@ export const BEERS = {
   geante: { name: 'LA CHOPE DU MINEUR', desc: 'ÉNORME ET LOURDE : UN VRAI MUR', r: 6, m: 2.6, mu: 1, w: 1.2 },
   tordt: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS TOI', r: 4, m: 1, mu: 1, curl: 1, w: 0.9, art: 'tord' },
   tordm: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS LE MUR', r: 4, m: 1, mu: 1, curl: -1, w: 0.9, art: 'tord' },
-  piment: { name: 'LA BIÈRE AU PIMENT', desc: 'ÇA CHAUFFE : AU CHOC, ELLE FAIT GICLER', r: 4, m: 1.2, mu: 1, e: 1.6, w: 1.4 },
+  piment: { name: 'LE PIMENT D\'EL DIABLO', desc: 'ÇA BRÛLE : AU CHOC, ELLE FAIT GICLER', r: 4, m: 1.2, mu: 1, e: 1.6, w: 1.4 },
 };
 export const beerOf = (q) => BEERS[q?.b] || BEERS.blonde;
 

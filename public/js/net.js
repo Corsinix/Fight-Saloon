@@ -526,6 +526,7 @@ export class Net {
       if ((l.game && l.game.phase === 'playing') || l.spinning) return err('Une partie est en cours.');
       if (!validUsername(name) || keyOf(name) !== key) return err('Pseudo invalide.');
       l.players.push({ key, name, character: sanitizeCharacter(character), connected: true });
+      this.sysChat(l, `${name} rejoint la table.`);
       // jeu à 2 choisi mais la table grossit : on passe au premier jeu qui accepte tout le monde
       if (!l.game && l.players.length > MODES[l.mode].max) {
         l.mode = Object.keys(MODES).find((id) => MODES[id].max >= l.players.length) || l.mode;
@@ -619,6 +620,7 @@ export class Net {
         let b, k = 0;
         do b = botPlayer(`${l.code}:${Date.now().toString(36)}:${k++}`); while (l.players.some((p) => p.name === b.name || p.key === b.key));
         l.players.push({ ...b, connected: true });
+        this.sysChat(l, `${b.name} (bot) s’assoit à la table.`);
         if (!l.game && l.players.length > MODES[l.mode].max) {
           l.mode = Object.keys(MODES).find((id) => MODES[id].max >= l.players.length) || l.mode;
         }
@@ -698,8 +700,13 @@ export class Net {
       clearInterval(l.miniTimer);
       l.game = null;
     }
-    for (const o of l.players) this.deliver(o.key, { t: 'info', text: text || `${p.name} a quitté le saloon.` });
+    this.sysChat(l, text || `${p.name} a quitté la table.`);
     this.broadcastLobby(l);
+  }
+
+  // Ligne du narrateur dans le comptoir (arrivées, départs…), pour toute la table.
+  sysChat(l, text) {
+    for (const o of l.players) this.deliver(o.key, { t: 'chat', sys: true, text });
   }
 
   gameIdx(l, key) {

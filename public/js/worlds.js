@@ -61,6 +61,21 @@ export const BOSS_T0 = 130000;
 // fondus au noir entre deux sections
 export const FADES = [[STATION_END, EDGE_START], [EDGE_END, STREET_START], [STREET_END, SALOON_START]];
 
+// Le repaire d'El Diablo, au bout de la grand-rue (la dernière section, 'saloon' dans le code) : le saloon (il arpente le
+// balcon), la mine abandonnée (il roule en wagonnet sur la passerelle et lance de la dynamite) ou la poursuite à cheval
+// (il s'enfuit au galop dans le désert, sa bande nous serre de près). Tiré de la graine (?lair=mine dans l'adresse :
+// imposé, pour l'essayer ; en ligne, chacun doit avoir la même adresse).
+export const LAIRS = { saloon: { name: 'LE SALOON' }, mine: { name: 'LA MINE ABANDONNÉE' }, chase: { name: 'LA POURSUITE' } };
+const FORCED_LAIR = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('lair') : null;
+export function lairOf(seed) {
+  const R = rng((seed ^ 0x510e527f) >>> 0); // tirage à part : le reste du monde ne bouge pas
+  const keys = Object.keys(LAIRS), drawn = keys[Math.floor(R() * keys.length)];
+  return LAIRS[FORCED_LAIR] ? FORCED_LAIR : drawn;
+}
+// le repaire de la partie en cours : posé par shooterWorld (une seule fusillade à la fois par page), lu par camAt et bossX
+let LAIR = 'saloon';
+export const lairNow = () => LAIR;
+
 // Le "rail" : position de la caméra dans le temps, avec des arrêts pendant les vagues.
 const shift = (start, keys) => keys.map(([t, x]) => [t + start, x]);
 const CAM = {
@@ -68,11 +83,13 @@ const CAM = {
   edge: shift(EDGE_START, [[0, 0], [4500, 0], [8000, 384], [14000, 384], [17500, 768], [23500, 768], [27000, 1152], [EDGE_END - EDGE_START, 1152]]),
   street: shift(STREET_START, [[0, 0], [3000, 0], [6500, 250], [12500, 250], [16000, 630], [22500, 630], [26000, 1030], [32000, 1030], [35500, 1440], [41500, 1440], [45000, 1824], [48500, 2208], [STREET_END - STREET_START, 2208]]),
   saloon: shift(SALOON_START, [[0, 0], [11000, 0], [15000, 384], [999999, 384]]),
+  // la poursuite : la caméra ne bouge pas dans la section, c'est le décor qui défile (le galop)
+  chase: [[SALOON_START, 0]],
 };
 
 export function camAt(t) {
   const sec = t < (STATION_END + EDGE_START) / 2 ? 'station' : t < (EDGE_END + STREET_START) / 2 ? 'edge' : t < (STREET_END + SALOON_START) / 2 ? 'street' : 'saloon';
-  const keys = CAM[sec];
+  const keys = sec === 'saloon' && LAIR === 'chase' ? CAM.chase : CAM[sec];
   if (t <= keys[0][0]) return { sec, x: keys[0][1] };
   for (let i = 1; i < keys.length; i++) {
     const [t1, x1] = keys[i];
@@ -192,6 +209,23 @@ export const SAL = {
   tables: [{ x: 352, w: 46, top: 172 }, { x: 706, w: 46, top: 172 }],
   shelves: [112, 136],
 };
+// La mine abandonnée : mêmes emplacements que le saloon, sous d'autres noms (pour buildSpots) : balcony, la passerelle
+// où roule le wagonnet d'El Diablo ; upperDoors, les galeries de l'étage ; rails, les poteaux de la passerelle (bandits
+// penchés par-dessus) ; bar / bars, la trémie à minerai ; piano, un wagonnet renversé ; tables, les tas de minerai ;
+// shelves, la planche aux bouteilles des mineurs, au-dessus de la trémie
+export const MINE = {
+  balcony: 92,
+  upperDoors: [52, 196, 344, 548, 700],
+  rails: [132, 276, 460, 626],
+  bar: { x: 36, w: 288, top: 148 },
+  bars: [76, 146, 216, 286],
+  piano: { x: 420, w: 66, top: 152 },
+  tables: [{ x: 348, w: 52, top: 170 }, { x: 690, w: 58, top: 168 }],
+  shelves: [116, 138],
+  lamps: [120, 300, 470, 650], // lanternes pendues aux étais (on les casse)
+};
+// La poursuite : El Diablo galope au loin (pieds en y), ses hommes dans les couloirs du premier plan
+export const CHASE = { y: 150, scale: 1.6, lanes: [170, 180, 190, 200], speed: 0.42 };
 
 // La gare : bâtiment à gauche, quai, train à quai (3 wagons et la locomotive) sur la voie du fond.
 export const STA = {
@@ -352,14 +386,20 @@ function buildSpots(L) {
     if (c.kind !== 'cross' && c.kind !== 'wagon' && c.kind !== 'hearse') bottle('edge', c.x + w / 2, top);
   }
 
-  for (const x of SAL.upperDoors) frame('saloon', 'door', { x, y: SAL.balcony - 56, w: 34, h: 56 }, SAL.balcony + 6);
-  for (const cx of SAL.rails) add({ sec: 'saloon', kind: 'rail', x: cx - 26, y: 26, w: 52, h: SAL.balcony - 26, cx, base: 100 });
-  for (const cx of SAL.bars) add({ sec: 'saloon', kind: 'bar', x: cx - 26, y: 96, w: 52, h: 64, cx, base: 162 });
-  cover('saloon', SAL.piano.x, SAL.piano.w, SAL.piano.top, 50);
-  for (const t of SAL.tables) cover('saloon', t.x, t.w, t.top, 34);
-  for (const y of SAL.shelves) for (let x = 56; x <= 296; x += 40) bottle('saloon', x, y);
-  // El Diablo arpente tout le balcon (base 110 : dessiné devant les portes de l'étage)
-  add({ sec: 'saloon', kind: 'boss', x: 300, y: 0, w: 460, h: SAL.balcony, cx: 576, base: 110 });
+  // le repaire : le saloon ou la mine (mêmes emplacements) ; la poursuite n'en a pas (que des cavaliers)
+  if (L.lair === 'chase') {
+    add({ sec: 'saloon', kind: 'boss', x: 0, y: 0, w: W, h: H, cx: W / 2, base: CHASE.y });
+    return spots;
+  }
+  const G = L.lair === 'mine' ? MINE : SAL;
+  for (const x of G.upperDoors) frame('saloon', 'door', { x, y: G.balcony - 56, w: 34, h: 56 }, G.balcony + 6);
+  for (const cx of G.rails) add({ sec: 'saloon', kind: 'rail', x: cx - 26, y: 26, w: 52, h: G.balcony - 26, cx, base: G.balcony + 4 });
+  for (const cx of G.bars) add({ sec: 'saloon', kind: 'bar', x: cx - 26, y: G.bar.top - 50, w: 52, h: 64, cx, base: G.bar.top + 16 });
+  cover('saloon', G.piano.x, G.piano.w, G.piano.top, 50);
+  for (const t of G.tables) cover('saloon', t.x, t.w, t.top, 34);
+  for (const y of G.shelves) for (let x = 56; x <= 296; x += 40) bottle('saloon', x, y);
+  // El Diablo arpente tout le balcon, ou toute la passerelle (dessiné devant les portes de l'étage)
+  add({ sec: 'saloon', kind: 'boss', x: 300, y: 0, w: 460, h: G.balcony, cx: 576, base: G.balcony + 14 });
   return spots;
 }
 
@@ -389,18 +429,26 @@ export const SUPPLY_LEAD = 900; // il apparaît, puis lance la caisse
 export const BANDIT_LOOKS = 8, CIVIL_LOOKS = 5;
 
 // El Diablo arpente le balcon : position (x dans le saloon) à l'instant t, la même pour tout le monde.
+// Dans la mine, son wagonnet roule d'un bout à l'autre de la passerelle (plus loin, plus longtemps) ; dans la
+// poursuite, il zigzague au galop devant nous (x à l'écran, la caméra ne bouge pas).
 const BOSS_PATH = [576, 470, 690, 540, 700, 450, 620];
+const MINE_PATH = [600, 380, 720, 450, 690, 520, 740, 400];
 export function bossX(t) {
-  const P = 2400, M = 900, dt = Math.max(0, t - BOSS_T0);
+  const dt = Math.max(0, t - BOSS_T0);
+  if (LAIR === 'chase') return 262 + 62 * Math.sin(dt / 1500) + 24 * Math.sin(dt / 560 + 1);
+  const [path, P, M] = LAIR === 'mine' ? [MINE_PATH, 2300, 1400] : [BOSS_PATH, 2400, 900];
   const k = Math.floor(dt / P), u = (dt % P - (P - M)) / M;
-  const a = BOSS_PATH[k % BOSS_PATH.length], b = BOSS_PATH[(k + 1) % BOSS_PATH.length];
+  const a = path[k % path.length], b = path[(k + 1) % path.length];
   return a + (b - a) * smooth(u);
 }
+// hauteur (à l'écran) où l'on vise El Diablo
+export const bossAimY = () => (LAIR === 'chase' ? CHASE.y - Math.round(30 * CHASE.scale) : LAIR === 'mine' ? MINE.balcony - 44 : 50);
 
 export function shooterWorld(seed, n, edge = null) {
   const layout = streetLayout(seed);
   layout.train = stationTrain(seed);
   layout.edge = edgeLayout(seed, edge);
+  LAIR = layout.lair = lairOf(seed);
   const spots = buildSpots(layout);
   const R = rng(seed);
   const ri = (a, b) => a + Math.floor(R() * (b - a + 1));
@@ -476,18 +524,55 @@ export function shooterWorld(seed, n, edge = null) {
   wave(STATION_START + 1500, STATION_END - 2000, [420, 740], [650, 1000]);
   wave(EDGE_START + 900, EDGE_END - 2000, [420, 740], [650, 1000]);
   wave(STREET_START + 900, STREET_END - 2500, [420, 760], [650, 1000]);
-  wave(SALOON_START + 900, BOSS_T0 - 500, [400, 700], [650, 1000]);
+  // Le repaire : le saloon et la mine ont leurs emplacements (vagues ordinaires) ; dans la poursuite, la bande galope à
+  // nos côtés : des cavaliers nous rattrapent par la gauche (ou se laissent distancer par la droite) dans les quatre
+  // couloirs du premier plan, et tirent quand ils sont au milieu de l'écran.
+  const lair = layout.lair;
+  let lane = 0;
+  const chase = (from, to, gap) => {
+    for (let t = from; t < to;) {
+      const progress = t / dur;
+      const left = R() < 0.62, vx = (left ? 1 : -1) * (0.035 + R() * 0.03), x0 = left ? -44 : W + 44;
+      const fire = [];
+      for (let k = R() < 0.35 + progress * 0.3 ? 2 : 1; k > 0; k--) fire.push(t + Math.round((ri(70, W - 70) - x0) / vx));
+      fire.sort((a, b) => a - b);
+      if (fire.length === 2 && fire[1] - fire[0] < 1300) fire.pop();
+      const tg = {
+        id: targets.length, spot: -1, sec: 'saloon', kind: 'rider', t0: t, t1: t + Math.round((W + 88) / Math.abs(vx)), fire, victims: fire.map(() => Math.floor(R() * n)),
+        hp: 1, pts: SHOOTER_PTS.rider, look: Math.floor(R() * BANDIT_LOOKS), ride: { x0, vx, y: CHASE.lanes[lane++ % CHASE.lanes.length] + ri(-2, 2) },
+      };
+      if (t - lastLoot > 6500 && R() < 0.18) { tg.bonus = pickBonus(R()); tg.loot = true; lastLoot = t; }
+      targets.push(tg);
+      t += Math.round(ri(gap[0], gap[1]) * gapK);
+    }
+  };
+  if (lair === 'chase') chase(SALOON_START + 2500, BOSS_T0 - 1500, [1300, 2000]);
+  else wave(SALOON_START + 900, BOSS_T0 - 500, [400, 700], [650, 1000]);
 
-  // El Diablo : surgit au balcon, l'arpente et tire régulièrement jusqu'à ce qu'on l'abatte.
+  // El Diablo : surgit au balcon (ou sur la passerelle, ou au galop devant nous) et tire régulièrement jusqu'à ce qu'on l'abatte.
   const bossFire = [];
-  for (let t = BOSS_T0 + 1700; t < dur - 400; t += 1700) bossFire.push(t);
+  for (let t = BOSS_T0 + 1700; t < dur - 400; t += lair === 'chase' ? 1900 : 1700) bossFire.push(t);
   const v0 = Math.floor(R() * n);
   const bossSpot = spots.find((s) => s.kind === 'boss');
-  targets.push({
+  const bossTg = {
     id: targets.length, spot: bossSpot.id, sec: 'saloon', kind: 'boss', t0: BOSS_T0, t1: dur, fire: bossFire,
     victims: bossFire.map((_, k) => (v0 + k) % n), hp: 8 + n * 4, pts: SHOOTER_PTS.bossHit, look: 0,
-  });
-  wave(BOSS_T0 + 1000, dur - 1200, [800, 1200], [800, 1200]);
+  };
+  targets.push(bossTg);
+  if (lair === 'chase') chase(BOSS_T0 + 1500, dur - 2500, [1900, 2800]);
+  else wave(BOSS_T0 + 1000, dur - 1200, [800, 1200], [800, 1200]);
+  // dans la mine et la poursuite, El Diablo lance aussi de la dynamite vers nous : abattue en vol, elle rapporte ;
+  // sinon tout le monde encaisse (et s'il tombe avant, il ne la lance pas)
+  if (lair !== 'saloon') {
+    for (let tt = BOSS_T0 + 4200; tt < dur - 2500; tt += ri(5200, 6800)) {
+      // au départ : le bâton qu'il brandit (au-dessus du wagonnet, ou au bout de son bras levé, à cheval)
+      const cam = camAt(tt).x, x0 = bossX(tt) + (lair === 'chase' ? 13 : 27), y0 = lair === 'chase' ? CHASE.y - Math.round(31 * CHASE.scale) - 30 : MINE.balcony - 56;
+      const g = 0.00016, vy = 0.08 + R() * 0.04, land = 206;
+      const T = Math.round((vy + Math.sqrt(vy * vy + 2 * g * (land - y0))) / g);
+      const vx = (cam + 60 + ri(0, W - 120) - x0) / T;
+      targets.push({ id: targets.length, spot: -1, sec: 'saloon', kind: 'tnt', t0: tt, t1: tt + T, fire: [], victims: [], hp: 1, pts: SHOOTER_PTS.tnt, look: 0, arc: { x0, y0, vx, vy, g }, from: bossTg.id });
+    }
+  }
 
   // le ravitailleur surgit d'une porte, d'un abri ou de derrière le comptoir et lance une caisse en cloche
   for (const tt of SUPPLY_TIMES) {
@@ -563,7 +648,7 @@ export function shooterWorld(seed, n, edge = null) {
     return ev;
   };
   // Cavaliers : des bandits à cheval traversent l'écran au galop, dans un sens puis dans l'autre, et tirent en passant.
-  const riders = (sec, from, to, count) => {
+  const riders = (sec, from, to, count, id = 'riders') => {
     const t = stopAt(sec, from, to, 4500);
     if (t == null) return null;
     const tR = t + 900, cam = camAt(tR).x;
@@ -578,7 +663,7 @@ export function shooterWorld(seed, n, edge = null) {
       });
       end = t1;
     }
-    const ev = { id: 'riders', t0: tR - 1300, t1: end };
+    const ev = { id, t0: tR - 1300, t1: end };
     events.push(ev);
     return ev;
   };
@@ -636,10 +721,12 @@ export function shooterWorld(seed, n, edge = null) {
     break;
   }
   const tl = SALOON_START + 3500 + ri(0, Math.max(0, BOSS_T0 - SALOON_START - 12000));
-  events.push({ id: 'blackout', t0: tl, t1: tl + 6000 });
+  // au saloon, la panne de lumière ; dans la mine, les lampes s'éteignent ; dans la poursuite, la bande nous double au galop
+  if (lair === 'chase') riders('saloon', SALOON_START + 4000, BOSS_T0 - 7000, 4, 'gang');
+  else events.push({ id: lair === 'mine' ? 'lamps' : 'blackout', t0: tl, t1: tl + 6000 });
   events.push({ id: 'wager', t0: BOSS_T0, t1: BOSS_T0 + WAGER.window });
   events.sort((a, b) => a.t0 - b.t0);
-  return { targets, layout, spots, events };
+  return { targets, layout, spots, events, lair };
 }
 
 // pari sur El Diablo : mise, gain de celui qui l'abat, fenêtre pour parier (touche B)
@@ -668,7 +755,7 @@ export function targetAim(tg, t, spots) {
   const cam = camAt(t);
   if (tg.ride) return { x: rideX(tg, t) - cam.x, y: tg.ride.y - 48 };
   const s = spots[tg.spot];
-  if (tg.kind === 'boss') return { x: bossX(t) - cam.x, y: 50 };
+  if (tg.kind === 'boss') return { x: bossX(t) - cam.x, y: bossAimY() };
   return { x: s.cx - cam.x, y: s.kind === 'bottle' ? s.base - 8 : Math.max(s.y + 6, s.base - 40) };
 }
 
@@ -843,7 +930,7 @@ export const DUEL = {
   grace: 600, // délai laissé à l'autre pour annoncer son temps
   timeout: 3000, // personne n'a tiré : manche nulle
   pause: 3800, // entre deux manches
-  decoys: ['DÉJEUNEZ !', 'DÉGAGEZ !', 'DANSEZ !', 'DÉGUSTEZ !', 'DÉMÉNAGEZ !', 'DÉCOIFFEZ !', 'DÉRAPEZ !'],
+  decoys: ['DÉJEUNEZ !', 'DÉGAGEZ !', 'DANSEZ !', 'DÉGUSTEZ !', 'DÉMÉNAGEZ !', 'DÉCOIFFEZ !', 'DÉRAPEZ !', 'DIABLO !'],
 };
 
 // ================================================================ où est Charlie

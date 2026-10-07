@@ -103,7 +103,14 @@ export function portWorld(seed) {
   put('portAnchor', 24.5, 13.6, { solid: 0.25 }); put('portCoil', 29.5, 12.6); put('portCoil', 39.4, 13.6);
   // la batterie de la levée, au bout est : un canon tourné vers le fleuve et le vapeur
   put('cannon', 57.4, 13.4, { solid: 0.4 });
-  for (const x of [5.5, 20.5, 33.5, 48.5]) put('lamp', x, 14.4, { solid: 0.12, lamp: true });
+  // réverbères, jamais devant une porte (on se cognerait au poteau en voulant entrer) ; sur la levée, l'eau compte
+  // aussi comme une « porte » pour nearDoor (un linteau au ras du sol) : seules les vraies portes (linteau à 1,02) comptent
+  const lamp = (x, y) => {
+    const door = (cx, cy) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (C.b[at(cx + dx, cy + dy)] >= 0.9) return true; return false; };
+    while (door(Math.floor(x), Math.floor(y))) x += 1;
+    put('lamp', x, y, { solid: 0.12, lamp: true });
+  };
+  for (const x of [5.5, 20.5, 33.5, 48.5]) lamp(x, 14.4);
   horses.push({ x: 43.5, y: 14.4, a: Math.PI, coat: ri(0, 4) });
 
   // ---------------------------------------------------------- la rangée du quai (façades au sud, sur Front Street ; portes des deux côtés)
@@ -155,8 +162,8 @@ export function portWorld(seed) {
     const x = k < 1 ? ri(2, 8) : ri(51, 57), y = ri(STREET.y0, STREET.y1);
     if (!nearDoor(x, y) && !isWall(x, y) && !taken(x, y)) cotton(x, y, rp([0.6, 0.85]));
   }
-  for (const x of [9.5, 21.5, 30.5, 45.5]) put('lamp', x, STREET.y0 - 0.8, { solid: 0.12, lamp: true });
-  for (const x of [14.5, 28.5, 38.5, 50.5]) put('lamp', x, STREET.y1 + 0.8, { solid: 0.12, lamp: true });
+  for (const x of [9.5, 21.5, 30.5, 45.5]) lamp(x, STREET.y0 - 0.8);
+  for (const x of [14.5, 28.5, 38.5, 50.5]) lamp(x, STREET.y1 + 0.8);
   put('hitch', 24.5, STREET.y1 + 1.2, { solid: 0.15 }); horses.push({ x: 24.5, y: STREET.y1 + 0.3, a: 0, coat: ri(0, 4) });
 
   // ---------------------------------------------------------- la rangée du sud (façades au nord)
@@ -204,9 +211,10 @@ export function portWorld(seed) {
   put('portCypress', 15.5, 44.5, { solid: 0.3, big: true }); put('portCypress', 2.5, 45.2, { solid: 0.3, big: true });
 
   // ---------------------------------------------------------- le bayou (sud) : l'eau verte, des pontons, des cabanes
+  // le bayou n'est qu'un marais : on y patauge (un sol, pas de lame qui arrête comme le fleuve)
   fill(18, 34, 40, 46, (x, y) => zoneAt(x, y, 'bayou'));
   const shore = (x, y) => 37 + Math.round(1.3 * Math.sin(x / 2.7 + (seed % 5)) + 0.8 * Math.sin(y / 1.9));
-  fill(19, 36, 39, 45, (x, y) => { if (y >= shore(x, y) && x > 19 + (y & 1) && x < 39 - ((y + 1) & 1)) water(x, y, 'portBayou'); });
+  fill(19, 36, 39, 45, (x, y) => { if (y >= shore(x, y) && x > 19 + (y & 1) && x < 39 - ((y + 1) & 1)) { floorAt(x, y, 'portBayou'); roofAt(x, y, null); } });
   // les pontons : un d'ouest en est, un vers le sud, une cabane au bout
   for (let x = 18; x <= 40; x++) { clear(x, 41); bare.delete(at(x, 41)); floorAt(x, 41, 'portWharf'); }
   for (let y = 36; y <= 46; y++) { clear(29, y); bare.delete(at(29, y)); floorAt(29, y, 'portWharf'); }

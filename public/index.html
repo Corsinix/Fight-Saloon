@@ -123,7 +123,7 @@
             <h2>Chez le tailleur</h2>
             <h3>Allure</h3>
             <div id="ed-parts" class="ed-grid"></div>
-            <h3>Couleurs</h3>
+            <h3 id="ed-colors-head">Couleurs</h3>
             <div id="ed-colors" class="ed-grid"></div>
             <div class="ed-buttons">
               <button class="btn alt" id="ed-random" data-icon="dice"> Au hasard</button>
@@ -140,36 +140,45 @@
           <div class="panel lobby-info">
             <h2 class="lobby-head">Table n° <button id="lobby-code" class="code" type="button" title="Copier le code de la table"></button><span id="code-copied" class="copied"></span>
               <span class="spacer"></span><button id="btn-lock" class="lock-tag" type="button"></button></h2>
-            <label>1. Invite tes adversaires (jusqu'à 6 joueurs, ou des bots) :</label>
-            <div class="link-row">
-              <input id="lobby-link" readonly>
-              <button class="btn" id="btn-copy">Copier</button>
-              <button class="btn hidden" id="btn-share">Partager</button>
-            </div>
-            <div class="seats many" id="seats"></div>
             <div class="lobby-opts">
               <div class="seg" id="formats" role="group" aria-label="Déroulé de la partie"></div>
               <div class="seg rounds" id="rounds" role="group" aria-label="Nombre de jeux du championnat"></div>
             </div>
-            <label id="modes-label">2. Choisis le jeu :</label>
-            <div class="solo-pager">
-              <button class="solo-arrow prev" id="modes-prev" type="button" aria-label="Jeux précédents"></button>
-              <div class="solo-grid lobby-modes" id="modes"></div>
-              <button class="solo-arrow next" id="modes-next" type="button" aria-label="Jeux suivants"></button>
+            <!-- le choix du jeu, centré entre l'en-tête et les boutons -->
+            <div class="lobby-pick">
+              <label id="modes-label">Choisis le jeu :</label>
+              <div class="solo-pager">
+                <button class="solo-arrow prev" id="modes-prev" type="button" aria-label="Jeux précédents"></button>
+                <div class="solo-grid lobby-modes" id="modes"></div>
+                <button class="solo-arrow next" id="modes-next" type="button" aria-label="Jeux suivants"></button>
+              </div>
+              <div class="solo-dots" id="modes-dots"></div>
+              <div class="seg variants hidden" id="variants" role="group" aria-label="Variante du jeu"></div>
             </div>
-            <div class="solo-dots" id="modes-dots"></div>
-            <div class="seg variants hidden" id="variants" role="group" aria-label="Variante du jeu"></div>
             <div class="lobby-buttons">
               <button class="btn alt" id="btn-leave">Quitter la table</button>
               <button class="btn big" id="btn-start">Lancer la partie</button>
             </div>
             <p id="lobby-hint" class="hint"></p>
           </div>
-          <div class="panel chat">
-            <div id="champ-board" class="champ-board hidden"></div>
-            <h3>Comptoir</h3>
-            <div id="chat-log" class="chat-log"></div>
-            <form id="chat-form"><input id="chat-input" maxlength="120" placeholder="Dire quelque chose…" autocomplete="off"></form>
+          <!-- à droite : les joueurs (invitation, places), puis le comptoir -->
+          <div class="lobby-side">
+            <div class="panel lobby-players">
+              <h3>Joueurs <small id="players-n"></small></h3>
+              <label>Invite tes adversaires, ou ajoute des bots :</label>
+              <div class="link-row">
+                <input id="lobby-link" readonly>
+                <button class="btn" id="btn-copy">Copier</button>
+                <button class="btn hidden" id="btn-share">Partager</button>
+              </div>
+              <div class="seats many" id="seats"></div>
+            </div>
+            <div class="panel chat">
+              <div id="champ-board" class="champ-board hidden"></div>
+              <h3>Comptoir</h3>
+              <div id="chat-log" class="chat-log"></div>
+              <form id="chat-form"><input id="chat-input" maxlength="120" placeholder="Dire quelque chose…" autocomplete="off"></form>
+            </div>
           </div>
         </div>
       </section>

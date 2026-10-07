@@ -179,8 +179,10 @@ export function ghostWorld(seed) {
     const x = k < 2 ? ri(2, 8) : ri(52, 57), y = ri(STREET.y0, STREET.y1);
     if (!nearDoor(x, y) && !isWall(x, y) && !taken(x, y)) wallAt(x, y, rp([0.6, 0.85]), rp([['crates', 0], ['ghostRubble', 0], ['hay', 0], ['tnt', 0]]));
   }
-  for (const x of [11.5, 22.5, 38.5, 47.5]) put('lamp', x, STREET.y0 - 0.8, { solid: 0.12, lamp: true });
-  for (const x of [16.5, 34.5, 44.5]) put('lamp', x, STREET.y1 + 0.8, { solid: 0.12, lamp: true });
+  // réverbères sur les trottoirs, jamais devant une porte (on se cognerait au poteau en voulant entrer)
+  const lamp = (x, y) => { while (nearDoor(Math.floor(x), Math.floor(y))) x += 1; put('lamp', x, y, { solid: 0.12, lamp: true }); };
+  for (const x of [11.5, 22.5, 38.5, 47.5]) lamp(x, STREET.y0 - 0.8);
+  for (const x of [16.5, 34.5, 44.5]) lamp(x, STREET.y1 + 0.8);
   put('barrel', 25.5, STREET.y0 - 0.6, { solid: 0.3 }); put('barrelTnt', 36.5, STREET.y1 + 0.6, { solid: 0.3, tnt: true });
 
   // ---------------------------------------------------------- le lit à sec du ruisseau (sud-ouest)

@@ -2114,6 +2114,50 @@ const SFX = {
     noise(t + 0.04, 0.015, { type: 'bandpass', f: 2600, q: 5, gain: 0.2 });
   },
 
+  // Arc : la corde qui claque, la flèche qui siffle (presque rien de loin)
+  bow(t) {
+    tone(t, 180, 0.12, { type: 'triangle', f2: 110, gain: 0.3 });
+    noise(t, 0.05, { type: 'bandpass', f: 900, q: 3, gain: 0.35 });
+    noise(t + 0.03, 0.28, { type: 'bandpass', f: 2600, f2: 1200, q: 4, gain: 0.18 });
+  },
+  // l'arc qu'on bande : le bois qui craque, la corde qui se tend
+  creak(t) {
+    tone(t, 140, 0.4, { type: 'sawtooth', f2: 210, gain: 0.025, attack: 0.1 });
+    for (let i = 0; i < 3; i++) noise(t + 0.08 + i * 0.1, 0.02, { type: 'bandpass', f: 1600 + i * 300, q: 6, gain: 0.12 });
+  },
+  // une flèche qu'on encoche
+  nock(t) { noise(t, 0.03, { type: 'bandpass', f: 2400, q: 5, gain: 0.25 }); tone(t + 0.02, 900, 0.03, { type: 'triangle', gain: 0.05 }); },
+  // Fusil à harpon : la charge de poudre, le câble qui file en sifflant
+  harpoon(t) {
+    noise(t, 0.4, { f: 2600, f2: 180, gain: 0.85, slap: true });
+    tone(t, 90, 0.3, { f2: 35, gain: 0.7 });
+    noise(t + 0.05, 0.45, { type: 'bandpass', f: 3200, f2: 1400, q: 6, gain: 0.2 });
+  },
+  // Mortier : « tchoump » sourd du départ, l'obus qui monte en sifflant
+  mortar(t) {
+    tone(t, 70, 0.4, { f2: 30, gain: 1.0 });
+    noise(t, 0.35, { f: 900, f2: 120, gain: 0.7, slap: true });
+    tone(t + 0.15, 1800, 0.7, { type: 'triangle', f2: 900, gain: 0.04 });
+  },
+  // Canardière : le canon de marais, une détonation énorme qui roule longtemps
+  punt(t) {
+    noise(t, 1.1, { f: 2600, f2: 80, gain: 1.0, slap: true });
+    noise(t, 0.12, { type: 'highpass', f: 1500, gain: 0.8 });
+    tone(t, 48, 0.9, { f2: 18, gain: 1.0 });
+    for (let i = 1; i <= 2; i++) noise(t + 0.45 * i, 0.8, { f: 700 / i, f2: 90, gain: 0.3 / i });
+  },
+  // Pistolet du Diable : détonation sèche et un écho grave qui ricane
+  diablo(t) {
+    SFX.schofield(t);
+    tone(t + 0.02, 110, 0.35, { type: 'sawtooth', f2: 55, gain: 0.08 });
+  },
+  // les mâchoires du piège qui se referment
+  trapsnap(t) {
+    noise(t, 0.04, { type: 'highpass', f: 2500, gain: 0.7 });
+    tone(t, 1300, 0.05, { type: 'square', f2: 400, gain: 0.12 });
+    tone(t + 0.02, 160, 0.2, { f2: 70, gain: 0.4 });
+  },
+
   // ---- Doom-like : balles, lames, mécanique
   // ricochet « piiouu » : la balle chante en repartant (deux sifflements qui battent entre eux)
   ricochet(t) {

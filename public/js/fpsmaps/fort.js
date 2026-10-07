@@ -101,7 +101,7 @@ export function fortWorld(seed) {
   for (const [x0, x1] of [[12, 20], [39, 45]]) {
     const m = Math.floor((x0 + x1) / 2);
     put('table', m + 0.5, 11.5, { solid: 0.3 }); put('chair', m + 1.1, 11.6); put('chair', m - 0.1, 11.4);
-    put('stove', x1 + 0.4, 11.6, { solid: 0.35, spin: true });
+    put('stove', x1 + 0.4, nearDoor(x1, 11) ? 12.4 : 11.6, { solid: 0.35, spin: true }); // pas devant la porte de côté
     put('lantern', m + 0.5, 10.6, { hang: true });
     put('fortRifles', x0 + 0.6 + ri(0, 1) * 2, 12.4, { solid: 0.2 });
   }

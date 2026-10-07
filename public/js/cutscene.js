@@ -448,6 +448,7 @@ const SHOTS = {
   // La locomotive entre en gare de Dusty Gulch
   shooter: {
     caption: 'DUSTY GULCH, GARE DU PACIFIQUE',
+    rumors: ['EL DIABLO VOUS ATTEND AU SALOON', 'LE TRAIN DU SOIR AMÈNE SES HOMMES DE MAIN'],
     cues: [[0, 'puff'], [600, 'puff'], [1500, 'clank']],
     draw(ctx, el) {
       const lx = (e) => W + 10 - (W - 120) * ease(Math.min(1, e / 1500));
@@ -485,6 +486,7 @@ const SHOTS = {
   // Le troupeau traverse la plaine, un cavalier fait tourner son lasso
   lasso: {
     caption: 'LA GRANDE PLAINE, À LA SAISON DU RODÉO',
+    rumors: ['EL DIABLO A ENVOYÉ UN VOLEUR DE BÉTAIL', 'LE BÉTAIL QUI S\'ÉCHAPPE FINIT CHEZ EL DIABLO'],
     cues: [[200, 'moo'], [900, 'rope'], [1500, 'moo']],
     draw(ctx, el, players) {
       for (let i = 0; i < 10; i++) {
@@ -511,6 +513,7 @@ const SHOTS = {
   // La grand-rue à l'heure du duel : deux silhouettes, un virevoltant passe entre elles
   duel: {
     caption: 'GRAND-RUE, L\'HEURE DU DUEL',
+    rumors: ['EL DIABLO REGARDE DEPUIS LE BALCON', 'EL DIABLO PARIE TOUJOURS SUR LE PERDANT'],
     cues: [[0, 'ding'], [900, 'ding']],
     draw(ctx, el, players) {
       facade(ctx, -10, 92, 80, '#8a5a38', 'BANQUE');
@@ -534,6 +537,7 @@ const SHOTS = {
   // La foule de la ville ; l'avis de recherche tombe au milieu
   charlie: {
     caption: 'UN JOUR DE MARCHÉ EN VILLE',
+    rumors: ['CHARLIE DOIT DE L\'ARGENT À EL DIABLO', 'EL DIABLO A MIS LA TÊTE DE CHARLIE À PRIX'],
     cues: [[1150, 'thud']],
     draw(ctx, el, players, extra) {
       ['HÔTEL', 'BANQUE', 'SALOON', 'ÉPICERIE'].forEach((s, i) => facade(ctx, 4 + i * 96, 88, 70 + (i % 2) * 14, ['#9a6a40', '#7a4a30', '#8a5a38', '#a87a4a'][i], s));
@@ -563,6 +567,7 @@ const SHOTS = {
   // Le fort sur la mesa, des cavaliers approchent dans la poussière
   fort: {
     caption: 'FORT SAINT-JUDE, AUX MARCHES DU TERRITOIRE',
+    rumors: ['EL DIABLO CONVOITE LA POUDRE DU FORT', 'LE DERNIER REMPART CONTRE EL DIABLO'],
     cues: [[200, 'neigh'], [900, 'far'], [1500, 'far']],
     draw(ctx, el, players) {
       const x0 = 150, x1 = 360, top = 118, base = 172;
@@ -600,6 +605,7 @@ const SHOTS = {
   // Le chariot bâché file sur la piste, des bandits paraissent sur la crête
   wagon: {
     caption: 'LA PISTE DE RED ROCK',
+    rumors: ['BLACK BART ROULE POUR EL DIABLO', 'LA ROULOTTE TRANSPORTE LA PRIME D\'EL DIABLO'],
     cues: [[100, 'neigh'], [500, 'whip'], [1300, 'far']],
     draw(ctx, el) {
       const scroll = (p, sp) => ((((p * 137) - el * sp) % (W + 80)) + W + 80) % (W + 80) - 40;
@@ -631,6 +637,7 @@ const SHOTS = {
   // western spaghetti), puis la chope file le long du comptoir jusqu'à lui
   pinte: {
     caption: 'LE COMPTOIR DU SALOON, SAMEDI SOIR',
+    rumors: ['LA TABLE DU FOND EST RÉSERVÉE À EL DIABLO', 'NE RENVERSE PAS LA CHOPE D\'EL DIABLO'],
     indoor: true,
     len: 2800, // plan d'ensemble plus long que les autres : il raconte une petite scène
     cues: [[0, 'rope'], [250, 'thud'], [960, 'whip'], [1150, 'heartbeat'], [1450, 'heartbeat'], [1640, 'ding'], [1960, 'rope'], [2390, 'glass']],
@@ -660,6 +667,7 @@ const SHOTS = {
   // L'entrée de la mine, un wagonnet chargé d'or s'y enfonce
   mine: {
     caption: 'LA MINE DU VIEUX JOE',
+    rumors: ['ON DIT QU\'EL DIABLO DORT AU FOND DU PUITS', 'LE VIEUX JOE A CREUSÉ TROP PROFOND'],
     cues: [[150, 'clank'], [1100, 'clank']],
     draw(ctx, el) {
       // falaise
@@ -697,6 +705,7 @@ const SHOTS = {
   // Le champ de courses : la tribune est pleine, les stalles s'ouvrent, les chevaux s'élancent
   course: {
     caption: 'LE GRAND PRIX DE DUSTY GULCH',
+    rumors: ['EL DIABLO A MISÉ GROS SUR CETTE COURSE', 'LE GAGNANT TRINQUERA AVEC EL DIABLO'],
     cues: [[200, 'neigh'], [700, 'gunshot'], [800, 'whip'], [1300, 'neigh']],
     draw(ctx, el, players) {
       // tribune et sa foule
@@ -744,6 +753,7 @@ const SHOTS = {
   // La chevauchée sauvage (variante de la course) : les cavaliers filent dans la prairie entre rochers et cactus
   'course-wild': {
     caption: 'LA CHEVAUCHÉE SAUVAGE',
+    rumors: ['EL DIABLO A MISÉ GROS SUR CETTE COURSE', 'LES ÉCLAIREURS D\'EL DIABLO GUETTENT'],
     cues: [[200, 'neigh'], [900, 'whip'], [1400, 'neigh']],
     draw(ctx, el, players) {
       R(ctx, 0, 128, W, H - 128, '#b4a45e');
@@ -772,6 +782,7 @@ const SHOTS = {
   // Plan par défaut (jeu sans plan à lui) : les cavaliers des joueurs traversent le désert
   default: {
     caption: 'QUELQUE PART DANS L\'OUEST',
+    rumors: ['EL DIABLO N\'EST JAMAIS BIEN LOIN', 'QUI GAGNE ICI AFFRONTERA EL DIABLO'],
     cues: [[200, 'neigh'], [1200, 'neigh']],
     draw(ctx, el, players) {
       const gap = Math.min(14, 52 / Math.max(1, players.length - 1));
@@ -786,8 +797,9 @@ const SHOTS = {
 
 // ---------------------------------------------------------------- cinématique
 // players : [{ name, character, color }] ; extra.establish(ctx, el) remplace le plan d'ensemble (roulette).
+// rumor : la rumeur sur El Diablo écrite au bas de l'affiche (sinon, l'une de celles du plan, au hasard).
 export class Cutscene {
-  constructor({ kind, players, me, env, title, sub, caption, extra = {} }) {
+  constructor({ kind, players, me, env, title, sub, caption, rumor, extra = {} }) {
     this.kind = kind;
     this.shot = SHOTS[kind] || SHOTS.default;
     this.players = players;
@@ -796,6 +808,8 @@ export class Cutscene {
     this.title = title;
     this.sub = sub;
     this.caption = (caption || this.shot?.caption || '').toUpperCase();
+    const rumors = this.shot?.rumors || [];
+    this.rumor = (rumor || rumors[Math.floor(Math.random() * rumors.length)] || '').toUpperCase();
     this.extra = extra;
     this.amb = env ? new Ambience(env) : null;
     this.fired = null;
@@ -943,6 +957,16 @@ export class Cutscene {
       canvasText(ctx, this.sub.toUpperCase(), W / 2, py + 80, { color: '#4a2a14', shadow: '' });
     }
     if (el > 450) canvasText(ctx, `${this.players.length} JOUEURS`, W / 2, py + 96, { color: '#8a6a48', shadow: '' });
+    // la rumeur, griffonnée à l'encre rouge au bas de l'affiche
+    const kr = clamp01((el - 600) / 450);
+    if (this.rumor && kr > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(px, py + 104, Math.round(pw * kr), 12);
+      ctx.clip();
+      canvasText(ctx, this.rumor, W / 2, py + 107, { color: '#9a2a1c', shadow: '' });
+      ctx.restore();
+    }
     ctx.restore();
     if (el < 70) { ctx.fillStyle = 'rgba(255,251,232,0.5)'; ctx.fillRect(0, 0, W, H); }
   }

@@ -26,7 +26,7 @@ window.g = g; window.scene = scene;
 const errBox = document.body.appendChild(document.createElement('pre'));
 errBox.id = 'errlog'; errBox.style.color = '#f66';
 setInterval(() => { errBox.textContent = [...(window.errs || []), ...(window.acterr || [])].join('\n'); }, 250);
-// ?x=30.5&y=23.5&a=0 : la caméra posée là (le joueur y est ramené sans cesse, sans bandits ni bots qui gênent) ;
+// ?x=30.5&y=23.5&a=0 : la caméra posée là (&p=0.22 : le regard levé, négatif : baissé ;le joueur y est ramené sans cesse, sans bandits ni bots qui gênent) ;
 // &big : la grande carte ; &fpsmap=fort : la carte (voir fpsgame.js)
 const q = new URLSearchParams(location.search);
 if (q.has('x')) {
@@ -40,6 +40,7 @@ if (q.has('x')) {
     if (gu && !m.gun) { m.gun = gu.key; m.gunD = +(q.get('d') || 12); m.x = gu.x - 0.8; m.y = gu.y; }
     if (gu) m.a = +(q.get('a') || 0);
     else { m.x = +q.get('x'); m.y = +q.get('y'); m.a = +(q.get('a') || 0); }
+    if (q.has('p')) m.pitch = +q.get('p');
     m.hp = 999;
     g.p.forEach((p, i) => { if (i) { p.x = 1.5; p.y = 1.5; p.alive = false; } });
     if (q.has('big') && scene.map && !scene.map.big) scene.map.big = true;

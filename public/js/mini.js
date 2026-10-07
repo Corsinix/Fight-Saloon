@@ -111,6 +111,7 @@ export class MiniGame {
     const kill = hp <= 0;
     if (kill) this.claimed.set(id, i);
     if (kill && this.defused(tg, t)) this.defuse(tg);
+    if (kill) this.disarm(id, t);
     if (kill && tg.kind === 'boss') pts += SHOOTER_PTS.bossKill;
     pts *= this.bountyX(tg, t);
     const p = this.p[i];
@@ -124,6 +125,8 @@ export class MiniGame {
   // lanceur abattu avant d'avoir lancé : son bâton de dynamite ne part jamais
   defused(tg, t) { return !!tg.throwAt && t < tg.throwAt; }
   defuse(tg) { for (const d of this.tnts) if (d.from === tg.id) this.claimed.set(d.id, -1); }
+  // El Diablo abattu (mine, poursuite) : les bâtons qu'il n'a pas encore lancés ne partent jamais
+  disarm(id, t) { for (const d of this.tnts) if (d.from === id && d.t0 > t) this.claimed.set(d.id, -1); }
 
   // « Prime doublée » : les bandits (et El Diablo) rapportent deux fois plus pendant l'événement.
   bountyX(tg, t) {
@@ -192,7 +195,7 @@ export class MiniGame {
           const hp = Math.max(0, (this.hp.get(tg.id) ?? tg.hp) - DYNAMITE_BOSS);
           this.hp.set(tg.id, hp);
           let pts = SHOOTER_PTS.bossHit * DYNAMITE_BOSS;
-          if (!hp) { this.claimed.set(tg.id, i); pts += SHOOTER_PTS.bossKill; }
+          if (!hp) { this.claimed.set(tg.id, i); this.disarm(tg.id, t); pts += SHOOTER_PTS.bossKill; }
           pts *= this.bountyX(tg, t);
           p.score += pts;
           this.push({ type: 'hit', id: tg.id, by: i, pts, hp, kill: !hp, boom: true });

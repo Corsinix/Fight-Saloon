@@ -62,7 +62,7 @@ function textMask(str, size, font) {
   return { w, h, mask, dy: Math.round((y0 - UP * 2) / UP) };
 }
 
-function textSprite(str, size, col, shadow) {
+export function textSprite(str, size, col, shadow) {
   const key = `${size}|${col}|${shadow}|${str}`;
   const font = `${size}px Silkscreen, monospace`;
   const hit = textCache.get(key);
@@ -300,6 +300,7 @@ export class Scene {
             title: 'BUCKSHOT ROULETTE',
             sub: MODES.roulette.sub,
             caption: this.room?.name,
+            rumor: 'ON DIT QUE CE FUSIL A APPARTENU À EL DIABLO',
             extra: { establish: (c, e) => this.introTable(c, e), cues: [[300, 'pump'], ...[0, 1, 2, 3, 4].map((k) => [700 + k * 170, 'shell'])] },
           });
           cut.draw(ctx, el, this.now);

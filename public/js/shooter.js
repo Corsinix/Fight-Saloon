@@ -15,7 +15,7 @@ import {
   W, H, GROUND, STREET_W, SALOON_W, SALOON_START, facade, belfry, PROP_DIM, PROP_BASE,
   SAL, camAt, shooterWorld, BONUSES, BONUS_MS, SAND_MS, crateAt, targetSec, bossX, BOSS_T0, SHOOTER_PTS,
   WAGER, shooterEventAt, STATION_START, STREET_START, STATION_W, STA, STA_COVER, wagonOpenings, locoCab,
-  stationTrain, EDGE_START, FADES, rideX,
+  stationTrain, EDGE_START, FADES, rideX, LAIRS, MINE, CHASE,
 } from './worlds.js';
 
 const AMMO = 6, RELOAD = 850;
@@ -30,6 +30,8 @@ const EVENT_TXT = {
   tnt: ['DYNAMITE ! ABATS-LA EN VOL', '#f0705a'],
   bounty: ['PRIME DOUBLÉE : 8 S !', '#f8d070'],
   blackout: ['PANNE DE LUMIÈRE !', '#c8b8e8'],
+  lamps: ['LES LAMPES S\'ÉTEIGNENT !', '#c8b8e8'],
+  gang: ['LA BANDE D\'EL DIABLO !', '#f0a070'],
   wager: [`PARI SUR EL DIABLO : TOUCHE B`, '#f8d070'],
 };
 const GUN_TXT = {
@@ -64,7 +66,7 @@ const BOSS_SCALE = 1.5;
 const BOTTLES = ['#4a7a3a', '#8a4a1a', '#9ab8c8', '#6a2a2a'];
 const HORSE_COATS = [['#8a5a34', '#3a2214'], ['#2a2220', '#1a1210'], ['#e8dcc8', '#8a7a68'], ['#a8683a', '#f4ecd8'], ['#5a4a40', '#2a2220']];
 const RIDE_SCALE = 1.5; // cheval et cavalier agrandis, à l'échelle des bandits
-const EVENT_SFX = { ambush: 'hurt', train: 'hurt', graves: 'hurt', tnt: 'hurt', riders: 'neigh', blackout: 'thud' };
+const EVENT_SFX = { ambush: 'hurt', train: 'hurt', graves: 'hurt', tnt: 'hurt', riders: 'neigh', blackout: 'thud', lamps: 'thud', gang: 'neigh' };
 
 // sprite retourné (les chevaux galopent vers la droite)
 function flipped(spr) {
@@ -458,6 +460,198 @@ function renderSaloonRoom() {
   return { bg, front };
 }
 
+// La mine abandonnée (repaire d'El Diablo) : roche et filons, étais, galeries à l'étage, passerelle et son rail (le
+// wagonnet d'El Diablo y roule), palées en croix jusqu'au sol, trémie à minerai, wagonnet renversé, tas de minerai,
+// voie au sol. Même découpage que le saloon (MINE reprend les emplacements de SAL).
+function renderMineRoom() {
+  const bg = S.makeCanvas(SALOON_W, H);
+  const front = S.makeCanvas(SALOON_W, H);
+  const ctx = bg.getContext('2d');
+  const { R, box } = paint(ctx);
+  const rnd = seeded(53);
+  const B = MINE.balcony;
+  // la roche : strates, éclats, paillettes et filons d'or
+  for (let y = 0; y < H; y++) R(0, y, SALOON_W, 1, S.shade('#5a4a3e', Math.sin(y / 9) * 0.05 + (y < B ? -0.08 : 0)));
+  for (let i = 0; i < 1100; i++) R(rnd() * SALOON_W, rnd() * 196, 1 + rnd() * 3, 1, rnd() < 0.5 ? '#45372e' : '#6e5c4c');
+  for (let i = 0; i < 7; i++) {
+    let x = rnd() * SALOON_W, y = 12 + rnd() * 170;
+    for (let k = 0; k < 34; k++) { R(x, y, 2, 1, '#b8902e'); if (k % 5 === 0) R(x, y - 1, 1, 1, '#f8e08a'); x += 1 + rnd() * 2; y += (rnd() - 0.5) * 3; }
+  }
+  for (let i = 0; i < 50; i++) { const x = rnd() * SALOON_W, y = rnd() * 190; R(x, y, 1, 1, '#f8d070'); }
+  // le plafond : chapeaux de bois sur les étais de l'étage
+  R(0, 0, SALOON_W, 7, '#2a1e16');
+  for (let x = 0; x < SALOON_W; x += 96) { box(x + 1, 0, 94, 6, '#5a3e26'); R(x + 1, 5, 94, 1, '#3a2614'); }
+  for (const x of MINE.rails) { box(x - 3, 7, 6, B - 7, '#5a3e26'); R(x - 2, 7, 1, B - 7, '#7a5634'); }
+  // les galeries de l'étage : trou noir, cadre de bois, rails qui en sortent
+  for (const x of MINE.upperDoors) {
+    R(x - 2, B - 58, 38, 58, '#140e0a'); R(x + 2, B - 54, 30, 54, '#0a0604');
+    for (let k = 0; k < 5; k++) R(x + 8 + k * 4, B - 34 + k * 3, 2, 1, '#22160e'); // le fond de la galerie
+    box(x - 6, B - 62, 46, 6, '#6a4a2e'); R(x - 6, B - 62, 46, 1, '#8a6440');
+    box(x - 6, B - 56, 5, 56, '#5a3e26'); box(x + 35, B - 56, 5, 56, '#5a3e26');
+  }
+  // pancartes : galerie condamnée, danger
+  box(232, 30, 34, 14, '#c8a878'); canvasText(ctx, 'DANGER', 249, 34, { size: 8, color: '#8a2a1e' });
+  box(400, 24, 38, 14, '#c8a878'); canvasText(ctx, 'MINE', 419, 28, { size: 8, color: '#3a2214' });
+  for (const [x, y] of [[249, 25], [419, 19]]) R(x, y, 1, 6, '#3a3436');
+  // caisses de dynamite et pioche sur la passerelle
+  for (const x of [282, 520]) { box(x, B - 14, 18, 14, '#a8783c'); R(x + 2, B - 10, 14, 4, '#c0392b'); canvasText(ctx, 'TNT', x + 9, B - 11, { size: 8, color: '#f4ecd8' }); }
+  R(318, B - 26, 2, 26, '#7a5634'); R(312, B - 27, 14, 3, '#8a8f98');
+  // la passerelle : plancher, rail du wagonnet
+  box(0, B, SALOON_W, 7, '#6a4a2e'); R(0, B, SALOON_W, 1, '#8a6440');
+  for (let x = 0; x < SALOON_W; x += 7) R(x, B + 1, 1, 6, '#4a3220');
+  R(0, B - 3, SALOON_W, 1, '#a8acb4'); R(0, B - 2, SALOON_W, 1, '#4a4f58');
+  for (let x = 3; x < SALOON_W; x += 9) R(x, B - 1, 5, 1, '#3e2a18'); // traverses
+  // les palées sous la passerelle : poteaux et croix de Saint-André jusqu'au sol
+  for (let x = 14; x < SALOON_W; x += 96) {
+    for (const px of [x, x + 54]) { box(px, B + 7, 6, 196 - B - 7, '#4e3620'); R(px + 1, B + 7, 1, 196 - B - 7, '#6e4c2e'); }
+    for (let k = 0; k <= 48; k++) { const yy = B + 10 + (k * (196 - B - 16)) / 48; R(x + 6 + k, yy, 2, 2, '#3e2a18'); R(x + 54 - k, yy, 2, 2, '#3e2a18'); }
+  }
+  // la planche aux bouteilles des mineurs, au-dessus de la trémie
+  for (const y of MINE.shelves) { box(40, y, 280, 3, '#7a5634'); R(40, y, 280, 1, '#9a7448'); for (const bx of [46, 312]) R(bx, y + 3, 2, 6, '#3a2614'); }
+  // le sol : gravier, la voie des wagonnets
+  R(0, 196, SALOON_W, H - 196, '#4a3c30');
+  for (let i = 0; i < 300; i++) R(rnd() * SALOON_W, 197 + rnd() * 18, 2, 1, rnd() < 0.5 ? '#3a2e24' : '#6a5a48');
+  for (let x = 0; x < SALOON_W; x += 10) R(x, 203, 7, 4, '#4a3220');
+  R(0, 202, SALOON_W, 1, '#a8acb4'); R(0, 207, SALOON_W, 1, '#a8acb4');
+
+  const fx = front.getContext('2d');
+  const F = paint(fx);
+  // le garde-corps bas de la passerelle (les bandits penchés s'y appuient)
+  F.box(0, B - 16, SALOON_W, 3, '#6a4a2e'); F.R(0, B - 16, SALOON_W, 1, '#8a6440');
+  for (const x of MINE.rails) F.box(x - 2, B - 16, 4, 16, '#5a3e26');
+  // la trémie à minerai : planches, ferrures, le minerai qui déborde (paillettes d'or)
+  const bar = MINE.bar;
+  F.box(bar.x, bar.top, bar.w, 196 - bar.top, '#5a3e26');
+  for (let x = bar.x + 3; x < bar.x + bar.w; x += 12) F.R(x, bar.top + 3, 1, 196 - bar.top - 3, '#3e2a18');
+  for (const y of [bar.top + 10, 184]) { F.R(bar.x, y, bar.w, 2, '#3e434c'); for (let x = bar.x + 6; x < bar.x + bar.w; x += 24) F.R(x, y, 2, 2, '#8a8f98'); }
+  for (let x = bar.x + 1; x < bar.x + bar.w - 1; x++) {
+    const h = 3 + Math.round(2 * Math.sin(x / 5) + rnd() * 2);
+    F.R(x, bar.top - h, 1, h, rnd() < 0.12 ? '#e0b040' : rnd() < 0.5 ? '#6a6058' : '#8a8078');
+  }
+  F.R(bar.x - 2, bar.top, bar.w + 4, 2, '#7a5634');
+  // le wagonnet renversé (couché sur le flanc, une roue en l'air)
+  const p = MINE.piano;
+  for (let k = 0; k < 40; k++) F.R(p.x + 6 + k * 0.25, p.top + 4 + k, p.w - 12 - k * 0.5, 1, k < 2 ? OUT : k % 9 === 4 ? '#3e434c' : '#5a5450');
+  F.R(p.x + 4, p.top + 2, p.w - 8, 3, OUT); F.R(p.x + 6, p.top + 3, p.w - 12, 1, '#8a8478');
+  for (const [wx, wy] of [[p.x + 14, p.top - 2], [p.x + p.w - 10, p.top + 30]]) { S.disc(fx, wx, wy, 6, OUT); S.disc(fx, wx, wy, 5, '#2a2628'); S.disc(fx, wx, wy, 2, '#8a8478'); }
+  for (let k = 0; k < 14; k++) F.R(p.x + rnd() * p.w, p.top + 36 + rnd() * 8, 3, 2, rnd() < 0.2 ? '#e0b040' : '#6a6058'); // le minerai renversé
+  // les tas de minerai, des étais tombés en travers
+  for (const tb of MINE.tables) {
+    for (let k = 0; k < tb.w; k++) { const h = Math.round(Math.sin((k / tb.w) * Math.PI) * 26) + 2; F.R(tb.x + k, tb.top + 30 - h, 1, h + 4, k % 7 === 0 ? '#5a5048' : '#7a6e64'); F.R(tb.x + k, tb.top + 30 - h, 1, 1, OUT); }
+    for (let k = 0; k < 10; k++) F.R(tb.x + 4 + rnd() * (tb.w - 8), tb.top + 12 + rnd() * 18, 2, 2, rnd() < 0.3 ? '#e0b040' : '#9a8e82');
+    for (let k = 0; k < tb.w + 10; k++) F.R(tb.x - 5 + k, tb.top + 20 - k * 0.25, 1, 5, k < 1 || k > tb.w + 8 ? OUT : '#5a3e26');
+  }
+  return { bg, front };
+}
+
+// La poursuite : le décor défile au galop (la caméra reste à x = 0 dans la section). Calques de 768 px de large :
+// buttes lointaines (lentes), saguaros du désert puis falaises du canyon (au milieu), sol et cailloux (rapides), touffes
+// au premier plan (devant les cavaliers). d : distance parcourue depuis le début de la section.
+const chaseD = (t) => Math.max(0, t - SALOON_START) * CHASE.speed;
+const CHASE_GATE = 4; // rang du calque du milieu où commence le canyon (il arrive juste avant El Diablo)
+function chaseTile(kind, v) {
+  const key = `chase${kind}${v}`;
+  if (CACHE[key]) return CACHE[key];
+  const c = S.makeCanvas(SALOON_W, H);
+  const ctx = c.getContext('2d');
+  const { R } = paint(ctx);
+  const rnd = seeded(71 + v * 13 + kind.length);
+  if (kind === 'buttes') {
+    // buttes et mesas violacées sur l'horizon
+    for (let x = 0; x < SALOON_W;) {
+      const w = 40 + rnd() * 110, h = 14 + rnd() * 40;
+      for (let k = 0; k < w; k++) {
+        const e = Math.min(k, w - k), top = 128 - h + (e < 8 ? (8 - e) * 2 : 0);
+        R(x + k, top, 1, 128 - top, (k + Math.floor(top)) % 2 ? '#9a6458' : '#94604f');
+        R(x + k, top, 1, 2, '#b4786a');
+      }
+      x += w + rnd() * 60;
+    }
+  } else if (kind === 'desert') {
+    // saguaros, rochers, un arbre mort, un crâne de bœuf sur un piquet
+    for (let i = 0; i < 9; i++) {
+      const x = 20 + rnd() * (SALOON_W - 40), base = 136 + rnd() * 10, h = 22 + rnd() * 34;
+      R(x - 1, base - h - 1, 6, h + 1, OUT); R(x, base - h, 4, h, '#4a7a3a'); R(x + 3, base - h, 1, h, '#2e5228');
+      for (const [ax, ay, ah] of [[-5, 0.45, 0.3], [5, 0.6, 0.25]]) if (rnd() < 0.85) {
+        const yy = base - h * ay;
+        R(x + (ax < 0 ? ax : 3), yy, Math.abs(ax) + 1, 3, OUT); R(x + (ax < 0 ? ax : 4) , yy - h * ah, 3, h * ah + 2, OUT);
+        R(x + (ax < 0 ? ax + 1 : 4), yy + 1, Math.abs(ax) - 1, 1, '#4a7a3a'); R(x + (ax < 0 ? ax + 1 : 5), yy - h * ah + 1, 1, h * ah + 1, '#4a7a3a');
+      }
+    }
+    for (let i = 0; i < 6; i++) { const x = rnd() * SALOON_W, y = 138 + rnd() * 8, w = 10 + rnd() * 16; for (let k = 0; k < w; k++) { const hh = Math.sin((k / w) * Math.PI) * w * 0.4; R(x + k, y - hh, 1, hh + 1, k < w / 3 ? '#b07a5a' : '#8a5a42'); } }
+    const tx = 100 + rnd() * 500;
+    R(tx, 104, 3, 38, '#5a4030'); R(tx - 8, 112, 9, 2, '#5a4030'); R(tx + 2, 118, 10, 2, '#5a4030'); R(tx - 8, 106, 2, 7, '#5a4030'); R(tx + 10, 112, 2, 7, '#5a4030');
+    if (v % 2) { const sx = 300 + rnd() * 300; R(sx, 124, 2, 18, '#7a5a3a'); R(sx - 4, 120, 10, 5, '#ece4d4'); R(sx - 6, 118, 3, 2, '#ece4d4'); R(sx + 5, 118, 3, 2, '#ece4d4'); R(sx - 2, 122, 2, 1, OUT); R(sx + 2, 122, 2, 1, OUT); }
+  } else {
+    // les falaises de grès rouge du canyon : crête irrégulière, strates, fentes, éboulis au pied ; parfois une brèche
+    let top = 40 + rnd() * 20;
+    for (let x = 0; x < SALOON_W; x++) {
+      top = Math.max(18, Math.min(70, top + (rnd() - 0.5) * 3 + (x % 160 < 2 ? (rnd() - 0.5) * 18 : 0)));
+      const gap = (x + v * 300) % 768 > 520 && (x + v * 300) % 768 < 560;
+      const t0 = gap ? 110 : top;
+      for (let y = Math.floor(t0); y < 146; y++) {
+        const band = Math.floor((y + Math.sin(x / 30) * 3) / 9) % 4;
+        let col = ['#b05a3e', '#c4684a', '#a24e36', '#cc7656'][band];
+        if ((x * 7 + Math.floor(y / 3)) % 53 === 0) col = '#6e2e1e';
+        R(x, y, 1, 1, y - t0 < 2 ? '#e09a72' : col);
+      }
+      if (x % 37 === 0) for (let y = Math.floor(t0) + 6; y < 140; y += 1) if (rnd() < 0.7) R(x, y, 1, 1, '#6e2e1e');
+    }
+    for (let i = 0; i < 40; i++) { const x = rnd() * SALOON_W, y = 140 + rnd() * 6; R(x, y, 3 + rnd() * 4, 2, rnd() < 0.5 ? '#8a3e2a' : '#c47a5a'); }
+  }
+  CACHE[key] = c;
+  return c;
+}
+// arrière de la poursuite : buttes, désert ou canyon, sol qui défile (stries, cailloux, buissons, ornières)
+function drawChaseBack(w, t) {
+  const d = chaseD(t);
+  const cyn = clamp01((d - 7300) / 1500); // entrée dans le canyon
+  const layer = (speed, pick) => {
+    const o = d * speed;
+    for (let k = Math.floor(o / SALOON_W); k * SALOON_W - o < W; k++) {
+      const img = pick(k);
+      if (!img) continue;
+      if (img.clip != null) w.drawImage(img.cv, img.clip, 0, SALOON_W - img.clip, H, Math.round(k * SALOON_W - o + img.clip), 0, SALOON_W - img.clip, H);
+      else w.drawImage(img, Math.round(k * SALOON_W - o), 0);
+    }
+  };
+  layer(0.12, (k) => chaseTile('buttes', k & 1));
+  // le sol (dessiné avant le calque du milieu : le pied des falaises et des cactus repose dessus)
+  const { R } = paint(w);
+  for (let y = 128; y < H; y++) {
+    const u = (y - 128) / (H - 128);
+    R(0, y, W, 1, S.mix(S.mix('#c89062', '#d8a878', u), S.mix('#a0543a', '#b8664a', u), cyn));
+  }
+  layer(0.4, (k) => (k < CHASE_GATE ? chaseTile('desert', k & 1) : k === CHASE_GATE ? { cv: chaseTile('canyon', 0), clip: 300 } : chaseTile('canyon', k & 1)));
+  // stries et cailloux : plus près, plus vite (la perspective)
+  for (let i = 0; i < 70; i++) {
+    const y = 146 + Math.floor(hash(i * 3 + 1) * 70), sp = 0.45 + ((y - 146) / 70) * 0.75;
+    const x = ((hash(i * 3 + 2) * 1536 - d * sp) % 1536 + 1536) % 1536 - 60;
+    if (x > W + 10) continue;
+    const kind = hash(i * 3 + 3);
+    if (kind < 0.55) R(x, y, 6 + kind * 18, 1, cyn > 0.5 ? '#8a4632' : '#b88458'); // strie de sable
+    else if (kind < 0.8) { R(x, y - 1, 3, 2, '#7a5a44'); R(x, y - 1, 1, 1, '#e8c8a0'); } // caillou
+    else if (kind < 0.95) { for (let k = 0; k < 5; k++) R(x + k - 2, y - 2 - (k % 2) * 2, 1, 2 + (k % 2) * 2, cyn > 0.5 ? '#6a5a2e' : '#7a7a3a'); } // touffe sèche
+    else { R(x, y - 3, 5, 3, '#ece4d4'); R(x + 1, y - 2, 1, 1, OUT); R(x + 3, y - 2, 1, 1, OUT); } // crâne
+  }
+  // les ornières de la piste
+  for (const y of [184, 205]) {
+    R(0, y, W, 1, cyn > 0.5 ? '#8a4632' : '#a87048');
+    for (let x = -((d * 1.0) % 40); x < W; x += 40) R(x, y + 1, 14, 1, cyn > 0.5 ? '#9a523a' : '#b88458');
+  }
+}
+// devant les cavaliers : touffes et cailloux du premier plan, qui filent
+function drawChaseFront(w, t) {
+  const d = chaseD(t), { R } = paint(w);
+  for (let i = 0; i < 14; i++) {
+    const x = ((hash(i + 900) * 1152 - d * 1.5) % 1152 + 1152) % 1152 - 60;
+    if (x > W + 10) continue;
+    const y = 210 + Math.floor(hash(i + 950) * 6);
+    if (i % 3) for (let k = 0; k < 9; k++) R(x + k - 4, y - 3 - (k % 3) * 2, 1, 4 + (k % 3) * 2, '#5a4a26');
+    else { R(x - 4, y - 4, 9, 5, OUT); R(x - 3, y - 3, 7, 4, '#8a6a52'); R(x - 2, y - 3, 3, 1, '#c8a080'); }
+  }
+}
+
 // La gare : bâtiment, château d'eau, train à quai sur la voie du fond, quai en planches au premier plan.
 function renderStation(seed) {
   const bg = S.makeCanvas(STATION_W, H);
@@ -600,6 +794,7 @@ function streetPano(L) {
   return CACHE.street;
 }
 const saloonPano = () => (CACHE.saloon ||= renderSaloonRoom());
+const minePano = () => (CACHE.mine ||= renderMineRoom());
 
 // Vue de la grand-rue depuis la position camX : le ciel est dessiné sur ctx, la rue sur le calque
 // de l'ambiance, renvoyé pour la suite du décor (à refermer avec amb.end).
@@ -740,6 +935,29 @@ function bossSprite(flash, blink, t) {
   return c;
 }
 
+// El Diablo à cheval (la poursuite) : son cheval noir, puis la même silhouette rouge pour l'aura (ox, oy : les pieds)
+const BOSS_RIDER = riderLook(BOSS, '#7a1a14', 'diablo');
+function bossHorse(frame, flash) {
+  const key = `horse${frame}${flash}`;
+  let c = bossCache.get(key);
+  if (c) return c;
+  const base = horseSprite('#2a2220', '#141010', frame, BOSS_RIDER);
+  const img = S.makeCanvas(base.width, base.height);
+  const x = img.getContext('2d');
+  x.drawImage(base, 0, 0);
+  if (flash) { x.globalCompositeOperation = 'source-atop'; x.fillStyle = 'rgba(255,60,40,0.6)'; x.fillRect(0, 0, img.width, img.height); x.globalCompositeOperation = 'source-over'; }
+  const sil = S.makeCanvas(base.width, base.height);
+  const sx = sil.getContext('2d');
+  sx.drawImage(base, 0, 0);
+  sx.globalCompositeOperation = 'source-in';
+  sx.fillStyle = '#ff3020';
+  sx.fillRect(0, 0, sil.width, sil.height);
+  c = { img, sil, ox: base.ox, oy: base.oy };
+  if (bossCache.size > 40) bossCache.clear();
+  bossCache.set(key, c);
+  return c;
+}
+
 // ------------------------------------------------------------ scène
 export class ShooterScene extends MiniScene {
   constructor(canvas, hooks) {
@@ -783,6 +1001,7 @@ export class ShooterScene extends MiniScene {
     this.deco = new Deco(this.world, seed);
     this.spots = this.world.spots;
     this.boss = this.world.targets.find((tg) => tg.kind === 'boss');
+    this.bossTnts = this.world.targets.filter((tg) => tg.kind === 'tnt' && tg.from === this.boss.id); // sa dynamite (mine, poursuite)
     this.dead = new Map(); // id -> { by, at }
     this.hp = new Map();
     this.fireFx = [];
@@ -826,11 +1045,20 @@ export class ShooterScene extends MiniScene {
 
   bossRage() { return (this.hp.get(this.boss.id) ?? this.boss.hp) <= this.boss.hp / 2; }
 
-  // haut de la silhouette d'El Diablo (il se relève de derrière la rambarde)
+  // haut de la silhouette d'El Diablo : il se relève de derrière la rambarde (saloon) ou dans son wagonnet (mine) ;
+  // à cheval, le haut du cavalier
   bossTop(t) {
-    const h = Math.round(56 * BOSS_SCALE);
-    return SAL.balcony - h + Math.round((1 - clamp01((t - this.boss.t0) / 500)) * h);
+    const h = Math.round(56 * BOSS_SCALE), lair = this.world.lair;
+    if (lair === 'chase') return CHASE.y - Math.round(54 * CHASE.scale);
+    const rise = 1 - clamp01((t - this.boss.t0) / 500);
+    return lair === 'mine' ? MINE.balcony - 74 + Math.round(rise * h * 0.6) : SAL.balcony - h + Math.round(rise * h);
   }
+  // x (dans la section) d'El Diablo ; à cheval, il arrive au galop par la droite
+  bossXAt(t) {
+    const x = bossX(t);
+    return this.world.lair === 'chase' ? x + (1 - clamp01((t - this.boss.t0) / 900)) ** 2 * 240 : x;
+  }
+  chasing(cam) { return cam.sec === 'saloon' && this.world.lair === 'chase'; }
 
   hitRect(tg, cx, k) {
     if (tg.arc) {
@@ -844,8 +1072,10 @@ export class ShooterScene extends MiniScene {
     const s = this.spots[tg.spot];
     const sx = s.cx - cx;
     if (tg.kind === 'boss') {
-      const bx = bossX(this.t) - cx, top = this.bossTop(this.t);
-      return { x: bx - 20, y: top + 6, w: 40, h: Math.max(0, SAL.balcony - top - 10) };
+      const bx = this.bossXAt(this.t) - cx, top = this.bossTop(this.t), lair = this.world.lair;
+      // à cheval : le cavalier et le garrot ; dans la mine, ce qui dépasse du wagonnet
+      if (lair === 'chase') return { x: bx - Math.round(14 * CHASE.scale), y: top, w: Math.round(30 * CHASE.scale), h: Math.round(36 * CHASE.scale) };
+      return { x: bx - 20, y: top + 6, w: 40, h: Math.max(0, lair === 'mine' ? MINE.balcony - 30 - top : SAL.balcony - top - 10) }; // mine : jusqu'au bord du wagonnet
     }
     if (tg.kind === 'bottle') return { x: sx - 4, y: s.base - 16, w: 8, h: 16 };
     if (tg.kind === 'crate') return { x: sx - 9, y: s.base - 15, w: 18, h: 15 };
@@ -966,8 +1196,8 @@ export class ShooterScene extends MiniScene {
       else this.puff(m.x, m.y, '#c0392b', 5);
       this.hooks.send({ kind: 'hit', id: hit.id });
       this.deco.scare(cam.sec, m.x + cam.x, m.y);
-    } else if (!this.deco.shoot(cam.sec, m.x + cam.x, m.y, t)) {
-      // rien de cassable : un impact dans le mur
+    } else if (!this.deco.shoot(cam.sec, m.x + cam.x, m.y, t) && !this.chasing(cam)) {
+      // rien de cassable : un impact dans le mur (pas pendant la poursuite : le décor défile)
       this.holes.push({ wx: m.x + cam.x, y: m.y, sec: cam.sec });
       if (this.holes.length > 40) this.holes.shift();
       this.puff(m.x, m.y, '#d8c8a8', 4);
@@ -994,7 +1224,7 @@ export class ShooterScene extends MiniScene {
     const cam = camAt(t);
     if (tg.ride) return { x: rideX(tg, t) - cam.x, y: tg.ride.y - 68 };
     const s = this.spots[tg.spot];
-    if (tg.kind === 'boss') return { x: bossX(t) - cam.x, y: this.bossTop(t) + 10 };
+    if (tg.kind === 'boss') return { x: this.bossXAt(t) - cam.x, y: this.bossTop(t) + 10 };
     return { x: s.cx - cam.x, y: s.kind === 'bottle' ? s.base - 22 : Math.max(s.y + 4, s.base - 50) };
   }
 
@@ -1172,7 +1402,10 @@ export class ShooterScene extends MiniScene {
     // entrée d'El Diablo : cœur qui bat, puis il surgit dans un coup de tonnerre
     this.cue('bossBeat', BOSS_T0 - 1600, () => sfx('heartbeat'));
     this.cue('bossBeat2', BOSS_T0 - 800, () => sfx('heartbeat'));
-    this.cue('bossIn', BOSS_T0, () => { sfx('thunder'); sfx('bad'); this.shake = 9; });
+    this.cue('bossIn', BOSS_T0, () => { sfx('thunder'); sfx('bad'); if (this.world.lair === 'chase') sfx('neigh'); this.shake = 9; });
+    // la poursuite s'engage au galop ; El Diablo allume ses bâtons de dynamite (mine, poursuite)
+    if (this.world.lair === 'chase') this.cue('chaseGo', SALOON_START + 600, () => { sfx('neigh'); sfx('whip'); });
+    for (const tg of this.bossTnts) if (!this.dead.has(this.boss.id)) this.cue(`btnt${tg.id}`, tg.t0, () => sfx('whip'));
     // le ravitailleur lance sa caisse
     for (const tg of this.world.targets) {
       if (tg.kind !== 'supply' || this.dead.has(tg.id)) continue;
@@ -1204,9 +1437,11 @@ export class ShooterScene extends MiniScene {
     const cam = camAt(t);
     const cx = Math.round(cam.x);
     const amb = this.amb, now = this.now;
-    const outdoor = cam.sec !== 'saloon';
+    const lair = this.world.lair, chase = this.chasing(cam);
+    const outdoor = cam.sec !== 'saloon' || chase;
     const L = this.world.layout;
-    const pano = cam.sec === 'street' ? streetPano(L) : cam.sec === 'station' ? stationPano(L.seed) : cam.sec === 'edge' ? edgePano(L.edge) : saloonPano();
+    const pano = cam.sec === 'street' ? streetPano(L) : cam.sec === 'station' ? stationPano(L.seed) : cam.sec === 'edge' ? edgePano(L.edge)
+      : chase ? null : lair === 'mine' ? minePano() : saloonPano();
     // décor teinté par l'ambiance : façades, silhouettes, abris, bouteilles
     let w;
     if (cam.sec === 'street') w = drawStreet(ctx, cam.x, this.world.layout, amb, now);
@@ -1222,8 +1457,15 @@ export class ShooterScene extends MiniScene {
       w = amb.begin(ctx);
       w.drawImage(pano.bg, -cx, 0);
       edgeSigns(w, cx, L.edge);
+    } else if (chase) {
+      // la poursuite : le ciel ne bouge pas, tout le reste défile
+      ctx.drawImage(backdrop(amb.env), -60, 0);
+      amb.sky(ctx, now);
+      w = amb.begin(ctx);
+      drawChaseBack(w, t);
     } else {
-      w = amb.begin(ctx, amb.env.inside);
+      // le saloon, ou la mine (à la lueur des lanternes, quelle que soit l'heure dehors)
+      w = amb.begin(ctx, lair === 'mine' ? '#b4a08c' : amb.env.inside);
       w.drawImage(pano.bg, -cx, 0);
     }
     for (const h of this.holes) {
@@ -1238,7 +1480,8 @@ export class ShooterScene extends MiniScene {
       else if (tg.kind === 'rider') this.drawRider(w, tg, cx, t);
       else if (tg.kind !== 'bottle' && tg.kind !== 'crate' && tg.kind !== 'tnt') this.drawFigure(w, tg, cx, t);
     }
-    w.drawImage(pano.front, -cx, 0);
+    if (pano) w.drawImage(pano.front, -cx, 0);
+    else drawChaseFront(w, t);
     for (const tg of vis) {
       if (tg.kind !== 'bottle') continue;
       const s = this.spots[tg.spot];
@@ -1256,12 +1499,21 @@ export class ShooterScene extends MiniScene {
         for (const lx of [364, 564, 764, 1000]) amb.glow(ctx, lx - cx, 101, 22);
         amb.glow(ctx, STA.loco.x + STA.loco.w - 7 - cx, 97, 30, '255,230,150');
       }
-    } else {
+    } else if (lair === 'saloon') {
       ctx.globalCompositeOperation = 'lighter';
       for (const lx of [200, 520]) {
         if (!this.deco.lit(lx)) continue; // lustre abattu : plus de lumière
         const fl = Math.sin(now / 90 + lx) + Math.sin(now / 37);
         for (const [r, a] of [[44, 0.04], [28, 0.05], [14, 0.06]]) S.disc(ctx, lx - cx, 20, r + Math.round(fl), `rgba(255,170,70,${a})`);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    } else if (lair === 'mine') {
+      // la lueur des lanternes de la mine (une lanterne abattue n'éclaire plus)
+      ctx.globalCompositeOperation = 'lighter';
+      for (const it of this.deco.items) {
+        if (it.sec !== 'saloon' || it.kind !== 'lantern' || it.hits) continue;
+        const fl = Math.sin(now / 80 + it.x) + Math.sin(now / 31 + it.id);
+        for (const [r, a] of [[40, 0.035], [24, 0.05], [12, 0.07]]) S.disc(ctx, it.x + 3 - cx, it.y + 5, r + Math.round(fl), `rgba(255,160,60,${a})`);
       }
       ctx.globalCompositeOperation = 'source-over';
     }
@@ -1296,7 +1548,7 @@ export class ShooterScene extends MiniScene {
       if (k < 0.4) S.drawFlash(ctx, b.x, b.y, 24, t / 30);
     }
     amb.weather(ctx, now, outdoor);
-    const dark = shooterEventAt(this.world.events || [], 'blackout', t);
+    const dark = shooterEventAt(this.world.events || [], 'blackout', t) || shooterEventAt(this.world.events || [], 'lamps', t);
     if (dark && cam.sec === 'saloon') this.drawBlackout(ctx, t, dark);
     if (t < this.sandUntil) this.drawSand(ctx, t);
 
@@ -1311,7 +1563,7 @@ export class ShooterScene extends MiniScene {
     if (t >= STATION_START + 1000 && t < STATION_START + 1000 + BANNER_MS) this.drawBanner(ctx, 'LA GARE', '#f8d070', t - STATION_START - 1000, true);
     if (t >= EDGE_START && t < EDGE_START + BANNER_MS) this.drawBanner(ctx, L.edge.name, '#f8d070', t - EDGE_START, true);
     if (t >= STREET_START && t < STREET_START + BANNER_MS) this.drawBanner(ctx, 'LA GRAND-RUE', '#f8d070', t - STREET_START, true);
-    if (t >= SALOON_START && t < SALOON_START + BANNER_MS) this.drawBanner(ctx, 'LE SALOON', '#f8d070', t - SALOON_START, true);
+    if (t >= SALOON_START && t < SALOON_START + BANNER_MS) this.drawBanner(ctx, LAIRS[lair].name, '#f8d070', t - SALOON_START, true);
     this.drawBossHud(ctx, t);
     if (this.banner && t - this.banner.at < BANNER_MS) this.drawBanner(ctx, this.banner.text, this.banner.col, t - this.banner.at);
 
@@ -1386,9 +1638,13 @@ export class ShooterScene extends MiniScene {
   // Cavalier au galop ; abattu, il vide les étriers et son cheval s'enfuit.
   drawRider(ctx, tg, cx, t) {
     const d = this.dead.get(tg.id);
-    const dir = tg.ride.vx > 0 ? 1 : -1;
-    const x = Math.round(rideX(tg, t) - cx), y = tg.ride.y;
+    // pendant la poursuite, tout le monde galope vers la droite (même ceux qui se laissent distancer) ; sans son
+    // cavalier, le cheval ralentit et reste en arrière
+    const chase = this.chasing(camAt(t));
+    const dir = chase || tg.ride.vx > 0 ? 1 : -1;
+    const x = Math.round((chase && d ? rideX(tg, d.at) - (t - d.at) * 0.12 : rideX(tg, t)) - cx), y = tg.ride.y;
     if (x < -60 || x > W + 60) return;
+    if (chase) this.dust(ctx, x - 22, y, t + tg.id * 131);
     const [coat, mane] = HORSE_COATS[tg.look % HORSE_COATS.length];
     const char = BANDITS[tg.look % BANDITS.length];
     const frame = Math.floor((t + tg.id * 97) / 90) % 4;
@@ -1441,8 +1697,28 @@ export class ShooterScene extends MiniScene {
     ctx.restore();
   }
 
+  // nuage de poussière soulevé au galop, qui reste en arrière (poursuite)
+  dust(ctx, x, y, t, s = 1) {
+    for (let k = 0; k < 4; k++) {
+      const age = (t / 420 + k / 4) % 1;
+      S.disc(ctx, Math.round(x - age * 46 * s), Math.round(y - 2 - age * 7 * s), Math.round((2 + age * 6) * s), `rgba(214,170,120,${(0.45 * (1 - age)).toFixed(2)})`);
+    }
+  }
+
+  // le bâton de dynamite allumé qu'El Diablo brandit juste avant de le lancer (mine, poursuite), en (x, y)
+  drawBossStick(ctx, t, x, y) {
+    const next = this.bossTnts.find((d) => d.t0 > t && d.t0 - t < 700 && !this.defused(d));
+    if (!next) return;
+    const { R } = paint(ctx);
+    R(x - 1, y, 5, 12, OUT); R(x, y + 1, 3, 10, '#c0392b'); R(x, y + 4, 3, 2, '#f4ecd8');
+    const sp = Math.floor(t / 60) % 2;
+    R(x + sp, y - 3, 2, 2, sp ? '#fff070' : '#f87818');
+  }
+
   // El Diablo, une fois et demie plus grand, entouré d'une aura rouge, arpente le balcon.
   drawBoss(ctx, tg, cx, t) {
+    if (this.world.lair === 'mine') return this.drawBossMine(ctx, tg, cx, t);
+    if (this.world.lair === 'chase') return this.drawBossChase(ctx, tg, cx, t);
     const d = this.dead.get(tg.id);
     const rage = this.bossRage();
     const sc = BOSS_SCALE, w = Math.round(48 * sc), h = Math.round(56 * sc);
@@ -1472,6 +1748,93 @@ export class ShooterScene extends MiniScene {
     for (const f of this.fireFx) if (f.id === tg.id) for (const gx of [-18, 18]) S.drawFlash(ctx, bx + gx, top + 56, 16, t / 30 + gx);
   }
 
+  // Dans la mine : El Diablo debout dans son wagonnet qui roule sur la passerelle (étincelles sous les roues quand il
+  // file), il brandit sa dynamite avant de la lancer. Abattu, il bascule hors du wagonnet et tombe de la passerelle ;
+  // le wagonnet vide continue de rouler.
+  drawBossMine(ctx, tg, cx, t) {
+    const d = this.dead.get(tg.id);
+    const rage = this.bossRage();
+    const sc = BOSS_SCALE, w = Math.round(48 * sc), h = Math.round(56 * sc), B = MINE.balcony;
+    const flash = t - this.bossFlash < 110 || (d && t - d.at < 150);
+    const { img, sil } = bossSprite(!!flash, (t % 2900) < 120, t);
+    const top = this.bossTop(t);
+    const bx = Math.round(bossX(d && d.at > 0 ? d.at : t) - cx), cartX = Math.round(bossX(t) - cx);
+    if (d) {
+      const k = clamp01((t - d.at) / 1100);
+      ctx.save();
+      ctx.translate(bx - 30 * k, top + h / 2 - 40 * k + 320 * k * k);
+      ctx.rotate(-k * 2.4);
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, W, B - 18);
+      ctx.clip();
+      const pulse = 0.35 + 0.25 * Math.sin(t / (rage ? 70 : 140));
+      ctx.globalAlpha = pulse + (rage ? 0.25 : 0);
+      for (const [dx, dy] of [[-2, 0], [2, 0], [0, -2], [0, 2]]) ctx.drawImage(sil, bx - w / 2 + dx, top + dy, w, h);
+      ctx.globalAlpha = 1;
+      ctx.drawImage(img, bx - w / 2, top, w, h);
+      ctx.restore();
+      this.drawBossStick(ctx, t, bx + 26, top + 14);
+    }
+    // le wagonnet (devant ses jambes), ses roues sur le rail
+    const { R, box } = paint(ctx);
+    const cy = B - 3;
+    box(cartX - 25, cy - 21, 50, 15, '#5a5450');
+    R(cartX - 23, cy - 19, 46, 2, '#8a8478'); R(cartX - 25, cy - 12, 50, 2, '#3e434c');
+    for (const rx of [-21, -9, 8, 20]) { R(cartX + rx, cy - 16, 1, 1, '#b8bcc4'); R(cartX + rx, cy - 9, 1, 1, '#b8bcc4'); }
+    for (const wx of [cartX - 14, cartX + 14]) { S.disc(ctx, wx, cy - 4, 5, OUT); S.disc(ctx, wx, cy - 4, 4, '#2a2628'); S.disc(ctx, wx, cy - 4, 1, '#8a8478'); }
+    const v = (bossX(t + 40) - bossX(t)) / 40; // il file : des étincelles jaillissent des roues
+    if (Math.abs(v) > 0.06) for (let k = 0; k < 6; k++) R(cartX + (v > 0 ? -18 : 18) - Math.sign(v) * Math.random() * 12, cy - Math.random() * 4, 1, 1, Math.random() < 0.5 ? '#fff070' : '#f87818');
+    if (!d) for (const f of this.fireFx) if (f.id === tg.id) for (const gx of [-18, 18]) S.drawFlash(ctx, bx + gx, top + 56, 16, t / 30 + gx);
+  }
+
+  // La poursuite : El Diablo au galop sur son cheval noir, la poussière derrière lui ; il se retourne pour tirer et
+  // brandit sa dynamite avant de la lancer. Abattu, il vide les étriers et son cheval file sans lui.
+  drawBossChase(ctx, tg, cx, t) {
+    const d = this.dead.get(tg.id);
+    const rage = this.bossRage();
+    const s = CHASE.scale, y = CHASE.y;
+    const flash = t - this.bossFlash < 110 || (d && t - d.at < 150);
+    const frame = Math.floor(t / 85) % 4;
+    if (d) {
+      const hx = Math.round(this.bossXAt(d.at) + (t - d.at) * 0.16 - cx);
+      this.dust(ctx, hx - 26, y, t, 1.3);
+      const horse = horseSprite('#2a2220', '#141010', frame, null);
+      ctx.save(); ctx.imageSmoothingEnabled = false; ctx.translate(hx, y); ctx.scale(s, s); ctx.drawImage(horse, -horse.ox, -horse.oy); ctx.restore();
+      const k = clamp01((t - d.at) / 900), bx = Math.round(this.bossXAt(d.at) - cx);
+      const { img } = bossSprite(!!flash, false, t);
+      const w = Math.round(48 * BOSS_SCALE * 0.8), h = Math.round(56 * BOSS_SCALE * 0.8);
+      ctx.save(); ctx.globalAlpha = 1 - k * 0.3; ctx.translate(bx - 50 * k, y - 66 + 64 * k * k); ctx.rotate(-k * 2.2); ctx.drawImage(img, -w / 2, -h / 2, w, h); ctx.restore();
+      return;
+    }
+    const bx = Math.round(this.bossXAt(t) - cx);
+    this.dust(ctx, bx - 26, y, t, 1.3);
+    const hs = bossHorse(frame, !!flash);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.translate(bx, y);
+    ctx.scale(s, s);
+    ctx.globalAlpha = 0.35 + 0.25 * Math.sin(t / (rage ? 70 : 140)) + (rage ? 0.25 : 0);
+    for (const [dx, dy] of [[-1.5, 0], [1.5, 0], [0, -1.5], [0, 1.5]]) ctx.drawImage(hs.sil, -hs.ox + dx, -hs.oy + dy);
+    ctx.globalAlpha = 1;
+    ctx.drawImage(hs.img, -hs.ox, -hs.oy);
+    ctx.fillStyle = OUT; ctx.fillRect(-17, -35, 10, 4); // le revolver tendu vers l'arrière
+    ctx.fillStyle = '#8a8f98'; ctx.fillRect(-16, -34, 8, 2);
+    ctx.restore();
+    if (this.bossTnts.some((d) => d.t0 > t && d.t0 - t < 700 && !this.defused(d))) {
+      // le bras levé, le bâton au poing
+      const { R } = paint(ctx);
+      const sy = y - Math.round(31 * s); // l'épaule
+      for (let k = 0; k <= 10; k++) R(bx + 3 + k, sy - k * 2 - 1, 4, 4, OUT);
+      for (let k = 0; k <= 10; k++) R(bx + 4 + k, sy - k * 2, 2, 2, '#5a1a14');
+      this.drawBossStick(ctx, t, bx + 13, sy - 32);
+    }
+    for (const f of this.fireFx) if (f.id === tg.id) S.drawFlash(ctx, bx - Math.round(18 * s), y - Math.round(33 * s), 16, t / 30);
+  }
+
   drawLockOn(ctx, tg, cx, t) {
     if (!tg.fire.length || this.dead.has(tg.id)) return;
     const boss = tg.kind === 'boss';
@@ -1494,7 +1857,7 @@ export class ShooterScene extends MiniScene {
       if (t < f - 700 || t > f) continue;
       const u = (f - t) / 700;
       const col = this.color(this.aims.get(`${tg.id}:${i}`) ?? tg.victims[i] % this.n);
-      const x = boss ? Math.round(bossX(t) - cx) : Math.round(s.cx - cx);
+      const x = boss ? Math.round(this.bossXAt(t) - cx) : Math.round(s.cx - cx);
       const y = boss ? this.bossTop(t) + 40 : Math.round(s.base - 56 + (1 - k) * 56 + 26);
       ring(ctx, x, y, (boss ? 10 : 7) + u * 12, (boss ? 10 : 7) + u * 12, col, 3, t / 80);
       if (boss) ring(ctx, x, y, 22 + u * 14, 22 + u * 14, '#f0705a', 2, -t / 60);

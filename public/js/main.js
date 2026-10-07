@@ -498,8 +498,8 @@ function showLobby() {
 
   // un jeu : on choisit la carte ; roue et championnat : on coche les jeux qui peuvent tomber
   const all = pool.length >= Object.keys(MODES).length;
-  $('modes-label').innerHTML = single ? '2. Choisis le jeu :'
-    : `2. Jeux dans la roue (${pool.length}) :${isHost && !all ? ' <button type="button" class="mini-link" data-poolall>tout cocher</button>' : ''}`;
+  $('modes-label').innerHTML = single ? 'Choisis le jeu :'
+    : `Jeux dans la roue (${pool.length}) :${isHost && !all ? ' <button type="button" class="mini-link" data-poolall>tout cocher</button>' : ''}`;
   // le jeu choisi change : on affiche sa page
   if (single && l.mode !== modesShown) modesPage = Math.floor(Math.max(0, soloIds.indexOf(l.mode)) / MODES_PAGE);
   modesShown = single ? l.mode : null;
@@ -513,6 +513,7 @@ function showLobby() {
       `<button type="button" class="${(variant ?? '') === v.id ? 'on' : ''}" data-variant="${v.id}" ${lock ? 'disabled' : ''}>${esc(v.name)}</button>`).join('');
   }
 
+  $('players-n').textContent = `${n}/${l.max || 6}`;
   renderSeats(l, isHost);
   renderChampBoard(l, isHost);
 
@@ -838,14 +839,17 @@ $('chat-form').onsubmit = (e) => {
   if (v) net.send({ t: 'chat', text: v });
   $('chat-input').value = '';
 };
-net.on('chat', ({ from, text }) => {
-  const line = `<b>${esc(from)} :</b> ${esc(text)}`;
+net.on('chat', ({ from, text, sys }) => {
+  // sys : ligne du narrateur (quelqu'un rejoint ou quitte la table)
+  const line = sys ? esc(text) : `<b>${esc(from)} :</b> ${esc(text)}`;
   const log = $('chat-log');
   const d = document.createElement('div');
+  if (sys) d.className = 'sys';
   d.innerHTML = line;
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
   if (screen === 'game') toast(line, 'toasts');
+  else if (sys && !log.offsetParent) toast(line); // comptoir caché (petit écran) : en bulle, comme avant
 });
 
 // ------------------------------------------------------------ partie

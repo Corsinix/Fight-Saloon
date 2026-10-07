@@ -11,6 +11,7 @@ import { makeCanvas } from './sprites.js';
 const MOVE = { KeyW: [0, 1], ArrowUp: [0, 1], KeyS: [0, -1], ArrowDown: [0, -1], KeyA: [-1, 0], KeyD: [1, 0] };
 const SLOT = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4, Digit5: 5, Numpad1: 1, Numpad2: 2, Numpad3: 3, Numpad4: 4, Numpad5: 5 };
 const GAME_KEYS = new Set([...Object.keys(MOVE), 'ArrowLeft', 'ArrowRight', 'Space', 'Tab']);
+const CROUCH = ['ControlLeft', 'ControlRight', 'KeyC']; // s'accroupir : Ctrl (ou C, pour les Mac où Ctrl + clic fait un clic droit)
 const MOUSE_SENS = 0.0024; // radians par pixel de souris (× réglage)
 const TOUCH_SENS = 0.0085; // radians par pixel CSS de glissé (× réglage)
 const KEY_TURN = 2.6; // radians par seconde aux flèches gauche / droite
@@ -37,10 +38,12 @@ export class FpsInput {
     this.root = root;
     this.codes = new Set();
     this.lookDx = 0;
+    this.lookDy = 0; // regard vertical (souris, glissé au doigt) : + vers le bas
     this.mouseFire = false;
     this.mouseAlt = false;
     this.touchFire = false;
     this.touchAlt = false;
+    this.touchCrouch = false; // bouton « se baisser » au doigt : bascule
     this.tapFire = false; // second tap d'un double tap, doigt encore posé
     this.locked = false;
     this.lockFailed = false; // capture refusée (navigateur, iframe…) : le clic tire, et on vise en glissant
@@ -78,7 +81,7 @@ export class FpsInput {
   edges() { this.pulse = { fire: false, reload: false, use: false, throw: false, slot: null, next: 0, map: false }; }
 
   // move : x (droite +), y (avant +), longueur ≤ 1 ; turn : radians cette image (+ vers la droite) ;
-  // fire, alt, sprint, board : maintenus ; firePressed, reload, use, throw, slot (1 à 5 ou null), nextSlot (-1, 0, +1),
+  // fire, alt, sprint, crouch, board : maintenus ; firePressed, reload, use, throw, slot (1 à 5 ou null), nextSlot (-1, 0, +1),
   // map (bouton Carte au doigt ; au clavier, M passe par onKey de la scène) : une image.
   poll(dt) {
     this.mountPad();
@@ -97,18 +100,21 @@ export class FpsInput {
     const len = Math.hypot(x, y);
     if (len > 1) { x /= len; y /= len; } // en diagonale, pas plus vite qu'en ligne droite
     let turn = this.menu ? 0 : this.lookDx;
+    const pitch = this.menu ? 0 : this.lookDy;
     this.lookDx = 0;
+    this.lookDy = 0;
     if (!this.menu) turn += ((this.codes.has('ArrowRight') ? 1 : 0) - (this.codes.has('ArrowLeft') ? 1 : 0)) * KEY_TURN * (dt / 1000);
     const p = this.menu ? { fire: false, reload: false, use: false, throw: false, slot: null, next: 0 } : this.pulse;
     const live = !this.menu;
     const out = {
       move: { x, y },
-      turn,
+      turn, pitch,
       fire: live && (this.mouseFire || this.touchFire || this.tapFire || this.codes.has('Space')),
       firePressed: p.fire,
       alt: live && (this.mouseAlt || this.touchAlt),
       reload: p.reload, use: p.use, throw: p.throw, slot: p.slot, nextSlot: p.next, map: !!p.map,
       sprint: live && (this.stick.run || this.codes.has('ShiftLeft') || this.codes.has('ShiftRight')),
+      crouch: live && (CROUCH.some((c) => this.codes.has(c)) || this.touchCrouch),
       board: this.codes.has('Tab'),
     };
     this.edges();
@@ -151,6 +157,7 @@ export class FpsInput {
     this.stick.id = null;
     this.stick.run = false;
     this.lookDx = 0;
+    this.lookDy = 0;
     this.edges();
     if (this.pad) {
       this.pad.querySelector('.fp-stick').classList.add('hidden');
@@ -162,8 +169,10 @@ export class FpsInput {
   bindKeys() {
     const sig = { signal: this.abort.signal };
     document.addEventListener('keydown', (e) => {
-      if (this.stopped || typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (this.stopped || typing(e) || e.metaKey || e.altKey || (e.ctrlKey && this.menu)) return;
       const c = e.code;
+      // Ctrl tenu (accroupi) : on avance toujours, et Ctrl + S, D, F… n'ouvrent pas les menus du navigateur
+      if (e.ctrlKey) e.preventDefault();
       if (c === 'Tab') e.preventDefault(); // tableau des scores, pas de saut de focus
       if (this.menu) { if (c === 'Tab') this.codes.add(c); return; } // le menu lit les touches via la scène
       if (GAME_KEYS.has(c)) e.preventDefault();
@@ -177,6 +186,12 @@ export class FpsInput {
       else if (SLOT[c]) p.slot = SLOT[c];
     }, sig);
     document.addEventListener('keyup', (e) => this.codes.delete(e.code), sig);
+    // Ctrl + W (avancer en QWERTY) ferme l'onglet, et le navigateur ne laisse pas l'empêcher : accroupi, on demande d'abord
+    window.addEventListener('beforeunload', (e) => {
+      if (this.stopped || !(this.codes.has('ControlLeft') || this.codes.has('ControlRight'))) return;
+      e.preventDefault();
+      e.returnValue = '';
+    }, sig);
     window.addEventListener('blur', () => { this.codes.clear(); this.release(); }, sig);
   }
 
@@ -218,8 +233,9 @@ export class FpsInput {
     }, sig);
     document.addEventListener('mousemove', (e) => {
       // sans capture (refusée), on vise en glissant, bouton enfoncé
-      if (this.menu || Math.abs(e.movementX) > SPIKE || !(this.locked || (this.lockFailed && e.buttons))) return;
+      if (this.menu || Math.abs(e.movementX) > SPIKE || Math.abs(e.movementY) > SPIKE || !(this.locked || (this.lockFailed && e.buttons))) return;
       this.lookDx += e.movementX * MOUSE_SENS * this.sensK;
+      this.lookDy += e.movementY * MOUSE_SENS * this.sensK;
     }, sig);
     cv.addEventListener('wheel', (e) => {
       if (this.menu) return;
@@ -264,9 +280,10 @@ export class FpsInput {
         ${btn('fp-slot', 'Arme suivante', 'weapon', -8, -85)}
         ${btn('fp-reload', 'Recharger', 'reload', -62, -58)}
         ${btn('fp-alt', 'Viser', 'aim', -85, 0)}
-        ${btn('red fp-throw', 'Dynamite', 'dynamite', -62, 58)}
+        ${btn('red fp-throw', 'Lancer (dynamite, cocktail, piège)', 'dynamite', -62, 58)}
         ${btn('gold fp-use', 'Monter', 'up', -140, -56)}
         ${btn('red fp-fire', 'Tirer', 'fire', 0, 0)}
+        ${btn('fp-crouch', 'Se baisser', 'down', -8, 85)}
       </div>`;
     this.root.innerHTML = '';
     this.root.appendChild(pad);
@@ -320,19 +337,20 @@ export class FpsInput {
     // glisser pour tourner : sur la zone de droite, et sur le bouton de tir (on tire en suivant la cible).
     // onUp reçoit tapped : le doigt est resté court et immobile (un tap, pas un glissé).
     const look = (el, onDown, onUp) => {
-      let id = null, lx = 0, t0 = 0, moved = 0;
+      let id = null, lx = 0, ly = 0, t0 = 0, moved = 0;
       el.addEventListener('pointerdown', (e) => {
         capture(el, e);
         if (id != null) return;
-        id = e.pointerId; lx = e.clientX; t0 = performance.now(); moved = 0;
+        id = e.pointerId; lx = e.clientX; ly = e.clientY; t0 = performance.now(); moved = 0;
         onDown?.(e);
       }, sig);
       el.addEventListener('pointermove', (e) => {
         if (e.pointerId !== id) return;
-        const dx = e.clientX - lx;
+        const dx = e.clientX - lx, dy = e.clientY - ly;
         this.lookDx += dx * TOUCH_SENS * this.sensK;
-        moved += Math.abs(dx);
-        lx = e.clientX;
+        this.lookDy += dy * TOUCH_SENS * this.sensK * 0.6; // un peu moins sensible en hauteur : on tourne surtout
+        moved += Math.abs(dx) + Math.abs(dy);
+        lx = e.clientX; ly = e.clientY;
       }, sig);
       const end = (e) => {
         if (e.pointerId !== id) return;
@@ -383,6 +401,7 @@ export class FpsInput {
     tap('.fp-throw', () => { this.pulse.throw = true; });
     tap('.fp-use', () => { this.pulse.use = true; });
     tap('.fp-alt', (el) => { this.touchAlt = !this.touchAlt; el.classList.toggle('on', this.touchAlt); });
+    tap('.fp-crouch', (el) => { this.touchCrouch = !this.touchCrouch; el.classList.toggle('on', this.touchCrouch); });
     pad.addEventListener('contextmenu', (e) => e.preventDefault(), sig);
     this.refreshPad();
   }
@@ -569,7 +588,7 @@ function injectCss() {
 .fp-btns .tp-btn.hidden { display: none; }
 .fp-btns .tp-btn:active, .fp-btns .tp-btn.on { opacity: 1; }
 .fp-btns .fp-fire { left: -42px; top: -42px; width: 84px; height: 84px; }
-.fp-btns .fp-alt.on { outline: 3px solid var(--yellow); outline-offset: 1px; }
+.fp-btns .fp-alt.on, .fp-btns .fp-crouch.on { outline: 3px solid var(--yellow); outline-offset: 1px; }
 .fp-ico { display: block; image-rendering: pixelated; pointer-events: none; }
 /* bouton Carte : invisible sur la mini-carte, juste l'icône dans son coin bas droit */
 .fps-pad .fp-map {

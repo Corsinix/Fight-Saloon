@@ -7,6 +7,7 @@
 // barrières), linteaux au-dessus des portes, plafonds dans les bâtiments, ciel et mesas au loin.
 import { MiniScene } from './miniscene.js';
 import { canvasText } from './scene.js';
+import { ruleLines, drawRuleLines } from './ruletext.js';
 import { sfx, bossMusic, musicCue } from './audio.js';
 import * as S from './sprites.js';
 import { desertOpts } from './env.js';
@@ -14,8 +15,8 @@ import { riderLook } from './lasso.js';
 import { W, H, rng } from './worlds.js';
 import { SKIN, CLOTH_COLORS, CHAR_PARTS, CHAR_COLORS } from './data.js';
 import {
-  FPS, WEAPONS, MELEE, PISTOLS, LONGS, EQUIP, EQUIPS, LOOT, NPCS, DEFAULT_LOADOUT, cleanLoadout,
-  fpsWorld, move, rayWall, rayCircle, railAt, roofed, los, liveOf, bountyLeader, PROPS, applyProp, RAY, cannonReach,
+  FPS, WEAPONS, MELEE, PISTOLS, LONGS, TEMPS, EQUIP, EQUIPS, THROWN, LOOT, NPCS, DEFAULT_LOADOUT, cleanLoadout,
+  fpsWorld, move, rayWall, rayCircle, railAt, roofed, los, liveOf, bountyLeader, PROPS, PICKABLE, applyProp, RAY, cannonReach, mortarReach, blocks, cellAt,
 } from './fpsgame.js';
 import { cannonView, aimMark, aimDot, VIEW_H as CANNON_H } from './fpscannon.js';
 import { fpsMods, fpsBanner, FPS_EVENTS } from './fpsevents.js';
@@ -26,6 +27,8 @@ import './fpsartCanyon.js';
 import './fpsartPueblo.js';
 import './fpsartGhost.js';
 import './fpsartPort.js';
+// armes en main dessinées hors de fpsart.js (elles s'enregistrent aussi)
+import './fpsvm/index.js';
 import { drawHud } from './fpshud.js';
 import { FpsInput } from './fpsinput.js';
 import { AutoRes } from './fpsperf.js';
@@ -36,6 +39,7 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const TAU = Math.PI * 2;
 const wrapA = (a) => ((a % TAU) + TAU + Math.PI) % TAU - Math.PI;
 const FOV = 1.15, FOV_ZOOM = 0.42;
+const PITCH_MAX = 0.22; // regard vertical : environ 12° vers le haut ou le bas
 const CEIL = FPS.ceil;
 const LO_KEY = 'fps-loadout';
 // couleur « transparente » des murs (#9fb8c8 opaque, en ABGR) : le ciel entre les pointes des rondins
@@ -47,6 +51,16 @@ const FEED_MS = 5000;
 const ENV_KILLER = { train: 'LE TRAIN', fire: 'LE FEU', barrel: 'UN BARIL', crush: 'LE LUSTRE' };
 // le décor qui répond sans rien changer à la partie (seul le tireur l'entend) : [son, rayon touché]
 const PINGS = { spittoon: ['ding', 0.14], cow: ['moo', 0.4], chicken: ['cluck', 0.2], safe: ['clank', 0.3] };
+// fiche de l'armurerie des armes qui ne se résument pas à leurs chiffres
+const WEAPON_TIPS = {
+  pickaxe: 'LENTE - CASSE TONNEAUX, CAISSES ET ROCHERS',
+  lasso: 'MAINTIENS : LE RAMÈNE - LÂCHE : RESTE LIGOTÉ',
+  lemat: '9 COUPS - CLIC DROIT : CANON À CHEVROTINE',
+  peacemaker: 'PRÉCIS - CLIC DROIT MAINTENU : FANNING',
+  bow: 'SILENCIEUX - BANDÉ À FOND : FLÈCHE DE FEU',
+  harpoon: 'DÉGÂTS 70 - MAINTIENS : RAMÈNE LA CIBLE',
+};
+const THROW_MS = 700; // entre deux objets lancés ou posés
 
 // Fond et brouillard selon l'ambiance (heure, météo) : multiplicateurs de couleur dehors et dedans.
 function lightOf(env) {
@@ -111,8 +125,8 @@ export class FpsScene extends MiniScene {
   }
   help() {
     return this.touch
-      ? ['STICK : AVANCER - GLISSER À DROITE : TOURNER LA TÊTE', 'FEU : TIRER - MONTER : CHEVAL OU WAGONNET', this.scoreLine()]
-      : ['Z Q S D : AVANCER - SOURIS : VISER - CLIC : TIRER', '1-5 : ARMES - R : RECHARGER - E : MONTER, UTILISER - G : DYNAMITE - M : CARTE', this.scoreLine()];
+      ? ['STICK : AVANCER - GLISSER À DROITE : TOURNER LA TÊTE', 'FEU : TIRER - MONTER : CHEVAL OU WAGONNET - FLÈCHE BAS : SE BAISSER', this.scoreLine()]
+      : ['Z Q S D : AVANCER - SOURIS : VISER - CLIC : TIRER - CTRL : SE BAISSER', '1-5 : ARMES - R : RECHARGER - E : MONTER, UTILISER - G : LANCER - M : CARTE', this.scoreLine()];
   }
 
   scoreLine() {
@@ -340,6 +354,9 @@ export class FpsScene extends MiniScene {
     this.carts = w.carts.map((c) => ({ id: c.id, s: c.s, rider: -1 }));
     this.dyns = new Map();
     this.fires = new Map(); // flaques de feu (id -> { x, y, r, t1 })
+    this.traps = new Map(); // pièges à loup posés (id -> { x, y, by }), et ceux qui viennent de se refermer
+    this.snares = new Map(); // qui est entravé et par quoi ('p3', 'n12' -> { w, until, x, y })
+    this.tethers = new Map(); // cordes tendues (lasso, harpon) : tireur -> { who, npc, w }
     this.drinkAt = 0; // prochain whisky au comptoir
     this.fx = [];
     this.feed = [];
@@ -362,12 +379,15 @@ export class FpsScene extends MiniScene {
   // compte à rebours, une image à la fois, l'équipement choisi d'abord, pour éviter un à-coup au premier tir.
   prewarm() {
     const lo = this.lo;
-    const ids = [...new Set([lo.l, lo.p, lo.m, 'dynamite', ...LONGS, ...PISTOLS, ...MELEE, 'gatling', 'akimbo', 'goldwin'])];
+    const thrown = lo.e === 'molotov' ? 'molotov' : lo.e === 'traps' ? 'trap' : 'dynamite';
+    const ids = [...new Set([lo.l, lo.p, lo.m, thrown, 'dynamite', ...LONGS, ...PISTOLS, ...MELEE, ...TEMPS])];
     const jobs = [];
     for (const id of ids) {
       const melee = MELEE.includes(id);
-      const states = id === 'dynamite' ? [['idle', 1], ['lit', 2], ['throw', 1]]
-        : melee ? [['idle', 1], ['swing', 3]] : [['idle', 1], ['fire', id === 'gatling' ? 4 : 2], ['reload', 3]];
+      const states = THROWN[id] ? [['idle', 1], ['lit', 2], ['throw', 1]]
+        : melee ? [['idle', id === 'lasso' ? 4 : 1], ['swing', 3]]
+          : id === 'bow' ? [['idle', 1], ['draw', 2], ['fire', 2], ['reload', 3]]
+            : [['idle', id === 'diablo' ? 2 : 1], ['fire', id === 'gatling' ? 4 : 2], ['reload', 3], ...(WEAPONS[id]?.alt ? [['alt', 2], ['shell', 2]] : []), ...(WEAPONS[id]?.fan ? [['fan', 2]] : [])];
       for (const [st, n] of states) for (let f = 0; f < n; f++) jobs.push([id === 'akimbo' ? 'colt' : id, st, f]);
     }
     const step = () => {
@@ -391,6 +411,7 @@ export class FpsScene extends MiniScene {
     });
     for (const [key, s] of st.props || []) this.setProp(key, s, -1e9);
     for (const f of st.fires || []) this.fires.set(f.id, f);
+    for (const q of st.traps || []) this.traps.set(q.id, q);
     const me = st.mine;
     if (me?.alive) {
       Object.assign(this.my, { x: me.x, y: me.y, a: me.a, hp: me.hp, armor: me.armor, alive: true });
@@ -499,8 +520,8 @@ export class FpsScene extends MiniScene {
     const id = this.lo[row.key];
     const wpn = WEAPONS[id];
     const info = wpn
-      ? (wpn.melee ? `DÉGÂTS ${wpn.dmg} - PORTÉE ${wpn.range} - ${wpn.rate < 450 ? 'RAPIDE' : 'LENT'}`
-        : `DÉGÂTS ${wpn.dmg}${wpn.pellets ? ` x${wpn.pellets}` : ''} - CHARGEUR ${wpn.mag} - PORTÉE ${wpn.range}${wpn.zoom ? ' - LUNETTE' : ''}`)
+      ? (WEAPON_TIPS[id] || (wpn.melee ? `DÉGÂTS ${wpn.dmg} - PORTÉE ${wpn.range} - ${wpn.rate < 450 ? 'RAPIDE' : 'LENT'}`
+        : `DÉGÂTS ${wpn.dmg}${wpn.pellets ? ` x${wpn.pellets}` : ''} - CHARGEUR ${wpn.mag} - PORTÉE ${wpn.range}${wpn.zoom ? ' - LUNETTE' : ''}`))
       : EQUIP[id].desc;
     canvasText(ctx, info, W / 2, L.y0 + 16 + 4 * 20 - 2, { color: '#a8d8a0' });
     const [ox, oy, ow, oh] = L.ok;
@@ -511,7 +532,11 @@ export class FpsScene extends MiniScene {
     const label = this.menu?.ready ? (t < 0 ? 'PRÊT ! ATTENDS LE SIGNAL' : 'EN ROUTE…') : wait > 0 && this.t >= 0 ? `ATTENDS ${wait} S` : this.touch ? 'PRÊT !' : 'PRÊT ! (ESPACE)';
     canvasText(ctx, label, ox + ow / 2, oy + 5, { color: '#fdf6e0' });
     if (t < 0) {
-      this.help().forEach((l, i) => canvasText(ctx, l, W / 2, L.y0 + 143 + i * 9, { color: '#e2d2a6' }));
+      // règles en couleur (ruletext.js), dans le cadre : sous le bouton PRÊT, au-dessus du bord du bas (L.y0 + 169)
+      const maxW = W - 28;
+      const lines = ruleLines(this.help(), maxW);
+      const lh = lines.length > 3 ? 9 : 10;
+      drawRuleLines(ctx, lines, W / 2, Math.max(L.ok[1] + L.ok[3] + 3, Math.min(L.y0 + 143, L.y0 + 169 - 11 - (lines.length - 1) * lh)), { lh, maxW });
       const c = Math.ceil(-t / 1000);
       if (c <= 3) canvasText(ctx, String(c), W - 30, 24, { size: 24, color: '#f0705a' });
     } else if (!dead) {
@@ -526,19 +551,42 @@ export class FpsScene extends MiniScene {
     m.lo = { ...lo };
     const k = lo.e === 'bandolier' ? 1.6 : 1;
     m.ammo = {};
-    for (const id of [lo.p, lo.l]) m.ammo[id] = { mag: WEAPONS[id].mag, res: Math.round(WEAPONS[id].reserve * k) };
+    for (const id of [lo.p, lo.l]) {
+      const W8 = WEAPONS[id];
+      m.ammo[id] = { mag: W8.mag, res: Math.round(W8.reserve * k) };
+      // LeMat : le canon à chevrotine a son coup et sa réserve à lui
+      if (W8.alt) m.ammo[id].alt = { mag: W8.alt.mag, res: Math.round(W8.alt.reserve * k) };
+    }
     m.dyn = lo.e === 'dynamite' ? EQUIP.dynamite.dyn : 0;
+    m.mol = lo.e === 'molotov' ? EQUIP.molotov.mol : 0;
+    m.traps = lo.e === 'traps' ? EQUIP.traps.traps : 0;
     m.temp = null;
     m.w = lo.l;
     m.prevW = lo.l;
     m.reload = null;
     m.swing = null;
     m.zoom = false;
+    m.drawn = null; // arc bandé : { at } depuis quand
+    m.snareUntil = -1e9;
+    m.reeling = null; // lasso, harpon : le tir est tenu depuis { at }
+    m.tether = null; // corde tendue vers une prise (annoncée par l'hôte)
+    m.towTo = null; // au bout de la corde d'un autre : où l'hôte nous tire
   }
+
+  // Ce qui se lance ou se pose à l'emplacement 4 (G) : l'équipement choisi d'abord, sinon la dynamite des caisses
+  thrown() {
+    const m = this.my;
+    if (m.lo?.e === 'molotov' && m.mol > 0) return 'molotov';
+    if (m.lo?.e === 'traps' && m.traps > 0) return 'trap';
+    if (m.dyn > 0) return 'dynamite';
+    return m.mol > 0 ? 'molotov' : m.traps > 0 ? 'trap' : null;
+  }
+
+  thrownCount(id) { const T = THROWN[id]; return T ? this.my[T.key] || 0 : 0; }
 
   has(id) {
     const m = this.my;
-    if (id === 'dynamite') return m.dyn > 0;
+    if (THROWN[id]) return this.thrownCount(id) > 0;
     if (WEAPONS[id]?.temp) return m.temp?.id === id;
     return id === m.lo.m || id === m.lo.p || id === m.lo.l;
   }
@@ -552,40 +600,58 @@ export class FpsScene extends MiniScene {
   select(id) {
     const m = this.my;
     if (!this.has(id) || m.w === id) return;
+    this.letGo();
     if (this.mods.melee && !WEAPONS[id]?.melee) return;
     if (!WEAPONS[m.w]?.temp) m.prevW = m.w;
     m.w = id;
     m.reload = null;
     m.swing = null;
     m.zoom = false;
+    m.drawn = null;
     m.drawAt = this.t;
-    sfx(id === 'dynamite' ? 'fuse' : WEAPONS[id]?.melee ? 'unsheathe' : 'draw');
+    sfx(id === 'dynamite' ? 'fuse' : id === 'molotov' ? 'glass' : id === 'trap' ? 'clank' : WEAPONS[id]?.melee ? (id === 'lasso' ? 'rope' : 'unsheathe') : 'draw');
   }
 
   slotWeapon(n) {
     const m = this.my;
-    return n === 1 ? m.lo.m : n === 2 ? m.lo.p : n === 3 ? m.lo.l : n === 4 ? (m.dyn > 0 ? 'dynamite' : null) : m.temp?.id || null;
+    return n === 1 ? m.lo.m : n === 2 ? m.lo.p : n === 3 ? m.lo.l : n === 4 ? this.thrown() : m.temp?.id || null;
   }
 
   // Plus de balles : on prend l'autre arme à feu, ou l'arme blanche.
   autoSwitch() {
     const m = this.my;
-    const out = (id) => { const a = this.ammoOf(id); return a.mag + a.res <= 0; };
-    if (WEAPONS[m.w]?.melee || m.w === 'dynamite') return;
+    const out = (id) => { const a = this.ammoOf(id); return a.mag + a.res + (a.alt ? a.alt.mag + a.alt.res : 0) <= 0; };
+    if (WEAPONS[m.w]?.melee || THROWN[m.w]) return;
     if (!out(m.w)) return;
     const next = [m.lo.l, m.lo.p].find((id) => !out(id));
     this.select(next || m.lo.m);
   }
 
+  // Recharge : le chargeur, et le canon à chevrotine du LeMat s'il est vide (même s'il ne manque que lui)
   startReload() {
     const m = this.my;
     const W8 = WEAPONS[m.w];
     if (!W8 || W8.melee || W8.temp || m.reload) return;
     const a = m.ammo[m.w];
-    if (!a || a.mag >= W8.mag || a.res <= 0) return;
-    m.reload = { w: m.w, at: this.t, until: this.t + W8.reload };
+    const altLow = a?.alt && a.alt.mag < W8.alt.mag && a.alt.res > 0;
+    if (!a || ((a.mag >= W8.mag || a.res <= 0) && !altLow)) return;
+    // cyl : le chargeur (barillet) est à recharger ; shot : la cartouche de chevrotine du LeMat aussi
+    const cyl = a.mag < W8.mag && a.res > 0;
+    m.reload = { w: m.w, at: this.t, until: this.t + W8.reload, cyl, shot: !!altLow };
     m.zoom = false;
-    sfx(W8.rl || 'reload');
+    m.drawn = null;
+    sfx(W8.rl === 'nock' ? 'rope' : !cyl ? 'breakopen' : W8.rl || 'reload');
+    // la cartouche de chevrotine s'enfonce à la fin (seule : tout de suite)
+    if (altLow) sfx('shellIn', (cyl ? 0.75 : 0.35) * W8.reload / 1000);
+  }
+
+  // Lasso, harpon : on relâche le tir (ou on change d'arme) : la corde est lâchée ; le harpon se recharge ensuite
+  letGo() {
+    const m = this.my;
+    if (!m.reeling) return;
+    m.reeling = null;
+    this.hooks.send({ kind: 'reel', on: false });
+    if (m.tether?.w === 'harpoon' || m.w === 'harpoon') { const a = m.ammo[m.w]; if (a && a.mag <= 0) this.startReload(); }
   }
 
   // ---------------------------------------------------------- événements de l'hôte
@@ -606,6 +672,7 @@ export class FpsScene extends MiniScene {
         break;
       }
       case 'hurt': {
+        if (ev.horse) this.horseHit(ev);
         if (ev.who === me) {
           m.hp = ev.hp; m.armor = ev.armor; m.hurtAt = this.t;
           const src = ev.by >= 0 ? this.posOf(ev.by) : ev.npc >= 0 ? this.npcs.get(ev.npc) : ev.fx != null ? { x: ev.fx, y: ev.fy } : null;
@@ -697,10 +764,22 @@ export class FpsScene extends MiniScene {
         break;
       }
       case 'goldGone': this.gold.delete(ev.id); break;
+      // le coffre a sauté : le magot d'El Diablo au dynamiteur, des sacs d'or autour, ses hommes de main arrivent
+      case 'heist': {
+        for (const g of ev.gold || []) this.gold.set(g.id, { ...g, at: this.now });
+        this.pushFeed(this.state.players[ev.by]?.name || '', this.color(ev.by), 'LA BANQUE', '#f8d070', 'BRAQUE');
+        sfx('toll');
+        if (ev.by === me) {
+          this.popup(W / 2, 70, `BRAQUAGE ! +${ev.pts} $`, '#f8d070', true);
+          this.toast = { text: 'LE MAGOT D\'EL DIABLO ! SES HOMMES ARRIVENT', at: this.now };
+          sfx('coin');
+        } else if (Math.hypot(ev.x - m.x, ev.y - m.y) < 18) this.toast = { text: 'LA BANQUE EST BRAQUÉE : L\'OR EST PAR TERRE !', at: this.now };
+        break;
+      }
       case 'mount': {
         if (ev.m[0] === 'h') {
           const h = this.horses[+ev.m.slice(1)];
-          if (h) h.rider = ev.who;
+          if (h) { h.rider = ev.who; if (ev.hp != null) h.hp = ev.hp; }
           if (ev.who === me && h) { m.m = ev.m; m.x = h.x; m.y = h.y; m.horseV = 0; sfx('neigh'); }
         } else {
           const c = this.carts[+ev.m.slice(1)];
@@ -719,16 +798,30 @@ export class FpsScene extends MiniScene {
       }
       case 'horseDown': {
         const h = this.horses[ev.id];
-        if (h) { h.dead = true; h.deadAt = this.now; h.rider = -1; h.x = ev.x; h.y = ev.y; }
+        if (h) { h.dead = true; h.deadAt = this.now; h.rider = -1; h.x = ev.x; h.y = ev.y; h.hp = 0; }
         sfx('neigh');
+        // le cavalier se retrouve à pied ; le tireur le sait
+        if (ev.rider === me) { this.popup(W / 2, 96, 'TON CHEVAL EST À TERRE !', '#f0705a', true); this.shake = Math.max(this.shake, 7); }
+        else if (ev.by === me) this.popup(W / 2, 96, ev.rider >= 0 ? `CHEVAL ABATTU : ${this.name(ev.rider)} À PIED !` : 'CHEVAL ABATTU !', '#e0a060', true);
         break;
       }
       case 'horseBack': { const h = this.horses[ev.id]; if (h) Object.assign(h, { x: ev.x, y: ev.y, a: ev.a, dead: false, hp: FPS.horse.hp, rider: -1 }); break; }
-      case 'dyn': this.dyns.set(ev.id, { ...ev, t0: this.t }); break;
+      case 'dyn': {
+        this.dyns.set(ev.id, { ...ev, t0: this.t });
+        // le mortier tonne (le départ s'entend de loin)
+        if (ev.mortar) { const d = Math.hypot(ev.x0 - m.x, ev.y0 - m.y); if (d < 26) sfx(d > 10 ? 'far' : 'mortar'); }
+        break;
+      }
       case 'boom': {
         if (ev.id != null) this.dyns.delete(ev.id);
-        this.fx.push({ kind: 'boom', x: ev.x, y: ev.y, at: this.now, big: ev.big });
         const d = Math.hypot(ev.x - m.x, ev.y - m.y);
+        if (ev.mol) {
+          // cocktail : le verre éclate, l'alcool s'embrase d'un coup
+          this.fx.push({ kind: 'flash', x: ev.x, y: ev.y, z: 0.3, at: this.now });
+          if (d < 20) { sfx('glass'); sfx('fuse', 0.05); }
+          break;
+        }
+        this.fx.push({ kind: 'boom', x: ev.x, y: ev.y, at: this.now, big: ev.big });
         this.shake = Math.max(this.shake, clamp((ev.big ? 14 : 12) - d * 1.5, 0, 12));
         this.flash = Math.max(this.flash, clamp(1 - d / 14, 0, 0.8));
         sfx('boom');
@@ -758,7 +851,62 @@ export class FpsScene extends MiniScene {
         sfx('gulp', 0.15);
         break;
       }
-      case 'regen': if (ev.who === me) m.hp = ev.hp; break;
+      case 'regen': {
+        if (ev.who !== me) break;
+        // pistolet du Diable : la vie volée s'annonce (pas plus d'une fois par demi-seconde)
+        if (ev.leech && ev.hp > m.hp && this.now - (this.leechAt || -1e9) > 500) { this.leechAt = this.now; this.popup(W / 2 - 40, 150, `+${ev.hp - m.hp} PV`, '#f0405a'); }
+        m.hp = ev.hp;
+        break;
+      }
+      // lasso, harpon, piège : la cible ne peut plus avancer ; elle a pu être tirée ou repoussée (x, y)
+      case 'snare': {
+        const key = ev.npc != null ? `n${ev.npc}` : `p${ev.who}`;
+        this.snares.set(key, { w: ev.w, until: this.t + ev.ms, at: this.now, by: ev.by });
+        const dSelf = Math.hypot(ev.x - m.x, ev.y - m.y);
+        // corde tendue : la cible suit le tireur, en douceur (ou elle est relâchée : ms 0)
+        if (ev.quiet) {
+          if (ev.who === me && ev.npc == null) { m.snareUntil = this.t + ev.ms; m.towTo = ev.ms ? { x: ev.x, y: ev.y } : null; }
+          else if (ev.npc != null) { const n = this.npcs.get(ev.npc); if (n) { n.tx = ev.x; n.ty = ev.y; } }
+          else if (this.remote[ev.who]) { const r = this.remote[ev.who]; r.tx = ev.x; r.ty = ev.y; }
+          if (!ev.ms) this.snares.delete(key);
+          break;
+        }
+        if (ev.who === me && ev.npc == null) {
+          m.snareUntil = this.t + ev.ms;
+          if (m.m) this.dismountLocal();
+          m.x = ev.x; m.y = ev.y;
+          this.shake = Math.max(this.shake, 5);
+          this.toast = { text: ev.w === 'lasso' ? 'PRIS AU LASSO !' : ev.w === 'harpoon' ? 'HARPONNÉ !' : 'LE PIED DANS UN PIÈGE !', at: this.now };
+        } else if (ev.npc != null) {
+          const n = this.npcs.get(ev.npc);
+          if (n) { n.tx = ev.x; n.ty = ev.y; }
+        } else if (this.remote[ev.who]) {
+          const r = this.remote[ev.who];
+          r.x = r.tx = ev.x; r.y = r.ty = ev.y;
+        }
+        if (ev.by === me && ev.w !== 'trap') this.popup(W / 2, 96, ev.w === 'lasso' ? 'ATTRAPÉ !' : 'HARPONNÉ !', '#e0a060');
+        if (dSelf < 14) sfx(ev.w === 'trap' ? 'trapsnap' : ev.w === 'lasso' ? 'rope' : 'thud');
+        break;
+      }
+      case 'tether': {
+        this.tethers.set(ev.by, { who: ev.who, npc: ev.npc, w: ev.w });
+        if (ev.by === me) m.tether = { w: ev.w };
+        break;
+      }
+      case 'untether': {
+        this.tethers.delete(ev.by);
+        if (ev.by === me) { m.tether = null; sfx('snap'); }
+        break;
+      }
+      case 'trap': this.traps.set(ev.id, { id: ev.id, x: ev.x, y: ev.y, by: ev.by, at: this.now }); if (ev.by === me) sfx('clank'); break;
+      case 'trapGone': this.traps.delete(ev.id); break;
+      case 'trapped': {
+        this.traps.delete(ev.id);
+        // les mâchoires refermées restent un moment là où elles ont mordu
+        this.fx.push({ kind: 'dust', x: ev.x, y: ev.y, z: 0.1, at: this.now });
+        if (ev.by === me && ev.who !== me) this.popup(W / 2, 96, ev.npc >= 0 ? 'UN BANDIT DANS TON PIÈGE !' : `${this.name(ev.who)} DANS TON PIÈGE !`, '#e0a060', true);
+        break;
+      }
       case 'fpsEvent': {
         const def = FPS_EVENTS[ev.id];
         if (def?.sfx) sfx(def.sfx);
@@ -782,7 +930,11 @@ export class FpsScene extends MiniScene {
     m.hp = ev.hp;
     m.armor = ev.armor;
     if (ev.loot === 'ammo') {
-      for (const id of [m.lo.p, m.lo.l]) { const a = m.ammo[id]; if (a) a.res += Math.ceil(WEAPONS[id].reserve * 0.6); }
+      for (const id of [m.lo.p, m.lo.l]) {
+        const a = m.ammo[id];
+        if (a) a.res += Math.ceil(WEAPONS[id].reserve * 0.6);
+        if (a?.alt) a.alt.res += Math.ceil(WEAPONS[id].alt.reserve * 0.6);
+      }
     }
     if (L.dyn) m.dyn += L.dyn;
     if (ev.loot === 'star') m.shieldUntil = this.t + FPS.shield;
@@ -795,6 +947,7 @@ export class FpsScene extends MiniScene {
       m.zoom = false;
     }
     this.toast = { text: L.name, at: this.now };
+    if (L.gun === 'diablo') sfx('laugh', 0.2);
     sfx(L.gun === 'gatling' ? 'yeehaw' : L.gun || ev.loot === 'star' ? 'power' : { whisky: 'gulp', ammo: 'ammo', armor: 'armor', dynamite: 'fuse' }[ev.loot] || 'crate');
   }
 
@@ -821,6 +974,18 @@ export class FpsScene extends MiniScene {
       if (near) sfx('clank');
       if (ev.by === this.me) this.toast = { text: 'LE COFFRE EST ÉVENTRÉ !', at: this.now };
     }
+  }
+
+  // Le coffre-fort intact tout près (à quelques pas, en vue), ou null : le HUD souffle qu'il se braque à la dynamite.
+  // Pas en « Mort ou vif » : sans bandits ni or, pas de braquage.
+  nearSafe() {
+    if (this.dm) return null;
+    const m = this.my;
+    for (const pr of this.world.props) {
+      if (pr.kind !== 'safe' || (pr.st && pr.st !== 'ok')) continue;
+      if (Math.hypot(pr.x - m.x, pr.y - m.y) < 2.6 && los(this.world, m.x, m.y, pr.x, pr.y, 0.3)) return pr;
+    }
+    return null;
   }
 
   // E près du canon ou du comptoir (à pied) : { kind, key, ready }
@@ -850,6 +1015,7 @@ export class FpsScene extends MiniScene {
     if (w === 'fire') return 'FEU';
     if (w === 'cannon') return 'CANON';
     if (w === 'crush') return 'LUSTRE';
+    if (w === 'trap') return 'PIÈGE À LOUP';
     return WEAPONS[w]?.name || NPCS[w]?.name || '';
   }
 
@@ -896,7 +1062,9 @@ export class FpsScene extends MiniScene {
         r.flashAt = this.now;
         const dist = Math.hypot(r.x - this.my.x, r.y - this.my.y);
         const W8 = WEAPONS[r.w];
-        if (dist < 26 && W8 && !W8.melee) sfx(dist > 10 ? 'far' : W8.sfx);
+        // l'arc ne s'entend que de près ; le mortier s'annonce avec son obus (événement dyn)
+        if (W8 && !W8.melee && !W8.lob && dist < (W8.quiet ? 9 : 26)) sfx(dist > 10 ? 'far' : W8.sfx);
+        else if (W8?.melee && r.w === 'lasso' && dist < 12) sfx('whip');
       }
       r.f = d.f || 0;
     }
@@ -904,6 +1072,7 @@ export class FpsScene extends MiniScene {
     if (r.m && r.m[0] === 'c' && Number.isFinite(d.s)) { const c = this.carts[+r.m.slice(1)]; if (c) c.s = d.s / 100; }
     if (r.m && r.m[0] === 'h') { const h = this.horses[+r.m.slice(1)]; if (h) h.rider = i; }
     r.v = (d.v || 0) / 10;
+    r.c = !!d.c && !r.m;
     r.alive = true;
   }
 
@@ -943,6 +1112,7 @@ export class FpsScene extends MiniScene {
     }
     this.fx = this.fx.filter((f) => this.now - f.at < (f.kind === 'boom' ? 700 : 400));
     for (const [id, f] of this.fires) if (t > f.t1) this.fires.delete(id);
+    for (const [k, s] of this.snares) if (t > s.until) this.snares.delete(k);
     // le décor a changé (caisses soufflées, barils sautés) : la carte est redessinée, pas plus de deux fois par seconde
     if (this.mapDirty && this.now - (this.mapAt || 0) > 500) { this.mapDirty = false; this.mapAt = this.now; this.map?.refresh(); }
     this.feed = this.feed.filter((f) => this.now - f.at < FEED_MS);
@@ -961,7 +1131,7 @@ export class FpsScene extends MiniScene {
 
   pub() {
     const m = this.my;
-    return { x: m.x, y: m.y, a: m.a, w: m.w, f: m.f, m: m.m, s: m.s, v: m.v };
+    return { x: m.x, y: m.y, a: m.a, w: m.w, f: m.f, m: m.m, s: m.s, v: m.v, c: m.crouch };
   }
 
   control(inp, dt, t) {
@@ -976,6 +1146,8 @@ export class FpsScene extends MiniScene {
       if (m.w === was) { m.w = this.has(m.prevW) ? m.prevW : m.lo.l; m.reload = null; }
       this.autoSwitch();
     }
+    m.crouch = !!inp.crouch && !m.m && !m.gun;
+    m.crouchK = (m.crouchK || 0) + ((m.crouch ? 1 : 0) - (m.crouchK || 0)) * Math.min(1, dt / 110);
     if (m.gun) { this.gunner(inp, dt, t); return; }
     // choix de l'arme
     if (inp.slot) { const id = this.slotWeapon(inp.slot); if (id) this.select(id); }
@@ -988,6 +1160,7 @@ export class FpsScene extends MiniScene {
     }
     // regard
     m.a = wrapA(m.a + inp.turn * (m.zoom ? 0.35 : 1));
+    this.lookUp(inp.pitch * (m.zoom ? 0.35 : 1));
     const W8 = WEAPONS[m.w];
     m.zoom = !!(inp.alt && W8?.zoom && !m.reload);
     // déplacement
@@ -1020,7 +1193,14 @@ export class FpsScene extends MiniScene {
       if (h) { h.x = m.x; h.y = m.y; h.a = m.a; h.gait += dt * 0.012 * clamp(m.v, 0, 8); }
       if (m.v > 4) this.trample(t);
     } else {
-      const speed = FPS.speed * (m.lo.e === 'spurs' ? 1.15 : 1) * (inp.sprint ? FPS.sprint : 1) * mods.speed * (W8?.slow || 1) * (m.zoom ? 0.5 : 1);
+      // entravé (lasso, harpon, piège) : on reste planté là, on peut encore tourner et tirer ; arc bandé : on avance au pas
+      const held = t < m.snareUntil ? 0 : m.drawn ? 0.55 : 1;
+      // tiré au bout d'une corde : on glisse vers la position que donne l'hôte
+      if (m.towTo && t < m.snareUntil) {
+        const k = Math.min(1, dt / 140), r0 = move(w, m.x, m.y, (m.towTo.x - m.x) * k, (m.towTo.y - m.y) * k);
+        m.x = r0.x; m.y = r0.y;
+      } else m.towTo = null;
+      const speed = held * FPS.speed * (m.lo.e === 'spurs' ? 1.15 : 1) * (m.crouch ? FPS.crouch.speed : inp.sprint ? FPS.sprint : 1) * mods.speed * (W8?.slow || 1) * (m.zoom ? 0.5 : 1);
       vx = (fx * inp.move.y - fy * inp.move.x) * speed;
       vy = (fy * inp.move.y + fx * inp.move.x) * speed;
       const len = Math.hypot(inp.move.x, inp.move.y);
@@ -1040,10 +1220,10 @@ export class FpsScene extends MiniScene {
     // monter, descendre
     const near = this.nearMount();
     const use = near ? null : this.nearUse(); // canon, comptoir
-    this.input.setButtons?.({ use: m.m ? 'down' : near ? 'up' : use?.ready ? 'use' : false, throw: m.dyn > 0 });
+    this.input.setButtons?.({ use: m.m ? 'down' : near ? 'up' : use?.ready ? 'use' : false, throw: !!this.thrown() });
     if (inp.use) {
       if (m.m) this.dismountLocal();
-      else if (near) this.hooks.send({ kind: 'mount', m: near.m, ...this.at() });
+      else if (near && t >= m.snareUntil) this.hooks.send({ kind: 'mount', m: near.m, ...this.at() });
       else if (use?.kind === 'cannon') {
         // on se met à la pièce (même si elle refroidit encore) : l'arme en main est rangée
         const u = this.world.uses.find((q) => q.key === use.key);
@@ -1073,17 +1253,53 @@ export class FpsScene extends MiniScene {
       const a = m.ammo[m.reload.w];
       const W2 = WEAPONS[m.reload.w];
       if (a) { const n = Math.min(W2.mag - a.mag, a.res); a.mag += n; a.res -= n; }
+      if (a?.alt) { const n = Math.min(W2.alt.mag - a.alt.mag, a.alt.res); a.alt.mag += n; a.alt.res -= n; }
       m.reload = null;
-      sfx('snap');
+      sfx(W2.rl === 'nock' ? 'nock' : 'snap');
     }
     if (inp.reload) this.startReload();
-    // dynamite (G, ou tir avec la dynamite en main)
-    if ((inp.throw || (m.w === 'dynamite' && inp.firePressed)) && m.dyn > 0 && t - m.throwAt > 700 && !mods.melee) this.throwDyn(t);
-    if (m.w === 'dynamite' && m.dyn <= 0) this.select(m.prevW && this.has(m.prevW) ? m.prevW : m.lo.l);
+    // dynamite, cocktail, piège (G, ou tir avec l'objet en main)
+    if ((inp.throw || (THROWN[m.w] && inp.firePressed)) && t - m.throwAt > THROW_MS && !mods.melee) {
+      // devant le coffre, G prend la dynamite (s'il en reste) plutôt que l'équipement
+      const th = THROWN[m.w] && !inp.throw ? m.w : m.dyn > 0 && this.nearSafe() ? 'dynamite' : this.thrown();
+      if (th && this.thrownCount(th) > 0) this.throwItem(th, t);
+    }
+    // le dernier objet lancé ou posé : on garde le geste un instant avant de changer d'arme
+    if (THROWN[m.w] && this.thrownCount(m.w) <= 0 && t - m.throwAt > 250) {
+      const next = this.thrown();
+      this.select(next || (m.prevW && this.has(m.prevW) ? m.prevW : m.lo.l));
+    }
     // tir
-    if (m.w !== 'dynamite' && (inp.fire && (W8?.auto || W8?.melee) || inp.firePressed)) this.fire(t);
-    if (m.swing && !m.swing.done && t >= m.swing.at + 140) this.meleeHit(t);
+    const alt = !!inp.alt && !this.altHeld; // front montant du clic droit
+    this.altHeld = !!inp.alt;
+    if (THROWN[m.w]) { /* rien */ }
+    else if (W8?.charge) this.bowControl(inp, t);
+    else if (W8?.alt && alt) this.fire(t, 'alt');
+    else if (W8?.fan && inp.alt) this.fire(t, 'fan');
+    else if (inp.fire && (W8?.auto || W8?.melee) || inp.firePressed) this.fire(t);
+    if (m.swing && !m.swing.done && t >= m.swing.at + (W8?.hitAt ?? W8?.swing?.[0] ?? 140)) this.meleeHit(t);
+    if (m.reeling && (!inp.fire || t - m.reeling.at > (W8?.tether?.max || 0) + 600)) this.letGo();
     this.autoSwitch();
+  }
+
+  // Arc : maintenir le tir bande l'arc (on avance au pas), le relâcher décoche ; tension de 0 à 1 en W8.charge ms.
+  // Bandé à fond, la flèche part enflammée.
+  bowControl(inp, t) {
+    const m = this.my;
+    const W8 = WEAPONS[m.w];
+    const a = m.ammo[m.w];
+    if (m.reload || (m.drawAt && t - m.drawAt < 180)) { m.drawn = null; return; }
+    if (inp.fire && !m.drawn) {
+      if (!a || a.mag <= 0) { if (inp.firePressed) { sfx('dry'); this.startReload(); } return; }
+      if (t - m.lastFire < W8.rate) return;
+      m.drawn = { at: t };
+      sfx('creak');
+    } else if (!inp.fire && m.drawn) {
+      const k = clamp((t - m.drawn.at) / W8.charge, 0, 1);
+      m.drawn = null;
+      if (k < 0.12) return; // à peine bandé : on relâche doucement la corde
+      this.fire(t, 'bow', k);
+    }
   }
 
   // Au canon : la souris (ou Q/D) fait pivoter la pièce, Z/S règlent la hausse (la portée), le tir fait feu,
@@ -1091,8 +1307,9 @@ export class FpsScene extends MiniScene {
   gunner(inp, dt, t) {
     const m = this.my;
     const u = this.world.uses.find((q) => q.key === m.gun);
-    if (!u || m.m || inp.use) { m.gun = null; this.usedAt = this.now; this.input.setButtons?.({ use: false, throw: m.dyn > 0 }); return; }
+    if (!u || m.m || inp.use) { m.gun = null; this.usedAt = this.now; this.input.setButtons?.({ use: false, throw: !!this.thrown() }); return; }
     m.a = wrapA(m.a + inp.turn * 0.6 + inp.move.x * dt * 0.0011);
+    this.lookUp(inp.pitch * 0.6);
     m.gunD = clamp(m.gunD + inp.move.y * dt * 0.007 - (inp.nextSlot || 0), FPS.cannon.near, FPS.cannon.range); // Z/S ou la molette
     // derrière la pièce, du côté opposé à la bouche (sans traverser un mur s'il y en a un)
     const r = move(this.world, m.x, m.y, u.x - Math.cos(m.a) * 0.78 - m.x, u.y - Math.sin(m.a) * 0.78 - m.y, 0.2);
@@ -1148,28 +1365,43 @@ export class FpsScene extends MiniScene {
     for (const [i, r] of Object.entries(this.remote)) if (r.alive) hit(`p${i}`, 'p', +i, r.x, r.y);
   }
 
-  throwDyn(t) {
+  // G : dynamite ou cocktail lancés devant soi, piège à loup posé à ses pieds (un peu devant)
+  throwItem(id, t) {
     const m = this.my;
-    m.dyn--;
+    m[THROWN[id].key]--;
     m.throwAt = t;
-    this.hooks.send({ kind: 'throw', x: Math.round(m.x * 100) / 100, y: Math.round(m.y * 100) / 100, a: Math.round(m.a * 1000) / 1000, pow: 1 });
+    const at = { x: Math.round(m.x * 100) / 100, y: Math.round(m.y * 100) / 100 };
+    if (id === 'trap') {
+      const fx = m.x + Math.cos(m.a) * 0.55, fy = m.y + Math.sin(m.a) * 0.55;
+      const free = !blocks(this.world, cellAt(this.world, fx, fy));
+      this.hooks.send({ kind: 'trap', tx: Math.round((free ? fx : m.x) * 100) / 100, ty: Math.round((free ? fy : m.y) * 100) / 100, ...at });
+      sfx('clank');
+      return;
+    }
+    this.hooks.send({ kind: 'throw', ...at, a: Math.round(m.a * 1000) / 1000, pow: 1, item: id === 'molotov' ? 'molotov' : undefined });
     sfx('fuse');
     sfx('swish', 0.05);
   }
 
-  fire(t) {
+  // Tir. mode : 'alt' (canon à chevrotine du LeMat), 'fan' (Peacemaker : on tape le chien, vite et n'importe où),
+  // 'bow' (flèche décochée, k : tension de l'arc de 0 à 1)
+  fire(t, mode = null, k = 1) {
     const m = this.my;
-    const W8 = WEAPONS[m.w];
+    const W0 = WEAPONS[m.w];
+    // le second canon et le fanning se tirent avec leurs propres réglages (dégâts, cadence, dispersion)
+    const W8 = mode === 'alt' ? { ...W0, ...W0.alt } : mode === 'fan' ? { ...W0, ...W0.fan } : W0;
     if (!W8 || t - m.lastFire < W8.rate || (m.drawAt && t - m.drawAt < 180)) return;
     if (this.mods.melee && !W8.melee) return;
     if (W8.melee) {
       m.lastFire = t;
       m.swing = { at: t, done: false };
+      if (W8.tether) m.reeling = { at: t, w: m.w };
       sfx(W8.sfx, 0, true);
       return;
     }
     if (m.reload) return;
-    const a = W8.temp ? m.temp : m.ammo[m.w];
+    const ammo = W8.temp ? m.temp : m.ammo[m.w];
+    const a = mode === 'alt' ? ammo?.alt : ammo;
     if (!a || a.mag <= 0) {
       m.lastFire = t;
       sfx('dry');
@@ -1177,42 +1409,64 @@ export class FpsScene extends MiniScene {
       return;
     }
     m.lastFire = t;
+    m.altAt = mode === 'alt' ? t : -1e9;
+    m.fanAt = mode === 'fan' ? t : -1e9;
     a.mag -= W8.dual ? Math.min(2, a.mag) : 1;
     m.f++;
-    this.flash = Math.max(this.flash, 0.25);
-    this.shake = Math.max(this.shake, W8.pellets ? 4 : 1.5);
+    this.flash = Math.max(this.flash, W8.quiet ? 0 : W8.kick ? 0.5 : 0.25);
+    this.shake = Math.max(this.shake, W8.kick ? 9 : W8.pellets ? 4 : W8.lob ? 5 : 1.5);
     sfx(W8.sfx, 0, true);
     this.hooks.send({ kind: 'shot' });
-    // les balles : un rayon par plomb (deux par clic avec deux colts)
+    // mortier : pas de balle, un obus en cloche vers le point que montre la mire (le regard règle la portée)
+    if (W8.lob) {
+      this.hooks.send({ kind: 'throw', x: Math.round(m.x * 100) / 100, y: Math.round(m.y * 100) / 100, a: Math.round(m.a * 1000) / 1000, d: Math.round(this.mortarD() * 100) / 100, item: 'mortar' });
+      return;
+    }
+    // canardière : le recul vous repousse (par-dessus rien : on glisse contre les murs)
+    if (W8.kick && !m.m) {
+      const r = move(this.world, m.x, m.y, -Math.cos(m.a) * W8.kick, -Math.sin(m.a) * W8.kick);
+      m.x = r.x; m.y = r.y;
+    }
+    // les balles : un rayon par plomb (deux par clic avec deux colts) ; la flèche fait plus mal bien bandée
     const n = (W8.pellets || 1) * (W8.dual ? 2 : 1);
-    const spread = W8.spread * (m.v > 1 ? 1.6 : 1) * (m.zoom ? 0.2 : 1) * (m.m ? 1.4 : 1);
+    const spread = W8.spread * (m.v > 1 ? 1.6 : 1) * (m.zoom ? 0.2 : 1) * (m.m ? 1.4 : 1) * (mode === 'bow' ? 1 + (1 - k) * 6 : 1);
+    const shot = mode === 'bow' ? { ...W8, dmg: Math.round(W8.dmg * (0.3 + 0.7 * k)) } : W8;
     const dmg = new Map();
     let missed = false;
-    for (let k = 0; k < n; k++) {
-      const ang = m.a + (Math.random() - 0.5) * 2 * spread + (W8.dual ? (k % 2 ? 0.012 : -0.012) : 0);
-      if (this.bullet(ang, W8, dmg)) missed = true;
+    for (let j = 0; j < n; j++) {
+      const ang = m.a + (Math.random() - 0.5) * 2 * spread + (W8.dual ? (j % 2 ? 0.012 : -0.012) : 0);
+      if (this.bullet(ang, shot, dmg)) missed = true;
     }
-    if ([...dmg.keys()].some((k) => k[0] === 'n' || k[0] === 'p')) sfx('hitmark', 0.02);
+    // flèche enflammée (arc bandé à fond) : une flamme là où elle se plante
+    if (mode === 'bow' && k >= 1 && this.impact) {
+      this.hooks.send({ kind: 'ignite', tx: Math.round(this.impact.x * 100) / 100, ty: Math.round(this.impact.y * 100) / 100, ...this.at() });
+    }
+    if ([...dmg.keys()].some((q) => q[0] === 'n' || q[0] === 'p')) sfx('hitmark', 0.02);
     // une balle perdue sur trois chante en ricochant
     if (missed && Math.random() < 0.33) sfx('ricochet', 0.05 + Math.random() * 0.1);
     for (const [key, v] of dmg) {
       const tg = key[0], id = +key.slice(1);
       // dans le décor (d<k> objet, c<i> case) : c'est l'hôte qui le fait sauter
       if (tg === 'd' || tg === 'c') { this.hooks.send({ kind: 'prop', key, dmg: Math.round(v), w: m.w }); dmg.delete(key); continue; }
-      this.hooks.send({ kind: 'hit', tg, id, dmg: Math.round(v), w: m.w });
+      this.hooks.send({ kind: 'hit', tg, id, dmg: Math.round(v), w: m.w, hold: W8.tether ? !!this.inp?.fire : undefined });
       if (tg === 'n') { const q = this.npcs.get(id); if (q) q.hurtAt = this.now; }
       else if (this.remote[id]) this.remote[id].hurtAt = this.now;
     }
     if (dmg.size) this.hit = { at: this.now, kill: false };
-    if (!W8.temp && a.mag <= 0) this.startReload();
+    // harpon : la corde reste tendue tant qu'on tient le tir ; il ne se recharge qu'une fois lâchée
+    if (W8.tether) m.reeling = { at: t, w: m.w };
+    // le canon à chevrotine du LeMat ne se recharge pas tout seul : seulement avec le barillet (R, ou barillet vide)
+    else if (!W8.temp && mode !== 'alt' && a.mag <= 0) this.startReload();
   }
 
   // Une balle : la cible la plus proche avant le premier mur (la winchester dorée traverse tout).
   // Renvoie vrai si elle a fini dans un mur pas trop loin, sans toucher personne (ricochet possible).
   bullet(ang, W8, dmg) {
     const m = this.my;
-    const wall = rayWall(this.world, m.x, m.y, ang, 60);
+    const wall = rayWall(this.world, m.x, m.y, ang, 60, m.crouch ? FPS.crouch.z : 0.5);
     const wallCell = RAY.i;
+    let low = null; // le premier mur à hauteur d'un rival accroupi (calculé s'il y en a un)
+    const lowWall = () => (low ??= Math.min(wall, rayWall(this.world, m.x, m.y, ang, 60, FPS.crouch.z)));
     const hits = [];
     // le décor : barils et tonneaux arrêtent la balle ; lanternes, lustres, réverbères et bouteilles la laissent filer
     const thru = [];
@@ -1240,7 +1494,7 @@ export class FpsScene extends MiniScene {
     for (const [i, r] of Object.entries(this.remote)) {
       if (!r.alive) continue;
       const d = rayCircle(m.x, m.y, ang, r.x, r.y, r.m ? 0.42 : 0.3);
-      if (d != null && d < wall) hits.push({ d, key: `p${i}`, x: r.x, y: r.y });
+      if (d != null && d < (r.c ? lowWall() : wall)) hits.push({ d, key: `p${i}`, x: r.x, y: r.y });
     }
     hits.sort((a, b) => a.d - b.d);
     const take = W8.pierce ? hits : hits.slice(0, 1);
@@ -1252,6 +1506,9 @@ export class FpsScene extends MiniScene {
       else this.fx.push({ kind: 'blood', x: h.x - Math.cos(ang) * 0.3, y: h.y - Math.sin(ang) * 0.3, z: 0.5, at: this.now });
     }
     const stop = take.length && !W8.pierce ? take[0].d : wall;
+    // où la balle (la flèche) s'arrête : un peu avant le mur, ou au pied de la cible
+    const end = Math.min(stop, 40) - (take.length ? 0 : 0.3);
+    this.impact = end < 35 ? { x: m.x + Math.cos(ang) * end, y: m.y + Math.sin(ang) * end } : null;
     for (const h of thru) if (h.d < stop) dmg.set(h.key, (dmg.get(h.key) || 0) + W8.dmg);
     if (!take.length || W8.pierce) {
       const d = Math.min(wall, 40) - 0.05;
@@ -1269,26 +1526,62 @@ export class FpsScene extends MiniScene {
     const W8 = WEAPONS[m.w];
     m.swing.done = true;
     if (!W8?.melee) return;
+    // le lasso se lance loin mais droit devant (cône étroit) ; on vise le plus proche du viseur, pas le plus proche
+    const cone = W8.cone || 0.6;
     let best = null, bd = 1e9;
     const consider = (key, x, y) => {
       const d = Math.hypot(x - m.x, y - m.y);
       const da = Math.abs(wrapA(Math.atan2(y - m.y, x - m.x) - m.a));
-      if (d < W8.range + 0.3 && da < 0.6 && d < bd && los(this.world, m.x, m.y, x, y)) { bd = d; best = { key, x, y }; }
+      const score = W8.cone ? da * 6 + d * 0.1 : d;
+      if (d < W8.range + 0.3 && da < cone && score < bd && los(this.world, m.x, m.y, x, y)) { bd = score; best = { key, x, y }; }
     };
     for (const n of this.npcs.values()) if (n.alive) consider(`n${n.id}`, n.x, n.y);
     for (const [i, r] of Object.entries(this.remote)) if (r.alive) consider(`p${i}`, r.x, r.y);
-    if (!best) return;
+    if (!best) {
+      // la pioche dans le décor : tonneau, caisses, rocher... un coup suffit (l'hôte le fait voler en éclats)
+      if (W8.breaks) {
+        let pr0 = null, pd = 1e9;
+        for (const pr of this.world.props) {
+          if (!PICKABLE.has(pr.kind) || (pr.st && pr.st !== 'ok')) continue;
+          const d = Math.hypot(pr.x - m.x, pr.y - m.y);
+          if (d > W8.range + (pr.i != null ? 0.75 : 0.45) || d >= pd) continue;
+          if (Math.abs(wrapA(Math.atan2(pr.y - m.y, pr.x - m.x) - m.a)) > 0.75) continue;
+          pd = d; pr0 = pr;
+        }
+        if (pr0) {
+          this.hooks.send({ kind: 'prop', key: pr0.key, dmg: W8.dmg, w: m.w });
+          for (let j = 0; j < 3; j++) this.fx.push({ kind: 'dust', x: pr0.x + (Math.random() - 0.5) * 0.4, y: pr0.y + (Math.random() - 0.5) * 0.4, z: 0.2 + Math.random() * 0.3, at: this.now });
+          this.shake = Math.max(this.shake, 3);
+          sfx('thud');
+        }
+      }
+      return;
+    }
     const tg = best.key[0], id = +best.key.slice(1);
-    this.hooks.send({ kind: 'hit', tg, id, dmg: W8.dmg, w: m.w });
-    this.fx.push({ kind: 'blood', x: best.x, y: best.y, z: 0.55, at: this.now });
+    this.hooks.send({ kind: 'hit', tg, id, dmg: W8.dmg, w: m.w, hold: W8.tether ? !!this.inp?.fire : undefined });
+    this.fx.push({ kind: W8.tether ? 'dust' : 'blood', x: best.x, y: best.y, z: 0.55, at: this.now });
     this.hit = { at: this.now, kill: false };
-    sfx('chop');
+    sfx(W8.tether ? 'rope' : 'chop');
+  }
+
+  // Mortier : portée de tir d'après le regard (baissé : près, levé : loin), arrêtée par les grands murs
+  mortarD() {
+    const m = this.my, M = FPS.mortar;
+    const want = M.near + (M.range - M.near) * clamp(((m.pitch || 0) + PITCH_MAX) / (2 * PITCH_MAX), 0, 1);
+    return mortarReach(this.world, m.x, m.y, m.a, want);
+  }
+
+  // regard vers le haut ou le bas (souris, glissé au doigt) : ±PITCH_MAX radians. La visée reste celle de la colonne
+  // du viseur (les balles filent à l'horizontale) : c'est pour voir, pas pour viser plus haut.
+  lookUp(d) {
+    const m = this.my;
+    if (d) m.pitch = clamp((m.pitch || 0) - d, -PITCH_MAX, PITCH_MAX);
   }
 
   eye() {
     const m = this.my;
     if (!m.alive) return m.deadAt > -1e8 ? Math.max(0.12, FPS.eye - (this.t - m.deadAt) / 1500) : FPS.eye;
-    const base = m.m ? (m.m[0] === 'h' ? FPS.eyeHorse : FPS.eyeCart) : FPS.eye;
+    const base = m.m ? (m.m[0] === 'h' ? FPS.eyeHorse : FPS.eyeCart) : FPS.eye + (FPS.crouch.eye - FPS.eye) * (m.crouchK || 0);
     return base + Math.sin(m.bob) * (m.m ? 0.03 : 0.018) * clamp(m.v / 3, 0, 1);
   }
 
@@ -1306,14 +1599,29 @@ export class FpsScene extends MiniScene {
     this.sky = null;
   }
 
-  // ciel panoramique (soleil, nuages, mesas) d'après l'ambiance, sur 360°
+  // ciel panoramique (soleil, nuages, mesas) d'après l'ambiance, sur 360°. Au-dessus, up rangées de plus pour le
+  // regard levé (l'horizon descend jusqu'à 0,31 RH, voir hor dans render) : la bande du haut recopiée (étoiles,
+  // nuages), qui fonce vers le zénith en paliers tramés
   buildSky() {
-    const PH = this.RH >> 1;
+    const PH = this.RH >> 1, up = Math.ceil(this.RH * 0.31) + 1;
     const PW = Math.round(this.RW * (TAU / FOV));
-    const c = S.makeCanvas(PW, PH);
+    const c = S.makeCanvas(PW, PH + up);
     const ctx = c.getContext('2d');
-    S.drawDesert(ctx, 0, 0, PW, Math.round(PH / 0.6) + 1, { ...desertOpts(this.env, { sunX: 0.3, sunY: 0.32 }), cacti: false });
-    this.sky = { w: PW, h: PH, d: pix(c).d };
+    S.drawDesert(ctx, 0, up, PW, Math.round(PH / 0.6) + 1, { ...desertOpts(this.env, { sunX: 0.3, sunY: 0.32 }), cacti: false });
+    const d = pix(c).d;
+    const band = Math.max(4, Math.round(PH * 0.15)); // la bande du haut du ciel (avant le soleil)
+    for (let y = up - 1; y >= 0; y--) {
+      const k = (up - y) / up; // 0 au bord du ciel dessiné, 1 en haut
+      const src = (up + ((up - 1 - y) % band)) * PW;
+      const sh = ((up - 1 - y) / band | 0) * 37; // chaque bande recopiée décalée : pas de motif d'étoiles en colonne
+      for (let x = 0; x < PW; x++) {
+        const s = d[src + (x + sh) % PW];
+        // 4 paliers de 0 à -18 %, tramés entre deux paliers
+        const t = k * 3 + ((x + y) & 1 ? 0.25 : -0.25), f = 1 - 0.06 * Math.max(0, Math.min(3, Math.round(t)));
+        d[y * PW + x] = 0xff000000 | ((((s >>> 16) & 255) * f) << 16) | ((((s >>> 8) & 255) * f) << 8) | ((s & 255) * f);
+      }
+    }
+    this.sky = { w: PW, h: PH + up, up, d };
   }
 
   render(ctx) {
@@ -1333,7 +1641,10 @@ export class FpsScene extends MiniScene {
     const fov = v.fov;
     const tanH = Math.tan(fov / 2);
     const P = (RW / 2) / tanH;
-    const hor = RH / 2;
+    // regard vertical (cisaillement à la Doom / Duke 3D) : l'horizon monte ou descend, rien ne se déforme ; la
+    // cinématique garde l'horizon au milieu
+    const hor = RH / 2 + (shot ? 0 : clamp(Math.round(P * Math.tan(m.pitch || 0)), -Math.round(RH * 0.31), Math.round(RH * 0.31))); // (à la lunette, P grandit : on borne)
+    const skyShift = hor - RH / 2;
     const dirX = Math.cos(v.a), dirY = Math.sin(v.a);
     const plX = -dirY * tanH, plY = dirX * tanH;
     const posX = v.x, posY = v.y;
@@ -1506,7 +1817,7 @@ export class FpsScene extends MiniScene {
         const o = y * RW + x;
         if (zb[o]) continue;
         if (y < hor) {
-          const c = sky.d[Math.min(sky.h - 1, y) * sky.w + sx];
+          const c = sky.d[Math.min(sky.h - 1, Math.max(0, y - skyShift + sky.up)) * sky.w + sx];
           const f = (1 - (mods.fog ?? 1)) * 0.7;
           kr = kg = kb = skyDark * (1 - f) * (1 + this.lightning * 0.6);
           if (kr > 1) kr = kg = kb = 1;
@@ -1653,22 +1964,59 @@ export class FpsScene extends MiniScene {
       else if (now - r.hurtAt < 140) pose = 'hurt';
       else if (now - r.flashAt < 140) { pose = WEAPONS[r.w]?.melee ? 'melee' : 'shoot'; fr = now - r.flashAt < 70 ? 1 : 0; }
       else if (now - r.moveAt < 160) { pose = 'walk'; fr = Math.floor(now / 130) % 4; }
-      sprite(r.x, r.y, 0, A.cowboyFrame(this.looks[i], pose, fr, back), { red: r.alive && now - r.hurtAt < 60 });
+      const cv = A.cowboyFrame(this.looks[i], pose, fr, back);
+      sprite(r.x, r.y, 0, cv, { red: r.alive && now - r.hurtAt < 60, wh: r.c && r.alive && cv ? (cv.height / 64) * 0.6 : undefined });
     }
     // dynamite : en vol, puis la mèche grésille au sol
     for (const d of this.dyns.values()) {
-      // boulet de canon : il vole jusqu'au point d'impact, en cloche plus tendue
-      const fly = d.ball ? d.boomAt - d.at : 650;
+      // boulet de canon : il vole jusqu'au point d'impact, en cloche plus tendue ; obus de mortier : haute cloche ;
+      // cocktail : il éclate à l'arrivée
+      const fly = d.ball || d.mol ? d.boomAt - d.at : 650;
       const k = clamp((this.t - d.at) / fly, 0, 1);
       const x = d.x0 + (d.x1 - d.x0) * k, y = d.y0 + (d.y1 - d.y0) * k;
-      const z = (d.ball ? 0.35 : 0.5) * (1 - k) + Math.sin(Math.PI * k) * (d.ball ? 0.6 : 0.8);
+      const z = (d.ball ? 0.35 : 0.5) * (1 - k) + Math.sin(Math.PI * k) * (d.mortar ? 2.6 : d.ball ? 0.6 : 0.8);
       if (d.ball) sprite(x, y, z, A.fxSprite('ball', 0), { wh: 0.16, ww: 0.16 });
+      else if (d.mol) sprite(x, y, z, A.fxSprite('molFly', Math.floor(now / 80) % 4), { wh: 0.22, ww: 0.22, full: true });
       else sprite(x, y, z, A.fxSprite('dynFly', Math.floor(now / 80) % 4), { wh: 0.2, ww: 0.2 });
+    }
+    // cordes tendues (lasso, harpon) : une ligne de nœuds du tireur à sa prise, qui pend un peu
+    for (const [by, c] of this.tethers) {
+      const a = +by === this.me ? m : this.remote[by];
+      const b = c.npc >= 0 ? this.npcs.get(c.npc) : c.who === this.me ? m : this.remote[c.who];
+      if (!a || !b) continue;
+      const mine = +by === this.me, dot = A.fxSprite('ropeDot', c.w === 'harpoon' ? 1 : 0);
+      for (let k = mine ? 3 : 1; k < 16; k++) {
+        const f = k / 16, x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f;
+        sprite(x, y, (mine ? 0.42 : 0.5) + (0.45 - (mine ? 0.42 : 0.5)) * f - Math.sin(f * Math.PI) * 0.08, dot, { wh: 0.05, ww: 0.05, full: true });
+      }
+    }
+    // pièges à loup : à plat au sol, mâchoires ouvertes (on les voit mal de loin)
+    for (const q of this.traps.values()) {
+      if (Math.abs(q.x - v.x) > 14 || Math.abs(q.y - v.y) > 14) continue;
+      sprite(q.x, q.y, 0, A.pickupSprite('trapSet'), { wh: 0.16, ww: 0.42 });
+    }
+    // entravés : la corde du lasso autour de la taille, les mâchoires refermées sur la cheville
+    for (const [key, s] of this.snares) {
+      const e = key[0] === 'n' ? this.npcs.get(+key.slice(1)) : +key.slice(1) === this.me ? null : this.remote[+key.slice(1)];
+      if (!e || e.alive === false) continue;
+      // un peu devant la cible (vers l'œil), sinon son sprite, à la même distance, le cache
+      const d = Math.hypot(v.x - e.x, v.y - e.y) || 1, x = e.x + ((v.x - e.x) / d) * 0.32, y = e.y + ((v.y - e.y) / d) * 0.32;
+      if (s.w === 'trap') sprite(x, y, 0, A.pickupSprite('trapShut'), { wh: 0.16, ww: 0.36 });
+      else if (s.w === 'lasso') sprite(x, y, 0.3, A.fxSprite('loop', Math.floor(now / 160) % 2), { wh: 0.16, ww: 0.42, full: true });
     }
     for (const f of this.fx) {
       const el = now - f.at;
       if (f.kind === 'boom') sprite(f.x, f.y, -0.1, A.fxSprite('boom', Math.min(4, Math.floor(el / 130))), f.big ? { wh: 2.1, ww: 2.1 } : { wh: 1.6, ww: 1.6 });
       else sprite(f.x, f.y, (f.z || 0.5) - 0.08, A.fxSprite(f.kind, Math.min(2, Math.floor(el / 120))), { wh: 0.22, ww: 0.22 });
+    }
+    // mortier en main : la même mire, au point de chute que règle le regard
+    if (!gunK && m.alive && !v.actors && WEAPONS[m.w]?.lob) {
+      const d = this.mortarD(), ix = m.x + Math.cos(m.a) * d, iy = m.y + Math.sin(m.a) * d;
+      for (let k = 0; k < 14; k++) {
+        const b = (k / 14) * TAU + now / 1500, rr = FPS.mortar.radius;
+        sprite(ix + Math.cos(b) * rr, iy + Math.sin(b) * rr, 0, aimDot(), { wh: 0.07, ww: 0.07, full: true });
+      }
+      sprite(ix, iy, 0.02, aimMark(Math.floor(now / 300) % 2), { wh: 0.42, ww: 0.42, full: true });
     }
     // au canon : la mire au point de chute et le cercle du souffle, au sol
     if (gunK && m.alive) {
@@ -1708,9 +2056,9 @@ export class FpsScene extends MiniScene {
       const tx = inv * (v.dirY * dx - v.dirX * dy);
       const X = Math.round((v.RW / 2) * (1 + tx / ty));
       if (X < 0 || X >= v.RW) continue;
-      const top = r.m ? (r.m[0] === 'h' ? 1.4 : 0.95) : 1.05;
+      const top = r.m ? (r.m[0] === 'h' ? 1.4 : 0.95) : r.c ? 0.72 : 1.05;
       // visible si le corps ou la tête n'est pas caché par quelque chose de plus proche
-      const seen = [0.5, top - 0.15].some((z) => {
+      const seen = [r.c ? 0.3 : 0.5, top - 0.15].some((z) => {
         const Y = Math.round(v.hor + ((v.eye - z) * v.P) / ty);
         if (Y < 0 || Y >= this.RH) return false;
         const d = zb[Y * v.RW + X];
@@ -1719,7 +2067,16 @@ export class FpsScene extends MiniScene {
       if (!seen) continue;
       const lift = +i === wanted ? A.pickupSprite('star').height + 12 : 0; // au-dessus de l'étoile de la prime
       const p = this.state.players[i];
-      canvasText(ctx, String(p?.name || '').slice(0, 14), X * k, (v.hor - ((top - v.eye) * v.P) / ty) * k - 9 - lift, { color: this.color(+i) });
+      const ny = (v.hor - ((top - v.eye) * v.P) / ty) * k - 9 - lift;
+      canvasText(ctx, String(p?.name || '').slice(0, 14), X * k, ny, { color: this.color(+i) });
+      const h = r.m && r.m[0] === 'h' ? this.horses[+r.m.slice(1)] : null;
+      if (h && this.now - (h.hurtAt || -1e9) < 2500) {
+        const u = clamp(h.hp / FPS.horse.hp, 0, 1), bx = Math.round(X * k - 14), by = Math.round(ny - 7);
+        ctx.fillStyle = '#1a0f0a'; ctx.fillRect(bx - 1, by - 1, 30, 5);
+        ctx.fillStyle = '#5a2a1a'; ctx.fillRect(bx, by, 28, 3);
+        ctx.fillStyle = this.now - h.hurtAt < 150 ? '#fdf6e0' : u <= 0.35 ? '#f0705a' : '#e0a060';
+        ctx.fillRect(bx, by, Math.round(28 * u), 3);
+      }
     }
   }
 
@@ -1811,9 +2168,47 @@ export class FpsScene extends MiniScene {
     if (env.haze) { ctx.fillStyle = env.haze; ctx.fillRect(0, 0, W, H); }
   }
 
+  // Un cavalier touché : son cheval encaisse sa part (FPS.horse.share). Le cavalier voit sa barre CHEVAL baisser et,
+  // quand le cheval faiblit, l'ordre de descendre ; le tireur voit qu'il blesse le cheval (et sa barre au-dessus de lui).
+  horseHit(ev) {
+    const h = this.horses[ev.horse.id];
+    if (!h) return;
+    const before = h.hp;
+    h.hp = ev.horse.hp;
+    h.hurtAt = this.now;
+    const low = h.hp > 0 && h.hp <= FPS.horse.hp * 0.35;
+    const crossed = low && before > FPS.horse.hp * 0.35;
+    if (ev.who === this.me) {
+      if (crossed) { this.popup(W / 2, 96, this.touch ? 'TON CHEVAL FAIBLIT : DESCENDS !' : 'TON CHEVAL FAIBLIT : DESCENDS (E) !', '#f0a070', true); sfx('neigh'); }
+      else if (this.now - (this.neighAt || -1e9) > 1500) { this.neighAt = this.now; sfx('neigh'); }
+    } else if (ev.by === this.me && ev.horse.dmg > 0) {
+      this.popup(W / 2 + 26, 92, `CHEVAL -${ev.horse.dmg}`, '#e0a060');
+      if (crossed) this.popup(W / 2, 80, 'SON CHEVAL VA TOMBER !', '#e0a060', true);
+    }
+  }
+
+  // À cheval : l'encolure, la crinière, les oreilles et les rênes devant nous, qui hochent au galop (rougies le temps
+  // d'un coup)
+  drawMountView(ctx) {
+    const m = this.my;
+    if (!m.m || m.m[0] !== 'h') return;
+    const h = this.horses[+m.m.slice(1)];
+    if (!h) return;
+    const hurt = this.now - (h.hurtAt || -1e9) < 160; // rougi le temps du coup (faible : c'est la barre du HUD qui clignote)
+    const cv = A.horseNeckView(h.coat || 0, hurt);
+    const gal = clamp(m.v / 4, 0, 1);
+    const nod = Math.round(Math.abs(Math.sin(m.bob * 0.5)) * 4 * gal), sway = Math.round(Math.sin(m.bob * 0.25) * 3 * gal);
+    if (this.mods.dark) ctx.filter = 'brightness(0.55)';
+    // on lève les yeux : l'encolure descend avec le décor (vers le bas, elle reste en place : rien en dessous)
+    const lift = Math.max(0, Math.round(Math.tan(m.pitch || 0) * (W / 2) / Math.tan(FOV / 2)));
+    ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + sway), H - cv.height + nod + lift);
+    ctx.filter = 'none';
+  }
+
   drawViewModel(ctx) {
     const m = this.my;
     if (!m.alive || m.zoom) return;
+    this.drawMountView(ctx);
     const t = this.t;
     if (m.gun) {
       // la pièce : elle recule au coup puis revient en batterie
@@ -1824,15 +2219,33 @@ export class FpsScene extends MiniScene {
       ctx.filter = 'none';
       return;
     }
-    const id = m.w === 'dynamite' ? 'dynamite' : m.w;
+    const id = m.w;
     const W8 = WEAPONS[id];
     let state = 'idle', fr = 0, recoil = 0;
     const since = t - m.lastFire;
-    if (m.reload) { state = 'reload'; fr = Math.min(2, Math.floor(((t - m.reload.at) / (m.reload.until - m.reload.at)) * 3)); }
-    else if (W8?.melee && m.swing && t - m.swing.at < Math.min(W8.rate, 420)) { state = 'swing'; fr = Math.min(2, Math.floor((t - m.swing.at) / 110)); }
-    else if (id === 'dynamite') { state = t - m.throwAt < 250 ? 'throw' : 'lit'; fr = Math.floor(this.now / 90) % 2; }
-    else if (W8 && since < 170) { state = 'fire'; fr = id === 'gatling' ? Math.floor(this.now / 40) % 4 : since < 70 ? 0 : 1; recoil = since < 70 ? 4 : 2; }
+    // le geste : trois images de W8.swing ms (110 par défaut : les lames frappent vite)
+    const steps = W8?.swing || [110, 110, 200], swingMs = W8?.swing ? steps[0] + steps[1] + steps[2] : 420;
+    const swingEl = m.swing ? t - m.swing.at : 0;
+    if (m.reload) {
+      // LeMat : le barillet d'abord (60 % du temps), puis la cartouche de chevrotine ; ou la cartouche seule
+      const k = clamp((t - m.reload.at) / (m.reload.until - m.reload.at), 0, 0.999);
+      const ks = m.reload.shot ? (m.reload.cyl ? (k - 0.6) / 0.4 : k) : -1;
+      if (ks >= 0) { state = 'shell'; fr = ks < 0.5 ? 0 : 1; }
+      else { state = 'reload'; fr = Math.min(2, Math.floor((m.reload.shot ? k / 0.6 : k) * 3)); }
+    }
+    else if (m.tether && id === 'lasso') { state = 'swing'; fr = 2; } // corde tendue vers la prise
+    else if (m.tether && id === 'harpoon') { state = 'reload'; fr = 0; } // on tire sur le câble
+    else if (W8?.melee && m.swing && swingEl < Math.min(W8.rate, swingMs)) { state = 'swing'; fr = swingEl < steps[0] ? 0 : swingEl < steps[0] + steps[1] ? 1 : 2; }
+    else if (THROWN[id]) { state = t - m.throwAt < 250 ? 'throw' : id === 'trap' ? 'idle' : 'lit'; fr = Math.floor(this.now / 90) % 2; }
+    else if (W8?.charge && m.drawn) { state = 'draw'; fr = t - m.drawn.at >= W8.charge ? 1 : 0; }
+    else if (W8 && since < (W8.kick ? 260 : 170)) {
+      state = m.altAt === m.lastFire ? 'alt' : m.fanAt === m.lastFire ? 'fan' : 'fire';
+      fr = id === 'gatling' ? Math.floor(this.now / 40) % 4 : since < 70 ? 0 : 1;
+      recoil = W8.kick ? (since < 120 ? 14 : 7) : state === 'alt' ? (since < 70 ? 8 : 4) : since < 70 ? 4 : 2;
+    }
     else if (id === 'gatling' && since < 400) { state = 'fire'; fr = Math.floor(this.now / 70) % 4; }
+    else if (id === 'lasso') fr = Math.floor(this.now / 180) % 4; // le nœud coulant qui tournoie (4 temps du tour)
+    else if (id === 'diablo') fr = Math.floor(this.now / 300) % 2; // la braise du pistolet du Diable pulse
     const cv = A.viewModel(id === 'akimbo' ? 'colt' : id, state, fr, this.skin, this.cloth); // deux colts : le colt, dessiné deux fois
     if (!cv) return;
     const draw = m.drawAt ? clamp((t - m.drawAt) / 180, 0, 1) : 1;
@@ -1847,7 +2260,11 @@ export class FpsScene extends MiniScene {
       // la main gauche tire en alternance (petit décalage)
       ctx.drawImage(cv, Math.round(-(W / 2 + cv.width / 2 - 52) - bx), Math.round(H - cv.height + by + (since < 170 ? 2 : 0)));
       ctx.restore();
-    } else ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + VM_X + bx), Math.round(H - cv.height + by));
+    } else {
+      // une vue pleine largeur (l'arc : 384 px) est déjà projetée depuis le viseur au centre : pas de décalage VM_X
+      const vx = cv.width >= W ? 0 : VM_X;
+      ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + vx + bx), Math.round(H - cv.height + by));
+    }
     ctx.filter = 'none';
   }
 
@@ -1870,22 +2287,38 @@ export class FpsScene extends MiniScene {
     const gunLeft = gun ? Math.max(0, (gun.readyAt || 0) - t) : 0;
     const gunPrompt = gun && (gunLeft > 0 ? `RECHARGEMENT ${Math.ceil(gunLeft / 1000)} S - PORTÉE ${Math.round(m.gunD)}`
       : this.touch ? `TIR : FEU ! - PORTÉE ${Math.round(m.gunD)}` : `CLIC : FEU ! - Z/S : PORTÉE ${Math.round(m.gunD)} - E : LÂCHER`);
-    const prompt = !m.alive ? null : gun ? gunPrompt : m.m ? (this.touch ? 'DESCENDRE' : 'E : DESCENDRE') : near ? (near.kind === 'horse' ? 'E : MONTER À CHEVAL' : 'E : MONTER DANS LE WAGONNET')
-      : use ? USE[use.kind][use.ready ? 0 : 1] : null;
+    const safe = m.alive && !m.m && !gun && !near && !use ? this.nearSafe() : null;
+    // corde tendue (lasso, harpon) : le geste à tenir passe avant tout le reste
+    const reel = m.tether && `${this.touch ? 'GARDE LE DOIGT' : 'MAINTIENS LE CLIC'} : TU LE RAMÈNES - LÂCHE : ${m.tether.w === 'lasso' ? 'IL RESTE LIGOTÉ' : 'IL EST LIBRE'}`;
+    const prompt = !m.alive ? null : gun ? gunPrompt : reel || (m.m ? (this.touch ? 'DESCENDRE' : 'E : DESCENDRE') : near ? (near.kind === 'horse' ? 'E : MONTER À CHEVAL' : 'E : MONTER DANS LE WAGONNET')
+      : use ? USE[use.kind][use.ready ? 0 : 1]
+      : safe ? (m.dyn > 0 ? (this.touch ? 'DYNAMITE : BRAQUE LE COFFRE !' : 'G : DYNAMITE POUR BRAQUER LE COFFRE') : 'IL FAUT DE LA DYNAMITE POUR CE COFFRE')
+      : t < m.snareUntil ? 'ENTRAVÉ : TU NE PEUX PLUS AVANCER !'
+      : W8?.lob ? `MORTIER : PORTÉE ${Math.round(this.mortarD())} - ${this.touch ? 'GLISSE' : 'LÈVE OU BAISSE LES YEUX'} POUR RÉGLER`
+      : m.crouch ? 'ACCROUPI : À COUVERT DERRIÈRE LES BARRIÈRES' : null);
+    // arc bandé : tension de 0 à 1 (le viseur se resserre)
+    const charge = W8?.charge && m.drawn ? clamp((t - m.drawn.at) / W8.charge, 0, 1) : null;
+    const eqThrown = Object.keys(THROWN).find((k) => EQUIP[m.lo.e]?.[THROWN[k].key] != null);
     let mount = null;
-    if (m.m && m.m[0] === 'h') mount = { kind: 'horse', hp: clamp((this.horses[+m.m.slice(1)]?.hp ?? FPS.horse.hp) / FPS.horse.hp, 0, 1) };
+    if (m.m && m.m[0] === 'h') {
+      const h = this.horses[+m.m.slice(1)];
+      mount = { kind: 'horse', hp: clamp((h?.hp ?? FPS.horse.hp) / FPS.horse.hp, 0, 1), hit: this.now - (h?.hurtAt || -1e9) < 250, warn: this.touch ? 'DESCENDS !' : 'E : DESCENDS !' };
+    }
     else if (m.m) mount = { kind: 'cart', hp: 1 };
     return {
       t, now: this.now, touch: this.touch, hp: m.hp, maxHp: FPS.hp, armor: m.armor, maxArmor: FPS.maxArmor,
       // au canon : la pièce à la place de l'arme (boulets à volonté, la barre de recharge pendant qu'elle refroidit)
       weapon: gun ? { id: 'cannon', name: 'CANON', mag: gunLeft ? 0 : 1, magMax: 1, reserve: 0, inf: true, melee: false,
         reloading: gunLeft ? clamp(1 - gunLeft / FPS.cannon.every, 0, 1) : null }
-        : m.w === 'dynamite'
-        ? { id: 'dynamite', name: 'DYNAMITE', mag: m.dyn, magMax: m.dyn, reserve: 0, inf: false, reloading: null, melee: false }
-        : { id: m.w, name: W8?.name || '', mag: a.mag, magMax: W8?.mag || 0, reserve: a.res, inf: false, reloading: m.reload ? clamp((t - m.reload.at) / (m.reload.until - m.reload.at), 0, 1) : null, melee: !!W8?.melee },
+        : THROWN[m.w]
+        ? { id: m.w, name: THROWN[m.w].name, mag: this.thrownCount(m.w), magMax: this.thrownCount(m.w), reserve: 0, inf: false, reloading: null, melee: false, thrown: true }
+        : { id: m.w, name: W8?.name || '', mag: a.mag, magMax: W8?.mag || 0, reserve: a.res, inf: false, reloading: m.reload ? clamp((t - m.reload.at) / (m.reload.until - m.reload.at), 0, 1) : null, melee: !!W8?.melee, alt: a.alt ? { mag: a.alt.mag, res: a.alt.res } : null },
       temp: m.temp ? { id: m.temp.id, name: WEAPONS[m.temp.id].name, left: clamp((m.temp.until - t) / WEAPONS[m.temp.id].ms, 0, 1) } : null,
-      slots: [1, 2, 3, 4, 5].map((n) => { const id = this.slotWeapon(n); return { n, id, name: id ? (id === 'dynamite' ? 'DYNAMITE' : WEAPONS[id].name) : '', has: !!id, active: !!id && id === m.w }; }),
-      equip: { id: m.lo.e, name: EQUIP[m.lo.e]?.name || '', count: m.lo.e === 'dynamite' || m.dyn ? m.dyn : null },
+      slots: [1, 2, 3, 4, 5].map((n) => { const id = this.slotWeapon(n); return { n, id, name: id ? (THROWN[id] ? THROWN[id].name : WEAPONS[id].name) : '', has: !!id, active: !!id && id === m.w }; }),
+      // l'équipement à lancer avec son compte (dynamite x3) ; la dynamite des caisses compte aussi
+      equip: eqThrown ? { id: eqThrown, name: EQUIP[m.lo.e].name, count: this.thrownCount(eqThrown) || (m.dyn ? m.dyn : 0) }
+        : { id: m.dyn ? 'dynamite' : m.lo.e, name: m.dyn ? 'DYNAMITE' : EQUIP[m.lo.e]?.name || '', count: m.dyn ? m.dyn : null },
+      charge,
       shield: t < m.shieldUntil ? clamp((m.shieldUntil - t) / FPS.shield, 0, 1) : null,
       score: this.state.players[this.me]?.score || 0, kills: this.state.players[this.me]?.k || 0, deaths: this.state.players[this.me]?.d || 0, place: rank, players,
       dead: !m.alive && m.deadAt > -1e8 ? { by: m.killer, byColor: m.killerCol, respawnIn: Math.max(0, FPS.respawn - (t - m.deadAt)) } : null,
@@ -1895,7 +2328,7 @@ export class FpsScene extends MiniScene {
       feed: this.feed.map((f) => ({ a: f.a, aCol: f.aCol, b: f.b, bCol: f.bCol, w: f.w, age: this.now - f.at })),
       banner: fpsBanner(this.world.events, Math.max(0, t)),
       pickup: this.toast && this.now - this.toast.at < 2200 ? { text: this.toast.text, age: this.now - this.toast.at } : null,
-      prompt, spread: Math.round((W8?.spread || 0) * 300 + (m.v > 1 ? 3 : 0) + 3), zoom: m.zoom,
+      prompt, spread: Math.round((W8?.spread || 0) * 300 * (charge != null ? 1 + (1 - charge) * 6 : W8?.charge ? 7 : 1) + (m.v > 1 ? 3 : 0) + 3), zoom: m.zoom,
       board: !!this.inp?.board, character: this.state.players[this.me]?.character, color: this.color(this.me),
       lockHint: this.input.needsLock && !this.menu && m.alive,
       menu: !!this.menu, // armurerie ouverte : le HUD s'efface (sauf le tableau des scores)

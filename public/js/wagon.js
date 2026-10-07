@@ -778,7 +778,7 @@ export class WagonScene extends MiniScene {
         if (ev.head && sp) { this.popup(sp.x, sp.y - 12, 'EN PLEINE TÊTE !', '#fff2b0'); sfx('ding'); }
         this.setStreak(ev.streak, t);
       }
-      if (big) { this.banner = { text: 'BLACK BART EST TOMBÉ !', col: '#f8d070', at: t }; this.shake = 6; }
+      if (big) { this.banner = { text: 'BLACK BART EST TOMBÉ !', sub: 'EL DIABLO VA L\'APPRENDRE…', col: '#f8d070', at: t }; this.shake = 6; }
     } else if (ev.type === 'dynHit') {
       this.dynState.set(`${ev.id}:${ev.k}`, 'shot');
       const b = this.world.targets[ev.id];
@@ -940,7 +940,7 @@ export class WagonScene extends MiniScene {
       if (b.t0 <= from || b.view !== 'in') continue;
       if (b.kind === 'chaser' || b.kind === 'thrower' || b.kind === 'zigzag' || b.kind === 'crosser') sfx('neigh');
       if (b.kind === 'boarder') sfx('thud');
-      if (b.kind === 'boss') { sfx('neigh'); this.banner = { text: 'BLACK BART ARRIVE PAR DERRIÈRE !', col: '#f0705a', at: t }; }
+      if (b.kind === 'boss') { sfx('neigh'); this.banner = { text: 'BLACK BART ARRIVE PAR DERRIÈRE !', sub: 'LE BRAS DROIT D\'EL DIABLO', col: '#f0705a', at: t }; }
       if (b.end !== this.face && this.viewAt(t) === 'in') {
         this.alertAt = t;
         if (!this.turned && b.kind !== 'boss') this.banner = { text: b.end < 0 ? 'ÇA VIENT DE DERRIÈRE !' : 'ÇA VIENT DE DEVANT !', sub: this.touch ? 'BOUTON DU BAS : SE RETOURNER' : 'ESPACE : SE RETOURNER', col: '#f0705a', at: t, short: true };

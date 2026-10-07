@@ -57,6 +57,9 @@ const ICONS = {
   inf: { pal: { c: CREAM }, rows: ['.cc...cc.', 'c..c.c..c', 'c...c...c', 'c..c.c..c', '.cc...cc.'] },
   bullet: { pal: { b: '#d8a048', g: GOLD, k: '#7a5020' }, rows: ['.g.', 'ggb', 'ggb', 'bbk', 'bbk', 'bbk', 'kkk'] },
   spent: { pal: { k: '#4a3828' }, rows: ['...', 'kkk', 'kkk', 'kkk', 'kkk', 'kkk', 'kkk'] },
+  // cartouche de chevrotine (le canon du dessous du LeMat), pleine ou vide
+  shell: { pal: { r: '#c8462c', d: '#7a1c14', b: '#d8a048' }, rows: ['rrrr', 'rrrd', 'rrrd', 'rrrd', 'rrrd', 'bbbb', 'bbbb'] },
+  noshell: { pal: { k: '#4a3828' }, rows: ['....', 'kkkk', 'kkkk', 'kkkk', 'kkkk', 'kkkk', 'kkkk'] },
   skull: { pal: { c: CREAM, k: INK }, rows: ['.ccccc.', 'ccccccc', 'ckcckcc', 'ccccccc', '.ccccc.', '.c.c.c.'] },
 };
 
@@ -88,6 +91,17 @@ const WEAPON_ICONS = {
   akimbo: twin(COLT.slice(0, 5), 3, 2),
   goldwin: { rows: WINCH, pal: { ...WP, w: '#c89030', b: GOLD, s: '#ffe890' } },
   dynamite: ['........f', '.......k.', 'rrrrrrk..', 'rrrrrr...', 'kkkkkk...', 'rrrrrr...', 'rrrrrr...'],
+  pickaxe: ['.........ss.....', '........sss.....', 'kwwwwwwwsswwwww.', '........sss.....', '.........ss.....', '..........s.....'],
+  lasso: ['..wwww.....', '.w....w....', 'w......w...', '.w....w....', '..wwwwkkkkk', '.......k...'],
+  lemat: ['d................', 'sssssssssssssss..', 'ddddsssssssssss..', 'sdddddddddddd....', '.wwsd.d..........', '.www.dd..........', 'www..............', 'ww...............'],
+  peacemaker: { rows: COLT, pal: { ...WP, s: '#e8eef4', d: '#9aa2ac', w: '#f0e6d0' } },
+  bow: ['.k.............', 'k.k............', 'k..k...........', 'wwwwwwwwwwwwwsf', 'k..k...........', 'k.k............', '.k.............'],
+  harpoon: ['www..............s', 'wwwwwddddddddddsss', 'wwwwwdddddddddddd.', 'ww....d...........'],
+  coehorn: ['....bbbbbbbb', '...bbbbbbbbd', 'kk.bbbbbbbbd', 'kkkkkkkkkk..', 'kk......kk..'],
+  puntgun: ['wwww................', 'wwwwwddddddddddddddd', 'wwwwwddddddddddddddd', 'ww....d.............'],
+  diablo: { rows: COLT, pal: { ...WP, s: '#3a3036', d: '#1a1418', w: '#a81812', b: GOLD } },
+  molotov: { rows: ['......f', '.....cf', 'gg..cr.', 'ggggggg', 'ggggggg', 'gg.....'], pal: { ...WP, g: '#5a8a4a', c: '#e8d8b0', r: '#f87818' } },
+  trap: ['s.s.s.s.s', 'sssssssss', 'd.......d', 'sssssssss'],
 };
 for (const [id, v] of Object.entries(WEAPON_ICONS)) ICONS['w:' + id] = Array.isArray(v) ? { pal: WP, rows: v } : v;
 const iconCache = new Map();
@@ -194,14 +208,20 @@ function weather(ctx, h) {
 }
 
 // Viseur : quatre traits qui s'écartent avec la dispersion de l'arme, et un point au centre.
+// Au doigt, il se resserre et rougit quand l'aide à la visée tient une cible (lockOn).
 function crosshair(ctx, h) {
   if (h.weapon?.melee) { R(ctx, CX - 1, CY - 1, 2, 2, CREAM); return; }
-  const g = 3 + Math.round(Math.min(18, h.spread || 0));
-  const col = h.hit && h.hit.age < HIT_MS ? (h.hit.kill ? SALMON : GOLD) : CREAM;
+  const g = 3 + Math.round(Math.min(18, h.spread || 0)) - (h.lockOn ? 1 : 0);
+  const col = h.hit && h.hit.age < HIT_MS ? (h.hit.kill ? SALMON : GOLD) : h.lockOn ? SALMON : CREAM;
   const tick = (x, y, w, hh) => { R(ctx, x - 1, y - 1, w + 2, hh + 2, 'rgba(26,15,10,0.6)'); R(ctx, x, y, w, hh, col); };
   tick(CX - g - 4, CY, 4, 1); tick(CX + g + 1, CY, 4, 1);
   tick(CX, CY - g - 4, 1, 4); tick(CX, CY + g + 1, 1, 4);
   R(ctx, CX, CY, 1, 1, col);
+  // arc bandé : une jauge sous le viseur, qui flamboie quand la flèche est prête à partir enflammée
+  if (h.charge != null) {
+    const full = h.charge >= 1, blink = full && Math.floor((h.now || 0) / 120) % 2;
+    bar(ctx, CX - 12, CY + 14, 24, 2, h.charge, full ? (blink ? '#ffd860' : '#f87818') : CREAM, 'rgba(26,15,10,0.6)');
+  }
 }
 
 // Marque de touche : quatre éclats en X autour du viseur, rouges et plus grands quand le coup tue.
@@ -276,8 +296,11 @@ function vitals(ctx, h) {
   if (h.mount) {
     const my = y - (shield ? 18 : 14);
     panel(ctx, x, my, 72, 12);
-    txt(ctx, h.mount.kind === 'cart' ? 'CHARIOT' : 'CHEVAL', x + 4, my + 2, 8, GOLD);
-    bar(ctx, x + 44, my + 4, 24, 4, h.mount.hp, h.mount.hp <= 0.3 ? SALMON : GREEN);
+    txt(ctx, h.mount.kind === 'cart' ? 'CHARIOT' : 'CHEVAL', x + 4, my + 2, 8, h.mount.hit ? SALMON : GOLD);
+    // touché : la barre blanchit un instant ; faible (35 % ou moins) : elle clignote et l'on nous dit de descendre
+    const low = h.mount.kind === 'horse' && h.mount.hp <= 0.35, blink = low && Math.floor((h.now || 0) / 250) % 2;
+    bar(ctx, x + 44, my + 4, 24, 4, h.mount.hp, h.mount.hit ? '#fdf6e0' : low ? (blink ? '#fdf6e0' : SALMON) : GREEN);
+    if (low && h.mount.warn) txt(ctx, h.mount.warn, x + 76, my + 2, 8, blink ? SALMON : GOLD);
   }
 }
 
@@ -315,6 +338,12 @@ function ammoFull(ctx, h, wp, empty) {
     bar(ctx, x + 4, y + 21, 60, 3, wp.reloading, GOLD);
   } else if (wp.magMax && wp.magMax <= 12 && !wp.inf) {
     for (let i = 0; i < wp.magMax; i++) icon(ctx, i < wp.mag ? 'bullet' : 'spent', x + 4 + i * 5, y + 15);
+    // LeMat : la cartouche du canon à chevrotine, après les balles (et sa réserve en petit)
+    if (wp.alt) {
+      const sx = x + 6 + wp.magMax * 5;
+      icon(ctx, wp.alt.mag > 0 ? 'shell' : 'noshell', sx, y + 15);
+      txt(ctx, `+${Math.max(0, wp.alt.res)}`, sx + 6, y + 15, 8, wp.alt.res > 0 ? DIM : SALMON);
+    }
   } else if (empty) txt(ctx, h.touch ? 'RECHARGER' : 'R : RECHARGER', x + 4, y + 15, 8, SALMON);
   // compteur : balles au chargeur en gros, réserve en petit
   const rx = x + w - 4;
@@ -331,11 +360,11 @@ const iconSize = (id) => { const r = ICONS[id].rows; return [Math.max(...r.map((
 function ammoCompact(ctx, h, wp) {
   const edge = h.temp ? GOLD : EDGE;
   // arme blanche ou dynamite en main : sa silhouette (et le nombre de bâtons), rien d'autre
-  if (wp.melee || wp.id === 'dynamite') {
+  if (wp.melee || wp.thrown) {
     const id = 'w:' + wp.id;
     if (!ICONS[id]) return;
     const [iw, ih] = iconSize(id);
-    const cnt = wp.id === 'dynamite' ? `X${Math.max(0, wp.mag)}` : '';
+    const cnt = wp.thrown ? `X${Math.max(0, wp.mag)}` : '';
     const w = iw + (cnt ? tw(cnt) + 4 : 0) + 8, hh = 13;
     const x = W - 4 - w, y = H - 2 - hh;
     panel(ctx, x, y, w, hh, edge);
@@ -344,9 +373,17 @@ function ammoCompact(ctx, h, wp) {
     return;
   }
   const res = `/${Math.max(0, wp.reserve ?? 0)}`, mag = String(Math.max(0, wp.mag));
-  const w = (wp.inf ? 18 : tw(mag, 16) + tw(res) + 1) + 9;
+  // LeMat : la cartouche de chevrotine et sa réserve, à gauche des balles, séparées d'un filet
+  const shot = wp.alt ? `${Math.max(0, wp.alt.mag)}/${Math.max(0, wp.alt.res)}` : '';
+  const sw = shot ? tw(shot) + 14 : 0;
+  const w = (wp.inf ? 18 : tw(mag, 16) + tw(res) + 1) + 9 + sw;
   const x = W - 4 - w, y = H - 18;
   panel(ctx, x, y, w, 16, edge);
+  if (shot) {
+    icon(ctx, wp.alt.mag > 0 ? 'shell' : 'noshell', x + 4, y + 5);
+    txt(ctx, shot, x + 10, y + 6, 8, wp.alt.mag > 0 ? CREAM : wp.alt.res > 0 ? DIM : SALMON);
+    R(ctx, x + sw, y + 3, 1, 10, EDGE);
+  }
   const rx = W - 8;
   if (wp.inf) icon(ctx, 'inf', rx - 18, y + 3, 2);
   else {

@@ -382,6 +382,31 @@ label, small { color: var(--sand); }
 .swatch:hover { transform: translateY(-2px); }
 .swatch.on { outline: 2px solid var(--yellow); outline-offset: 1px; transform: translateY(-2px); }
 .ed-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; flex-wrap: wrap; }
+/* couleurs repliées pendant qu'une galerie est ouverte : le titre sert de bouton pour les rouvrir */
+.ed-controls h3.fold { cursor: pointer; }
+.ed-controls h3.fold::after { content: ' \25B8'; color: var(--muted); }
+.ed-controls h3.fold:hover { color: var(--yellow); }
+/* écran peu haut : galerie en petites vignettes sans légende (le nom reste en infobulle), marges plus fines */
+@media (min-width: 761px) and (max-height: 780px) {
+  .ed-controls { padding-top: 10px; padding-bottom: 10px; }
+  .ed-gallery { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 4px; padding: 4px; }
+  .ed-thumb { padding: 2px; }
+  .ed-thumb span { display: none; }
+}
+/* écran large : une ligne par couleur (nom à gauche, nuancier à droite) et des réglages plus serrés : tout tient sans faire défiler */
+@media (min-width: 761px) {
+  .ed-row { gap: 1px; }
+  .ed-row .lbl, .ed-colors-row .lbl { font-size: 16px; line-height: 1; }
+  #ed-colors { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  #ed-colors .ed-colors-row { flex-direction: row; align-items: center; gap: 8px; }
+  #ed-colors .lbl { flex: 0 0 9em; }
+  #ed-colors .swatches { gap: 5px; padding: 2px; }
+  #ed-colors .swatch { width: 20px; height: 20px; }
+  .ed-controls h3 { margin-top: 4px; padding-bottom: 3px; }
+  #ed-parts { row-gap: 3px; }
+  .ed-controls h2 { margin-bottom: 0; }
+  .ed-controls .ed-buttons { margin-top: 6px; }
+}
 
 /* ------------------------------------------------ lobby */
 /* Le cadre a une hauteur fixe (16/9) : le lobby doit tenir dedans quel que soit le nombre de jeux.
@@ -390,9 +415,34 @@ label, small { color: var(--sand); }
 .lobby > .panel { min-height: 0; }
 .lobby-info { display: flex; flex-direction: column; gap: 6px; overflow-x: hidden; overflow-y: auto; } /* défile plutôt que de couper, si vraiment rien ne tient */
 .lobby-info > * { flex-shrink: 0; margin-top: 0; margin-bottom: 0; }
+/* en-tête en haut, boutons en bas, choix du jeu centré entre les deux (marges automatiques : si ça déborde, rien n'est coupé) */
+.lobby-info > .lobby-pick { display: flex; flex-direction: column; gap: 6px; margin-block: auto; }
 .code { color: var(--cream); letter-spacing: 4px; }
+/* à droite : les joueurs (invitation, places) en haut, le comptoir prend le reste */
+.lobby-side { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
+.lobby-side > .panel { min-height: 0; }
+.lobby-players { flex: 0 1 auto; display: flex; flex-direction: column; gap: 6px; overflow-x: hidden; overflow-y: auto; }
+.lobby-players > * { flex-shrink: 0; margin-top: 0; margin-bottom: 0; }
+.lobby-players h3 small { font-family: var(--body); font-weight: normal; font-size: 17px; color: var(--muted); text-shadow: none; margin-left: 4px; }
+.lobby-side > .chat { flex: 1 1 0; min-height: 90px; }
+.lobby-players .link-row { gap: 6px; }
+.lobby-players .link-row input { font-size: 16px; }
+.lobby-players .link-row .btn { padding: 6px 10px; font-size: clamp(10px, 1vw, 12px); }
+/* colonne étroite : le lien s'efface, les boutons Copier / Partager suffisent (le code est dans l'en-tête) */
+.lobby-players { container-type: inline-size; }
+@container (max-width: 400px) {
+  .lobby-players .link-row input { display: none; }
+  .lobby-players .link-row .btn { flex: 1 1 0; }
+}
+.lobby-players .seat .nm { font-size: clamp(10px, 1vw, 13px); }
+.lobby-players .seat-acts { right: max(0px, calc(50% - 50px)); } /* boutons de l'hôte collés au portrait */
+.lobby-players .seat .tag { font-size: 15px; }
 .seats { display: flex; gap: 14px; justify-content: center; flex: 1 1 0; min-height: 40px; align-items: stretch; }
-.lobby-info > .seats { flex-shrink: 1; }
+/* les 6 places : une grille 3 × 2, portraits à taille fixe */
+.lobby-players .seats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 6px; flex: 0 0 auto; }
+.lobby-players .seat { justify-content: flex-start; }
+.lobby-players .seat canvas, .lobby-players .seat.empty .box { flex: none; width: min(100%, 76px); height: auto; }
+.lobby-players .seats .seat.empty .box { font-size: 13px; padding: 4px; }
 .seat { text-align: center; flex: 0 1 40%; min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .seats.many { gap: 8px; }
 .seats.many .seat { flex-basis: 15%; }
@@ -425,6 +475,7 @@ label, small { color: var(--sand); }
 .chat { display: flex; flex-direction: column; min-height: 0; }
 .chat-log { flex: 1; overflow-y: auto; font-size: 19px; margin-bottom: 8px; min-height: 0; }
 .chat-log b { color: var(--yellow); font-weight: normal; }
+.chat-log .sys { color: var(--muted); font-style: italic; } /* arrivées et départs */
 .chat input { width: 100%; font-size: 18px; }
 
 /* en-tête : code à copier d'un clic, table ouverte ou fermée */
@@ -468,7 +519,7 @@ label, small { color: var(--sand); }
 .lobby-modes { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 1fr; }
 .lobby-modes .solo-card { position: relative; padding: 8px 4px 6px; gap: 4px; }
 .lobby-modes .solo-card img { height: clamp(24px, 3vw, 39px); }
-.lobby-modes .solo-card b { font-size: clamp(9px, 1.1vw, 13px); }
+.lobby-modes .solo-card b { font-size: clamp(9px, 1.1vw, 13px); white-space: normal; line-height: 1.25; } /* « Mort ou vif » passe sur deux lignes plutôt que d'être coupé */
 .lobby-modes .solo-card small { font-size: clamp(13px, 1.3vw, 16px); }
 .lobby-modes .solo-card.on { background: rgba(194, 100, 62, 0.45); box-shadow: inset 0 0 0 2px var(--yellow); }
 .lobby-modes .solo-card.on small { color: var(--green); }
@@ -503,7 +554,7 @@ label, small { color: var(--sand); }
 .seat.host canvas { border-color: var(--yellow); }
 .botag { color: var(--muted); font-family: var(--px); font-size: 10px; border: 1px solid var(--muted); padding: 0 3px; margin-left: 2px; }
 /* chaise vide côté hôte : deux boutons qui gardent leur taille quand les portraits rétrécissent */
-#seats .seat.empty .box.acts { flex: 0 0 auto; height: auto; aspect-ratio: auto; flex-direction: column; gap: 4px; padding: 6px; margin: auto 0; font-size: inherit; }
+#seats .seat.empty .box.acts { flex: 0 0 auto; width: min(100%, 96px); height: auto; aspect-ratio: auto; flex-direction: column; gap: 4px; padding: 6px; margin: auto 0; font-size: inherit; }
 #seats .seat.empty .box.acts::after { content: none; }
 .seat-btn {
   font-family: var(--px); font-size: clamp(8px, 0.9vw, 11px); color: var(--cream); background: rgba(0, 0, 0, 0.35); white-space: nowrap;
@@ -562,13 +613,16 @@ label, small { color: var(--sand); }
 
 /* Écrans peu hauts : le cadre rétrécit, les cartes de jeux se résument à leur nom (la description reste en infobulle). */
 @media (max-height: 820px) {
-  .lobby { grid-template-columns: 2fr 1fr; }
+  .lobby { grid-template-columns: 1.6fr 1fr; }
+  .lobby-players > label { display: none; }
+  .lobby-players .seat canvas, .lobby-players .seat.empty .box { width: min(100%, 64px); }
   .lobby-modes .solo-card { padding: 5px 3px 4px; gap: 2px; }
   .lobby-modes .solo-card img { height: clamp(20px, 2.4vw, 26px); }
 }
 @media (max-height: 680px) {
   .lobby-info { padding: 8px 12px; gap: 4px; }
-  .lobby-info > label { display: none; }
+  .lobby-pick > label, .lobby-players > label { display: none; }
+  .lobby-players .seat canvas, .lobby-players .seat.empty .box { width: min(100%, 60px); }
   .lobby-info h2 { font-size: 15px; }
   .link-row input { font-size: 15px; padding-top: 2px; padding-bottom: 2px; }
   .link-row .btn { padding: 4px 10px; }
@@ -580,8 +634,7 @@ label, small { color: var(--sand); }
 }
 /* Très peu de hauteur : on garde de la place pour les portraits. */
 @media (max-height: 600px) {
-  .lobby { grid-template-columns: 2.6fr 1fr; }
-  .lobby-buttons .btn, .lobby-buttons .btn.big { white-space: nowrap; }
+  .lobby { grid-template-columns: 1.6fr 1fr; }
   .seats.many .seat.empty .box, .seats .seat.empty .box { font-size: 0; padding: 2px; }
   .seats .seat.empty .box::after { content: '?'; font-family: var(--px); font-size: 14px; }
   .lobby-modes { gap: 4px; }
@@ -825,9 +878,10 @@ body.touch #scr-game.multi .tp-chat { display: block; }
   /* lobby : infos, puis le comptoir */
   .lobby { display: flex; flex-direction: column; height: auto; min-height: 100%; gap: 12px; }
   .lobby-info { overflow: visible; }
-  .lobby-info > .seats { flex: 0 0 auto; height: 120px; }
+  .lobby-side { flex-shrink: 0; }
   .lobby-modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .chat { display: flex; height: 220px; flex-shrink: 0; }
+  .lobby-side > .chat { flex: 0 0 220px; }
   /* roulette : le croupier sur toute la largeur, puis tour + pari, puis les deux tirs */
   .bottombar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 8px; padding: 8px 10px; }
   .dealer { grid-column: 1 / -1; font-size: 17px; }

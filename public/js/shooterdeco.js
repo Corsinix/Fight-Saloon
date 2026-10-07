@@ -4,7 +4,7 @@
 // Purement visuel : chaque navigateur casse ce que lui et les autres touchent (les tirs des autres arrivent en direct).
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
-import { W, GROUND, PROP_BASE, PROP_DIM, facade, rng, STA, wagonOpenings, SAL, EDGE_COVER } from './worlds.js';
+import { W, GROUND, PROP_BASE, PROP_DIM, facade, rng, STA, wagonOpenings, SAL, EDGE_COVER, MINE } from './worlds.js';
 
 const OUT = S.OUT;
 const rd = Math.round;
@@ -110,6 +110,14 @@ export class Deco {
       this.critters.push({ sec: 'edge', kind: 'dog', x: 250 + R() * 60, y: 171, ph: R() * 9 });
     }
 
+    // ---- le repaire d'El Diablo : la mine (lanternes pendues aux étais, chauves-souris) ou le saloon ; la poursuite n'a
+    // pas de décor fixe (tout défile)
+    if (world.lair === 'mine') {
+      for (const lx of MINE.lamps) this.add({ sec: 'saloon', kind: 'lantern', x: lx, y: 26, w: 7, h: 11, ground: MINE.balcony });
+      for (const [x, y] of [[90, 12], [104, 14], [410, 11], [600, 13], [612, 12], [740, 14], [236, MINE.balcony + 9], [520, MINE.balcony + 10]]) this.critters.push({ sec: 'saloon', kind: 'bat', x, y, ph: R() * 9 });
+      return;
+    }
+    if (world.lair === 'chase') return;
     // ---- le saloon
     for (const cx of [200, 520]) this.add({ sec: 'saloon', kind: 'chandelier', x: cx - 15, y: 8, w: 30, h: 20, cx, floor: 194 });
     this.add({ sec: 'saloon', kind: 'mirror', x: 112, y: SAL.balcony + 12, w: 140, h: 14 });
@@ -175,7 +183,7 @@ export class Deco {
       const cx = c.kind === 'hen' || c.kind === 'cow' ? c.x ?? c.x0 : c.x;
       if (Math.abs(cx - wx) > 80 || Math.abs(c.y - y) > 70) continue;
       c.flee = { t0: this.now || 0, dir: cx >= wx ? 1 : -1, x0: cx, y0: c.y };
-      if (c.kind === 'bird') { sfx('rope', Math.random() * 0.05); for (let i = 0; i < 2; i++) this.fx.push({ sec, x: cx, y: c.y, vx: (Math.random() - 0.5) * 0.05, vy: -0.02, g: 0.00005, col: '#c8c0b8', life: 900, t: 0, ground: 999 }); }
+      if (c.kind === 'bird' || c.kind === 'bat') { sfx('rope', Math.random() * 0.05); for (let i = 0; i < 2; i++) this.fx.push({ sec, x: cx, y: c.y, vx: (Math.random() - 0.5) * 0.05, vy: -0.02, g: 0.00005, col: '#c8c0b8', life: 900, t: 0, ground: 999 }); }
       else if (c.kind === 'hen') sfx('cluck');
       else if (c.kind === 'dog') sfx('bark');
       else if (c.kind === 'cat') sfx('meow');
@@ -279,7 +287,7 @@ export class Deco {
       if (it.kind === 'chandelier' || it.kind === 'leak') continue; // dessinés après (devant les bandits)
       this.drawItem(ctx, it, cx, t, now, R, box);
     }
-    for (const c of this.critters) if (c.sec === sec && (c.kind === 'bird' || c.kind === 'cow' || (c.kind === 'cat' && c.perch))) this.drawCritter(ctx, c, cx, t, now, R);
+    for (const c of this.critters) if (c.sec === sec && (c.kind === 'bird' || c.kind === 'bat' || c.kind === 'cow' || (c.kind === 'cat' && c.perch))) this.drawCritter(ctx, c, cx, t, now, R);
   }
 
   // Devant : tonneaux percés, lustres, poules, chien, chat, pianola, fumée de cigare, débris
@@ -289,7 +297,7 @@ export class Deco {
       if (it.sec !== sec || it.x - cx < -40 || it.x - cx > W + 40) continue;
       if (it.kind === 'chandelier' || it.kind === 'leak') this.drawItem(ctx, it, cx, t, now, R, box);
     }
-    for (const c of this.critters) if (c.sec === sec && c.kind !== 'bird' && c.kind !== 'cow' && !(c.kind === 'cat' && c.perch)) this.drawCritter(ctx, c, cx, t, now, R);
+    for (const c of this.critters) if (c.sec === sec && c.kind !== 'bird' && c.kind !== 'bat' && c.kind !== 'cow' && !(c.kind === 'cat' && c.perch)) this.drawCritter(ctx, c, cx, t, now, R);
     for (const fxt of this.fixtures) {
       if (fxt.sec !== sec) continue;
       const x = fxt.x - cx;
@@ -446,6 +454,25 @@ export class Deco {
     if (c.gone) return;
     const fl = c.flee ? now - c.flee.t0 : -1;
     switch (c.kind) {
+      case 'bat': {
+        // chauve-souris pendue la tête en bas sous une poutre ; effrayée, elle s'envole en zigzag
+        let x = c.x - cx, y = c.y;
+        if (fl >= 0) {
+          x = c.flee.x0 - cx + c.flee.dir * fl * 0.09 + Math.sin(fl / 70) * 4;
+          y = c.flee.y0 + Math.sin(fl / 110) * 6 - fl * 0.02;
+          if (x < -12 || x > W + 12 || y < -10) { c.gone = true; return; }
+          const up = Math.floor(fl / 60) % 2;
+          R(x - 1, y, 3, 2, '#1a1418');
+          if (up) { R(x - 4, y - 2, 3, 1, '#1a1418'); R(x - 5, y - 3, 1, 1, '#1a1418'); R(x + 2, y - 2, 3, 1, '#1a1418'); R(x + 5, y - 3, 1, 1, '#1a1418'); }
+          else { R(x - 4, y + 1, 3, 1, '#1a1418'); R(x + 2, y + 1, 3, 1, '#1a1418'); }
+          break;
+        }
+        if (x < -6 || x > W + 6) return;
+        const sw = Math.sin(now / 900 + c.ph) > 0.6 ? 1 : 0; // elle se balance un peu
+        R(x, y, 1, 1, '#1a1418'); R(x - 1 + sw, y + 1, 3, 4, '#1a1418'); R(x + sw, y + 5, 1, 1, '#1a1418');
+        if (Math.sin(now / 1300 + c.ph * 2) > 0.92) R(x - 2 + sw, y + 2, 5, 1, '#2a2228'); // un battement d'ailes
+        break;
+      }
       case 'bird': {
         let x = c.x - cx, y = c.y;
         if (fl >= 0) {

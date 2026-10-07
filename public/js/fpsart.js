@@ -5004,6 +5004,85 @@ export function horseFrame(coat, frame, angle, rider = null) {
   });
 }
 
+// Le cheval vu de la selle (à cheval, à la première personne), à gauche de l'arme et sous le viseur. Depuis la selle,
+// la tête est en grande partie cachée par la nuque : on voit l'encolure arrondie (ombrée comme un cylindre, lumière en
+// haut à gauche) qui s'affine vers la tête, la crinière qui retombe en mèches sur le côté droit, la nuque ronde et ses
+// deux grandes oreilles dressées en V, le toupet, la têtière et les montants de la bride, les rênes posées sur
+// l'encolure jusqu'à nos mains, le pommeau de la selle. coat : robe (MT_COATS) ; hurt : rougi (il vient d'être touché).
+export function horseNeckView(coat = 0, hurt = false) {
+  return memo(`hnv|${coat}|${hurt}`, () => {
+    const co = MT_COATS[coat] || MT_COATS[0];
+    const B = co.body, M = co.mane;
+    const T = [shade(B[0], 0.14), B[0], mix(B[0], B[1], 0.5), B[1], mix(B[1], B[2], 0.5), B[2], B[3]]; // 7 tons de la robe
+    const MN = [shade(M[0], 0.18), M[0], M[1], M[2], M[3]];
+    const top = 60; // la nuque, en pixels au-dessus du bas de l'écran
+    const cxOf = (t) => -46 - 8 * t;
+    const hwOf = (t) => 18 + 22 * Math.pow(1 - t, 1.1);
+    const c = sprite(200, 100, (p) => {
+      const { R, P, poly, ell, line } = p;
+      const tone = (k, x, y) => T[clamp(Math.floor(k * 6.99 + (prB(x, y) - 0.5) * 0.8), 0, 6)];
+      const lit = (s, v = 0) => clamp(-0.45 * s + 0.85 * Math.sqrt(Math.max(0, 1 - s * s)) - 0.08 + v, 0, 1); // lumière d'un cylindre
+      // l'encolure
+      for (let y = 0; y >= -top; y--) {
+        const t = -y / top, cx = cxOf(t), hw = hwOf(t);
+        for (let x = Math.floor(cx - hw); x <= Math.ceil(cx + hw); x++) {
+          const s = (x + 0.5 - cx) / hw;
+          if (Math.abs(s) <= 1) P(x, y, tone(1 - lit(s, 0.08 * t), x, y));
+        }
+      }
+      // la crinière : posée sur l'arête (un peu à gauche du milieu), elle retombe en longues mèches sur le côté droit,
+      // jusqu'au-delà du bord de l'encolure
+      for (let y = 0; y >= -top + 2; y--) {
+        const t = -y / top, cx = cxOf(t), hw = hwOf(t);
+        const x0 = Math.round(cx - hw * 0.08);
+        const end = cx + hw * (1.02 + 0.12 * Math.sin(y * 0.45) + 0.08 * Math.sin(y * 1.3 + 1)) + 1; // les pointes, irrégulières
+        for (let x = x0; x <= Math.ceil(end); x++) {
+          const u = (x - x0) / Math.max(1, end - x0);
+          const st = ((((x - x0) * 0.6 - y) % 5) + 5) % 5; // les mèches, en biais (elles descendent vers la droite)
+          P(x, y, MN[clamp(Math.round(x === x0 ? 0 : 1 + u * 1.8 + (st < 1 ? 1 : st > 3.5 ? -0.6 : 0)), 0, 4)]);
+        }
+      }
+      // la nuque : ronde, un peu plus large que le haut du cou ; les yeux en relief sur les côtés
+      const hx = Math.round(cxOf(1)), hy = -top - 2;
+      for (let y = hy - 11; y <= hy + 8; y++) {
+        const v = (y - (hy - 2)) / 10, hw = 22 * Math.sqrt(Math.max(0, 1 - v * v));
+        for (let x = Math.floor(hx - hw); x <= Math.ceil(hx + hw); x++) {
+          const s = (x + 0.5 - hx) / Math.max(1, hw);
+          if (Math.abs(s) <= 1) P(x, y, tone(1 - lit(s, -v * 0.25), x, y));
+        }
+      }
+      for (const d of [-1, 1]) { const ex = hx + d * 20, ey = hy + 1; ell(ex, ey, 2, 3, T[d < 0 ? 2 : 5]); P(ex + d, ey, '#140c0a'); P(ex + d, ey - 1, '#140c0a'); }
+      // la têtière derrière les oreilles, les montants de la bride qui descendent le long des joues
+      line(hx - 20, hy - 3, hx + 20, hy - 3, '#2e1a0e', 2); line(hx - 19, hy - 4, hx + 19, hy - 4, '#7a4e2c');
+      for (const d of [-1, 1]) { line(hx + d * 20, hy - 3, hx + d * 17, hy + 9, '#2e1a0e', 2); P(hx + d * 17, hy + 9, '#d0ccc4'); }
+      // les oreilles, grandes, dressées en V : l'intérieur sombre, un liseré de poils clairs
+      for (const d of [-1, 1]) {
+        const ex = hx + d * 12, ey = hy - 6;
+        poly([[ex - 7, ey + 2], [ex - 7 + d * 3, ey - 10], [ex - 3 + d * 6, ey - 22], [ex + d * 7, ey - 27], [ex + 3 + d * 6, ey - 22], [ex + 7 + d * 3, ey - 10], [ex + 7, ey + 2]], d < 0 ? T[2] : T[4]);
+        poly([[ex - 4, ey], [ex - 4 + d * 3, ey - 10], [ex - 1 + d * 5, ey - 19], [ex + d * 6, ey - 22], [ex + 1 + d * 5, ey - 19], [ex + 4 + d * 3, ey - 10], [ex + 4, ey]], T[6]);
+        for (let k = 2; k < 20; k += 2) P(ex + d * Math.round(k / 3.3) + (d < 0 ? 3 : -3), ey - k, T[k % 4 ? 1 : 0]); // le liseré, côté intérieur
+        P(ex + d * 7, ey - 27, T[0]);
+      }
+      // le toupet, entre les oreilles
+      for (let k = -4; k <= 4; k++) line(hx + k, hy - 2, hx + k * 1.4, hy - 10 - (k & 1) * 3, MN[(Math.abs(k) % 3) + 1]);
+      // les rênes : du mors (au bas des joues) jusqu'à nos mains, posées sur l'encolure
+      for (const d of [-1, 1]) {
+        const bx = hx + d * 17, by = hy + 9, ex = 2 + d * 10, ey = -8;
+        line(bx, by, ex, ey, '#2a180c', 2); line(bx, by - 1, ex, ey - 1, '#8a5a32');
+      }
+      // le pommeau de la selle
+      ell(4, -3, 18, 4, '#4a2a12'); ell(4, -5, 15, 3, '#7a4a24'); R(0, -15, 8, 10, '#6a3e1e'); R(1, -15, 2, 10, '#9a6a3c'); ell(4, -16, 6, 2, '#8a5a30'); P(2, -17, '#b8865a');
+    });
+    if (!hurt) return c;
+    const k = canvas(c.width, c.height), x = k.getContext('2d');
+    x.drawImage(c, 0, 0);
+    x.globalCompositeOperation = 'source-atop';
+    x.fillStyle = 'rgba(230,50,40,0.32)';
+    x.fillRect(0, 0, k.width, k.height);
+    return k;
+  });
+}
+
 // ------------------------------------------------------------------ wagonnet
 const MT_TUB = ['#b0a294', '#7e6e60', '#56483e', '#382e28']; // tôle rouillée
 // tas de charbon et pépites qui dépasse du bord (cx, y = haut du bord, demi-largeur rx)
@@ -5473,9 +5552,8 @@ function vmHand(sc, o) {
 }
 
 // Éclair de bouche : étoile chaude en 2D, centrée sur (x, y) en canvas, rayon r
-function vmFlash(p, x, y, r, seed = 0) {
+function vmFlash(p, x, y, r, seed = 0, cols = ['#c83418', '#f07818', '#f8c030', '#fff0a0', '#ffffff']) {
   const rand = rng(seed + 11);
-  const cols = ['#c83418', '#f07818', '#f8c030', '#fff0a0', '#ffffff'];
   for (let k = 0; k < 5; k++) {
     const rr = r * (1 - k * 0.19), n = 9;
     const pts = [];
@@ -5488,12 +5566,12 @@ function vmFlash(p, x, y, r, seed = 0) {
   }
 }
 // Petite fumée qui monte (frame de récupération)
-function vmSmoke(p, x, y, seed = 0) {
+function vmSmoke(p, x, y, seed = 0, cols = ['#c8c4bc', '#e4e0d8', '#f4f0ea']) {
   const rand = rng(seed + 5);
   for (let i = 0; i < 5; i++) {
     const r = 1.5 + i * 0.6;
-    p.disc(x + Math.sin(i * 1.3 + seed) * 2, y - i * 3.2, r, i % 2 ? '#c8c4bc' : '#e4e0d8');
-    if (rand() < 0.5) p.P(x + rand() * 4 - 2, y - i * 3.2 - r, '#f4f0ea');
+    p.disc(x + Math.sin(i * 1.3 + seed) * 2, y - i * 3.2, r, i % 2 ? cols[0] : cols[1]);
+    if (rand() < 0.5) p.P(x + rand() * 4 - 2, y - i * 3.2 - r, cols[2]);
   }
 }
 // VM3D READY
@@ -5756,6 +5834,15 @@ const KN_POSES = {
       { guard: [-1, -7.5, 52], dir: [-0.45, -0.16, 0.86], roll: -0.5, thumb: 'wrap', armCam: [12, -60, 18] },
     ],
   },
+  pickaxe: {
+    // manche en diagonale, fer en haut à droite ; la pointe mène le coup, de haut en bas vers le centre
+    idle: [{ guard: [11, -14.5, 55], dir: [-0.18, 0.54, 0.82], roll: -1.34, thumb: 'wrap', armCam: [16, -60, 20] }],
+    swing: [
+      { guard: [13.5, -17, 56], dir: [0.03, 0.46, 0.89], roll: 2.33, thumb: 'wrap', armCam: [20, -60, 24] },
+      { guard: [7.2, -16, 57], dir: [-0.25, 0.3, 0.92], roll: 2.4, thumb: 'wrap', armCam: [14, -60, 18], streak: true },
+      { guard: [9.5, -16.7, 55.5], dir: [-0.06, 0.23, 0.97], roll: 2.26, thumb: 'wrap', armCam: [12, -60, 18] },
+    ],
+  },
   saber: {
     // en garde : lame qui monte vers le centre haut, tranchant devant, branche de garde autour des doigts
     idle: [{ guard: [6, -12, 50], dir: [-18, 10, 90], roll: -1.1, thumb: 'wrap', armCam: [16, -60, 22] }],
@@ -5785,6 +5872,7 @@ const knPoseFrame = (P) => (P.guard ? knFrame(P.guard, vmAdd(P.guard, vmK(vmUnit
 // Points de la lame (repère de l'arme) qui laissent une traînée, de la pointe vers la garde
 function knStreakPts(id) {
   if (id === 'tomahawk') return [[0, -8.6, 27.8], [0, -8.4, 26.2], [0, -8.2, 24.6], [0, -8.6, 22.6], [0, -5.5, 22.2], [0, -2.5, 22.2]];
+  if (id === 'pickaxe') return [[0, 18.5, 20.5], [0, 15.5, 22.1], [0, 11, 24], [0, 6.5, 25.1], [0, 2, 25.5], [0, -2.5, 25.6]];
   if (id === 'saber') return [51, 47, 42, 36, 30, 24].map((z) => [0, 0.0028 * z * z, z]);
   return [1, 3, 6, 9.5, 13.5, 18].map((d) => { const z = KN_BLADE_L - d, s = knBowieStation(z); return [0, (s.ye + s.ys) / 2, z]; });
 }
@@ -5837,6 +5925,33 @@ function knTomahawk(sc) {
   sc.push(vmChain(vmT(1.3, -7.0, 17.0), vmRx(-0.2))); sc.ext(RED, [[0, 0], [0.7, -0.5], [0.6, -3.6], [0, -4.4], [-0.5, -2.8]], 0.2); sc.pop();
 }
 
+// --- pioche de mineur : long manche de hickory, fer forgé sombre : pointe de 17 cm d'un côté (+y), panne plate de
+// 14 cm de l'autre (-y), toutes deux courbées vers le manche ; seuls les bouts usés brillent
+const KN_ASH = vmMatRamp(['#2a160a', '#523018', '#7e5228', '#aa7a44', '#d6aa6e']);
+const KN_IRON = vmMatRamp(['#141110', '#2a2420', '#463c34', '#6e6258', '#b0a498'], { spec: true });
+const KN_PICK_Z = 25.5; // milieu du fer le long du manche
+function knPickaxe(sc) {
+  sc.push(vmT(0, KN_HAFT_Y, -11.2)); sc.cyl(KN_ASH, 1.25, 39.6, { r2: 1.4, segs: 12 }); sc.pop();
+  // œil du fer autour du bout du manche, coin d'acier qui affleure sur le dessus
+  sc.push(vmT(0, KN_HAFT_Y, KN_PICK_Z)); sc.box(KN_IRON, 3.8, 4.6, 6.0); sc.pop();
+  sc.push(vmT(0, KN_HAFT_Y, KN_PICK_Z + 3.05)); sc.box(KN_STEEL_LO, 1.4, 1.4, 0.2); sc.pop();
+  // pointe : section ronde qui s'affine de 1,9 cm à rien sur 17 cm, courbée vers le manche ; les 3 derniers cm brillent
+  const y0 = KN_HAFT_Y, Z = KN_PICK_Z;
+  const pick = [[0, y0 + 2.2, Z], [0, y0 + 7, Z - 0.4], [0, y0 + 11.5, Z - 1.5], [0, y0 + 16.2, Z - 3.4], [0, y0 + 19.2, Z - 5.0]];
+  const pr = [1.9, 1.5, 1.05, 0.55, 0.12];
+  for (let i = 0; i + 1 < pick.length; i++) sc.caps(i === pick.length - 2 ? KN_STEEL_HI : KN_IRON, pick[i], pick[i + 1], pr[i], pr[i + 1], { segs: 8, same: i > 0 && i < pick.length - 2 });
+  // panne plate : lame qui s'élargit (en x) jusqu'à 3,2 cm et s'amincit (en z), tranchant brillant au bout
+  sc.ext(KN_IRON, [[Z + 1.9, y0 - 2.2], [Z + 1.2, y0 - 8], [Z - 0.2, y0 - 13.2], [Z - 2.3, y0 - 13.4], [Z - 1.6, y0 - 8], [Z - 1.9, y0 - 2.2]], 2.6);
+  sc.ext(KN_IRON, [[Z + 0.9, y0 - 10.5], [Z - 0.2, y0 - 13.2], [Z - 2.3, y0 - 13.4], [Z - 1.9, y0 - 10.5]], 3.2, { same: true });
+  sc.ext(KN_STEEL_HI, [[Z - 0.1, y0 - 13.3], [Z - 2.4, y0 - 13.5], [Z - 2.5, y0 - 16.2], [Z - 0.5, y0 - 16.0]], 3.0);
+  // bague de fer sous le fer, à l'endroit où l'on tient
+  sc.push(vmT(0, KN_HAFT_Y, Z - 4.3)); sc.cyl(KN_IRON, 1.5, 1.2, { segs: 12 }); sc.pop();
+}
+
+// --- lasso : corde de chanvre torsadée (deux brins de tons voisins)
+const KN_HEMP = vmMatRamp(['#3a2a12', '#6a5028', '#9a7a44', '#c8a868', '#ecd8a0']);
+const KN_HEMP_B = vmMatRamp(['#2e1c0c', '#5a3a1a', '#8a6234', '#b48a52', '#dcc08a']); // l'autre brin de la torsade
+
 // --- sabre de cavalerie : lame courbe (tranchant convexe vers -y), gouttière, garde à branche en laiton, poignée de cuir
 const KN_SABER_L = 52;
 function knSaber(sc) {
@@ -5873,10 +5988,70 @@ function knBowie(P, skin, cloth) {
   // face de lame tournée vers l'œil (pour les détails 2D)
   sc.knSide = vmDot([K[0], K[4], K[8]], vmUnit([-K[3], -K[7], -K[11]])) > 0 ? 1 : -1;
   if (P.id === 'tomahawk') knTomahawk(sc);
+  else if (P.id === 'pickaxe') knPickaxe(sc);
   else if (P.id === 'saber') knSaber(sc);
   else { knBowieBlade(sc); knBowieHilt(sc); }
   knHand(sc, { skin, cloth, arm: P.armCam ? knInv(K, P.armCam) : P.arm, thumb: P.thumb || 'spine' });
   sc.pop();
+  return vmRender(sc);
+}
+
+// Lasso : le poing droit tient la corde, la main gauche la réserve d'anneaux ; au repos le nœud coulant tournoie
+// autour du viseur (4 images du tour) ; lancer : 0 le bras monte, 1 le nœud file, 2 il se referme au loin, corde
+// tendue. Le nœud et la corde sont construits en repère caméra (cm) ; c : centre du nœud, r : rayons, tilt : inclinaison,
+// ph : angle du nœud (honda) d'où part la corde.
+const KN_LASSO = {
+  idle: [0, 1, 2, 3].map((k) => ({ h: [9, -12, 38], c: [-4 + Math.cos(k * 1.57) * 1.5, 0 + Math.sin(k * 1.57) * 0.8, 105], r: [26, 22], tilt: 0.3, ph: 0.4 + k * 1.57 })),
+  swing: [
+    { h: [11, -9, 40], c: [6, -3, 130], r: [26, 20], tilt: 0.35, ph: 4.2 },
+    { h: [5, -11, 46], c: [-18, 6, 190], r: [22, 15], tilt: 0.5, ph: 0.2, taut: true },
+    { h: [6, -14, 40], c: [0, -6, 420], r: [11, 6], tilt: 0.7, ph: 4.7, taut: true, thin: true },
+  ],
+};
+// Corde torsadée : segments de deux tons alternés (même pièce : pas de trait entre eux)
+function knTwist(sc, pts, r) {
+  for (let i = 0; i + 1 < pts.length; i++) sc.caps(i % 2 ? KN_HEMP_B : KN_HEMP, pts[i], pts[i + 1], r, r, { segs: 6, same: i > 0 });
+}
+// Poing qui serre une corde verticale (prise de torche), repère H ; armCam : coude en repère caméra
+function knRopeFist(sc, H, side, skin, cloth, armCam) {
+  sc.push(H);
+  vmGrip(sc, [0, -6.6, 0.15], [0, -0.9, 0.3], { skin, cloth, side, fwd: [-side, 0, -0.25], rx: 1.5, rz: 1.5, web: 0.4, arm: knInv(H, armCam) });
+  sc.pop();
+}
+function knLassoView(state, frame, skin, cloth) {
+  const L = KN_LASSO[state] || KN_LASSO.idle, P = L[frame] || L[0];
+  const sc = vmScene();
+  const H = vmChain(vmHold(P.h[0], P.h[1], P.h[2], -0.2), vmRy(-0.12), vmRz(0.18), vmRx(-0.15));
+  const HL = vmChain(vmHold(-3.5, -17.5, 36, 0.2), vmRy(0.12), vmRz(-0.22), vmRx(-0.15));
+  // main gauche : la réserve d'anneaux qui pend sous le poing
+  sc.push(HL);
+  for (let k = 0; k < 3; k++) {
+    const pts = [];
+    for (let i = 0; i <= 28; i++) { const t = (i / 28) * Math.PI * 2; pts.push([0.4 * k - 0.4 + Math.cos(t) * (2.8 - k * 0.5), -9.4 - k * 0.6 + Math.sin(t) * (5.6 + k * 0.4), 0.3 + Math.cos(t) * 1.6]); }
+    knTwist(sc, pts, 0.5);
+  }
+  sc.pop();
+  knRopeFist(sc, HL, -1, skin, cloth, [-8, -46, 14]);
+  knRopeFist(sc, H, 1, skin, cloth, [28, -42, 20]);
+  const F = vmP(H, [0, 0.6, 0.3]), FL = vmP(HL, [0, 0.6, 0.3]);
+  // le nœud coulant, en repère caméra : ellipse fermée et penchée, honda gainé de cuir d'où part la corde
+  sc.stack.push(vmI());
+  const u = [P.r[0], 0, 0], v = [0, Math.sin(P.tilt) * P.r[1], Math.cos(P.tilt) * P.r[1]];
+  const loop = [];
+  for (let i = 0; i <= 48; i++) { const t = (i / 48) * Math.PI * 2 + P.ph; loop.push(vmAdd(P.c, vmAdd(vmK(u, Math.cos(t)), vmK(v, Math.sin(t))))); }
+  knTwist(sc, loop, P.c[2] > 150 ? 0.9 : 0.55);
+  const honda = loop[0];
+  sc.push(vmChain(vmT(...honda), vmRy(0.4))).ell(VM_LEATHER, 1.6, 0.9, 0.9).pop();
+  // la corde : pend en arc quand le nœud tourne, tendue droite quand il est lancé ; et le mou entre les deux mains
+  const rope = [], slack = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16, sag = P.taut ? 0 : Math.sin(t * Math.PI) * 4;
+    rope.push(vmAdd(vmLerp(F, honda, t), [0, -sag, 0]));
+    slack.push(vmAdd(vmLerp(FL, F, t), [0, -Math.sin(t * Math.PI) * 4, 0]));
+  }
+  knTwist(sc, rope, P.thin ? 0.38 : 0.55);
+  knTwist(sc, slack, 0.5);
+  sc.stack.pop();
   return vmRender(sc);
 }
 
@@ -5887,7 +6062,8 @@ function knPose(id, state, frame) {
 }
 
 function knViewModel(id, state, frame, skin, cloth) {
-  if (id !== 'bowie' && id !== 'tomahawk' && id !== 'saber') return null;
+  if (id === 'lasso') return memo(`kn:lasso:${state}:${frame}:${skin}:${cloth}`, () => knLassoView(state, frame, skin, cloth));
+  if (id !== 'bowie' && id !== 'tomahawk' && id !== 'saber' && id !== 'pickaxe') return null;
   return memo(`kn:${id}:${state}:${frame}:${skin}:${cloth}`, () => knBowie(knPose(id, state, frame), skin, cloth));
 }
 
@@ -5900,7 +6076,7 @@ function knViewModel(id, state, frame, skin, cloth) {
 // par-dessus), main gauche qui berce le garde-main par-dessous (pouce sur un flanc, doigts enroulés sur l'autre).
 // lgViewModel(id, state, frame, skin, cloth) → canvas 200x130 (vmRender) ou null si l'id n'est pas une arme longue.
 
-const LG_IDS = ['winchester', 'goldwin', 'pump', 'sharps', 'sawed'];
+const LG_IDS = ['winchester', 'goldwin', 'pump', 'sharps', 'sawed', 'harpoon', 'puntgun'];
 const LG_K = 1.32;
 
 // --- matières propres aux armes longues
@@ -6295,6 +6471,79 @@ function lgSawed(sc, o) {
   sc.ext(VM_STEEL, [[0.4, -2.8], [0.2, -3.8], [-0.3, -4.4], [-0.1, -3.7], [-0.2, -2.8]], 0.4);
 }
 
+// --- fusil à harpon (canon baleinier) : canon court et gros en bronze, platine à chien latéral, harpon d'acier qui sort
+// de la bouche (fer barbelé, anneau et bout de câble qui pend) ; o.harpoon : 0 absent … 1 enfoncé dans le canon
+const LG_HARP = { L: 30, grip: { b: [0, -4.4, -10.8], t: [0, -2.6, -4.6], trigger: [0, -4.8, 0.4] }, fore: [8.0, 16.0], foreY: -2.3, foreR: [2.3, 2.3] };
+const LG_BRONZE = vmMatRamp(['#2e1a0a', '#5a3814', '#8a5e26', '#b88a40', '#f0d080'], { spec: true });
+function lgHarpoon(sc, o) {
+  const L = LG_HARP.L;
+  // boîte et platine, chien latéral à droite
+  const RS = [[-1.4, -0.9, 2.1, 1.6], [0.0, -0.9, 2.6, 1.8], [6.0, -0.95, 2.6, 1.8], [7.0, -0.9, 2.2, 1.7]];
+  lgLoft(sc, LG_BLACK, RS, { p: 4, n: 18 });
+  sc.push(vmChain(vmT(1.2, 0, 0), lgPivot(-0.4, -1.4, vmRx(o.hammerDown ? 0.8 : 0))));
+  sc.ext(VM_STEEL, [[-0.8, -0.6], [-1.3, 1.3], [-2.4, 2.6], [-3.4, 2.8], [-2.9, 2.0], [-2.3, 0.8], [-2.1, -1.0], [-0.8, -1.2]], 0.9);
+  sc.pop();
+  // gros canon de bronze, bagues renforcées, bouche évasée
+  lgAt(sc, 0, 0, 6.0, () => sc.cyl(LG_BRONZE, 2.0, L - 6.0, { segs: 20, r2: 1.85 }));
+  for (const z of [6.4, 14, L - 1.2]) lgAt(sc, 0, 0, z, () => sc.cyl(LG_BRONZE, 2.25, 1.1, { segs: 20 }));
+  lgAt(sc, 0, 0, L - 0.05, () => sc.cyl(VM_DARK, 1.1, 0.14, { segs: 14 }));
+  lgAt(sc, 0, 2.15, L - 2.0, () => sc.ell(VM_BRASS, 0.32, 0.32, 0.32));
+  // fût court sous le canon, crosse de chêne, pontet
+  const FS = [[5.8, -2.2, 1.6, 2.2], [9, -2.3, 1.7, 2.3], [17, -2.2, 1.5, 2.1], [18, -2.0, 1.2, 1.8]];
+  lgLoft(sc, LG_WOOD, FS, { n: 18 });
+  lgGrain(sc, FS, 6.0, 17.8, 71, { n: 6 });
+  const SS = [[-1.2, -1.0, 2.6, 1.6], [-3.6, -2.0, 2.2, 1.5], [-8, -3.2, 2.3, 1.55], [-12.5, -4.5, 3.2, 1.7], [-18, -5.8, 4.3, 1.9], [-23, -6.8, 5.2, 2.0]];
+  lgLoft(sc, LG_WOOD, SS, { n: 18 });
+  lgGrain(sc, SS, -1.4, -22, 72, { n: 9 });
+  sc.tube(VM_STEEL, [[0, -3.3, 3.2], [0, -4.8, 2.8], [0, -5.7, 1.4], [0, -5.7, -0.5], [0, -4.9, -1.6], [0, -3.8, -2.0]], 0.3);
+  sc.ext(VM_STEEL, [[1.3, -3.3], [1.1, -4.4], [0.6, -5.0], [0.8, -4.3], [0.7, -3.3]], 0.45);
+  // le harpon : hampe d'acier qui dépasse de la bouche, fer barbelé à deux ailettes, anneau et câble qui pend
+  const h = o.harpoon ?? 1;
+  if (h > 0) {
+    const out = 20 * h + (1 - h) * 40; // pendant le rechargement il est encore à moitié sorti
+    const zt = L + out;
+    lgAt(sc, 0, 0, L - 6, () => sc.cyl(VM_STEEL, 0.6, zt - (L - 6), { segs: 10 }));
+    lgAt(sc, 0, 0, zt, () => sc.cyl(VM_STEEL, 0.75, 1.0, { segs: 10 }));
+    // fer en croix (vu de derrière, on lit ses quatre barbelures)
+    for (const a of [0, Math.PI / 2]) {
+      sc.push(vmRz(a));
+      sc.ext(KN_STEEL_HI, [[zt + 0.8, 1.3], [zt + 6.5, 0], [zt + 0.8, -1.3], [zt + 1.4, 0]], 0.5);
+      for (const s of [1, -1]) sc.ext(KN_STEEL, [[zt + 1.5, s * 0.6], [zt - 3.0, s * 3.4], [zt - 2.0, s * 0.7]], 0.4);
+      sc.pop();
+    }
+    lgAt(sc, 0, 0.9, L + 3.2, () => sc.cyl(VM_BRASS, 0.95, 0.4, { segs: 12 }));
+    sc.tube(KN_HEMP, [[0, 1.6, L + 3.2], [0.8, -0.4, L + 2.0], [1.4, -3.8, L - 1.5], [1.6, -6.5, L - 6], [1.2, -8.5, L - 12]], 0.32, { segs: 6 });
+  }
+}
+
+// --- canardière (punt gun) : un canon de marais démesuré, bandes de laiton, énorme bouche, crosse de chêne
+const LG_PUNT = { L: 74, grip: { b: [0, -4.6, -11.4], t: [0, -2.8, -4.8], trigger: [0, -5.0, 0.6] }, fore: [20, 30], foreY: -3.4, foreR: [2.6, 2.6] };
+function lgPunt(sc, o) {
+  const L = LG_PUNT.L;
+  const RS = [[-1.4, -0.9, 2.2, 1.8], [0.0, -0.9, 2.9, 2.1], [8.0, -0.9, 2.9, 2.1], [9.0, -0.8, 2.6, 2.0]];
+  lgLoft(sc, LG_BLACK, RS, { p: 4, n: 18 });
+  sc.push(vmChain(vmT(1.4, 0, 0), lgPivot(-0.4, -1.4, vmRx(o.hammerDown ? 0.8 : 0))));
+  sc.ext(VM_STEEL, [[-0.8, -0.6], [-1.3, 1.4], [-2.4, 2.8], [-3.6, 3.0], [-3.0, 2.1], [-2.3, 0.8], [-2.1, -1.0], [-0.8, -1.2]], 0.9);
+  sc.pop();
+  // canon : très long, gros, qui s'évase un peu à la bouche ; bandes de laiton tous les 14 cm
+  lgAt(sc, 0, 0.6, 8.0, () => sc.cyl(LG_GUNMETAL, 2.5, L - 8, { segs: 22, r2: 2.75 }));
+  for (let z = 10; z < L - 4; z += 14) lgAt(sc, 0, 0.6, z, () => sc.cyl(VM_BRASS, 2.7 + (z / L) * 0.25, 1.2, { segs: 22 }));
+  lgAt(sc, 0, 0.6, L - 1.4, () => sc.cyl(VM_BRASS, 3.05, 1.4, { segs: 22 }));
+  lgAt(sc, 0, 0.6, L - 0.05, () => sc.cyl(VM_DARK, 1.9, 0.14, { segs: 16 }));
+  lgAt(sc, 0, 3.4, L - 2.4, () => sc.ell(VM_BRASS, 0.42, 0.42, 0.42));
+  // long fût de chêne sous le canon, crosse
+  const FS = [[8, -2.6, 1.9, 2.6], [12, -2.9, 2.0, 2.7], [38, -2.9, 1.8, 2.5], [40, -2.6, 1.4, 2.1]];
+  lgLoft(sc, LG_WOOD, FS, { n: 18 });
+  lgGrain(sc, FS, 8.2, 39.6, 81, { n: 8 });
+  const SS = [[-1.2, -1.0, 2.7, 1.8], [-3.6, -2.1, 2.3, 1.6], [-8.5, -3.4, 2.4, 1.6], [-13, -4.7, 3.3, 1.8], [-19, -6.1, 4.5, 2.0], [-24, -7.2, 5.4, 2.1]];
+  lgLoft(sc, LG_WOOD, SS, { n: 18 });
+  lgGrain(sc, SS, -1.4, -23, 82, { n: 9 });
+  sc.tube(VM_STEEL, [[0, -3.4, 3.4], [0, -5.0, 3.0], [0, -6.0, 1.6], [0, -6.0, -0.4], [0, -5.2, -1.6], [0, -4.0, -2.0]], 0.32);
+  sc.ext(VM_STEEL, [[1.4, -3.4], [1.2, -4.6], [0.6, -5.3], [0.8, -4.5], [0.7, -3.4]], 0.45);
+  // rechargement par la bouche : la baguette qui dépasse
+  if (o.ramrod) lgAt(sc, 0, 0.6, L - 12, () => sc.cyl(LG_WOOD, 0.45, 12 + o.ramrod, { segs: 8 }));
+}
+
 // --- tenue : culasse posée sur le point b du canvas à la profondeur zb, bouche visée sur le point m du canvas (la
 // longueur du canon fixe sa profondeur) ; m est choisi pour que le canon reste à peu près parallèle au regard (il file
 // vers le viseur comme dans Doom et laisse voir le dessus de l'arme)
@@ -6303,6 +6552,8 @@ const LG_POSE = {
   pump: { b: [89, 116], zb: 25, m: [88, 52] },
   sharps: { b: [89, 118], zb: 31, m: [88, 54] },
   sawed: { b: [89, 120], zb: 28, m: [88, 66] },
+  harpoon: { b: [89, 122], zb: 28, m: [88, 72] },
+  puntgun: { b: [89, 118], zb: 24, m: [88, 50] },
 };
 // bouts des avant-bras (canvas x, y sous le bord bas, profondeur) : les bras sortent par le bas
 const LG_RARM = [112, 330, 12], LG_LARM = [20, 250, 28];
@@ -6321,6 +6572,8 @@ const LG_REL = {
   pump: [{ roll: 0.08, lift: 0.3, pitch: 0.02 }, { roll: 0.12, lift: 0.5, pitch: 0.03 }, { roll: 0.04, lift: 0.2, pitch: 0.01 }],
   sharps: [{ roll: -0.32, lift: 1.4, pitch: 0.04 }, { roll: -0.36, lift: 1.6, pitch: 0.05 }, { roll: -0.1, lift: 0.4, pitch: 0.02 }],
   sawed: [{ roll: 0, lift: 0.4, pitch: -0.1 }, { roll: 0, lift: 0.8, pitch: -0.12 }, { roll: 0, lift: 0.3, pitch: -0.05 }],
+  harpoon: [{ roll: -0.2, lift: 0.6, pitch: 0.12 }, { roll: -0.3, lift: 1.0, pitch: 0.16 }, { roll: -0.1, lift: 0.4, pitch: 0.06 }],
+  puntgun: [{ roll: 0.1, lift: -1.5, pitch: 0.16 }, { roll: 0.12, lift: -2.0, pitch: 0.2 }, { roll: 0.05, lift: -0.8, pitch: 0.08 }],
 };
 // Cartouche ou douille (taille réelle) dont la base est au point p du repère F de l'arme, axe d (repère arme)
 function lgCart(sc, F, p, d, kind) {
@@ -6332,7 +6585,7 @@ function lgCart(sc, F, p, d, kind) {
 
 function lgView(id, state, frame, skin, cloth) {
   const kind = id === 'goldwin' ? 'winchester' : id;
-  const P = LG_POSE[kind], spec = { winchester: LG_WIN, pump: LG_PUMP, sharps: LG_SHARPS, sawed: LG_SAWED }[kind];
+  const P = LG_POSE[kind], spec = { winchester: LG_WIN, pump: LG_PUMP, sharps: LG_SHARPS, sawed: LG_SAWED, harpoon: LG_HARP, puntgun: LG_PUNT }[kind];
   const fire = state === 'fire', rel = state === 'reload';
   const kick = fire ? (frame === 0 ? 1 : 0.3) : 0;
   const sc = vmScene();
@@ -6352,7 +6605,10 @@ function lgView(id, state, frame, skin, cloth) {
     o.seat = frame === 1 ? 0.45 : 1;
     o.hammerDown = fire && frame === 0 ? 2 : 0;
   } else o.hammerDown = fire && frame === 0;
-  ({ winchester: lgWinchester, pump: lgPump, sharps: lgSharps, sawed: lgSawed })[kind](sc, o);
+  // harpon : parti au coup de feu, renfoncé dans le canon pendant le rechargement ; canardière : la baguette
+  if (kind === 'harpoon') o.harpoon = fire ? 0 : rel ? [0, 0.35, 1][frame] : 1;
+  if (kind === 'puntgun') o.ramrod = rel ? [14, 6, 0][frame] : 0;
+  ({ winchester: lgWinchester, pump: lgPump, sharps: lgSharps, sawed: lgSawed, harpoon: lgHarpoon, puntgun: lgPunt })[kind](sc, o);
   const F = sc.top();
   sc.pop().pop();
 
@@ -6384,7 +6640,7 @@ function lgView(id, state, frame, skin, cloth) {
   if (fire) sc.fx((p) => {
     const pts = (kind === 'sawed' ? [[-1.22, 0, L + 0.8], [1.22, 0, L + 0.8]] : [[0, 0, L + 0.8]]).map((q) => vmP(F, q));
     const m = pts.map(vmProj).reduce((a, q) => [a[0] + q[0] / pts.length, a[1] + q[1] / pts.length], [0, 0]);
-    if (frame === 0) vmFlash(p, m[0], m[1], kind === 'sawed' ? 19 : kind === 'pump' ? 17 : kind === 'sharps' ? 16 : 14, kind.length);
+    if (frame === 0) vmFlash(p, m[0], m[1], kind === 'puntgun' ? 26 : kind === 'sawed' || kind === 'harpoon' ? 19 : kind === 'pump' ? 17 : kind === 'sharps' ? 16 : 14, kind.length);
     else vmSmoke(p, m[0], m[1] - 2, kind.length);
   });
   return vmRender(sc);
@@ -6899,35 +7155,72 @@ const VM_CASE = vmMatRamp(['#262030', '#4e4452', '#7a6c72', '#ae9682', '#f4e0c4'
 // taches de trempe (bleu, paille) sur la carcasse jaspée du Colt
 const VM_CASE_B = vmMatRamp(['#141a2a', '#2a3656', '#4a6090', '#7a98c8', '#e0ecff'], { spec: true });
 const VM_CASE_S = vmMatRamp(['#2a1c0e', '#5a3e1c', '#967036', '#cca45c', '#fff4cc'], { spec: true });
+// plaquettes d'ivoire (Peacemaker) ; acier noirci, os jauni et braise (pistolet du Diable : la braise est « émissive »,
+// une rampe toute claire qui luit même à l'ombre, en deux intensités pour la lueur qui pulse)
+const VM_IVORY = vmMatRamp(['#5a4c3a', '#9a8a6c', '#cfc2a2', '#ece4cc', '#fffaf0']);
+const VM_BLACK = vmMatRamp(['#0a080c', '#18121c', '#2a2232', '#443a50', '#9a8cae'], { spec: true });
+const VM_BONE = vmMatRamp(['#3a2c22', '#6a5844', '#a08a6c', '#cdb894', '#efe0c0']);
+const VM_EMBER = vmMatRamp(['#e0401a', '#f86a24', '#ff9a3a', '#ffc860', '#fff0a0'], { line: '#5a1408' });
+const VM_EMBER_LO = vmMatRamp(['#a01e10', '#c8341a', '#e85a26', '#ff8a3a', '#ffc070'], { line: '#4a1006' });
+// Finitions des revolvers : canon (oct : octogonal), barillet, carcasse, chien, détente, pontet, dos de crosse,
+// plaquettes (gripW : épaisseur), longueur du canon. ch : chambres du barillet (le LeMat en a neuf, autour de son
+// canon à chevrotine : shot) ; lever : levier de chargement à gauche (pas de baguette d'éjection) ; ring : anneau de
+// dragonne ; spur : chien à long éperon ; engrave : volutes d'or sur le dos de crosse ; devil : chien à cornes,
+// crâne au pommeau, braise, bouche évasée
+const VM_REV = {
+  colt: { steel: VM_BLUED, frame: VM_CASE, guard: VM_BRASS, strap: VM_BRASS, grip: VM_WALNUT, L: 16.4, mottle: true },
+  schofield: { nick: true, steel: VM_NICKEL, frame: VM_NICKEL, guard: VM_NICKEL, strap: VM_NICKEL, grip: VM_RUBBER, L: 17.5 },
+  // Peacemaker « Buntline » : canon de 10 pouces, nickelé et gravé, barillet, chien et détente dorés, ivoire épais
+  peacemaker: { steel: VM_NICKEL, frame: VM_NICKEL, cyl: VM_GOLD, hammer: VM_GOLD, trigger: VM_GOLD, guard: VM_NICKEL, strap: VM_NICKEL, grip: VM_IVORY, gripW: 3.3, L: 29.8, engrave: true },
+  diablo: { steel: VM_BLACK, frame: VM_BLACK, hammer: VM_BLACK, guard: VM_BLACK, strap: VM_BLACK, grip: VM_BONE, L: 18, devil: true },
+  lemat: { steel: VM_BLUED, frame: VM_BLUED, guard: VM_BLUED, strap: VM_BLUED, grip: VM_WALNUT, L: 21, ch: 9, shot: 12.5, oct: true, lever: true, ring: true, spur: true },
+};
+// couleurs de l'éclair et de la fumée du pistolet du Diable
+const VM_DEVIL_FLASH = ['#4a0a5a', '#9a1a7a', '#e0203a', '#ff7a5a', '#ffe8f0'], VM_DEVIL_SMOKE = ['#6a3a8a', '#9a6ab8', '#c8a0e0'];
+const VM_REV_IDS = Object.keys(VM_REV);
 function vmRevolver(sc, kind, o) {
-  const nick = kind === 'schofield';
-  const steel = nick ? VM_NICKEL : VM_BLUED, frame = nick ? VM_NICKEL : VM_CASE, hammerM = nick ? VM_NICKEL : VM_CASE;
-  const guard = nick ? VM_NICKEL : VM_BRASS, strap = nick ? VM_NICKEL : VM_BRASS, grip = nick ? VM_RUBBER : VM_WALNUT;
-  const L = nick ? 17.5 : 16.4;
+  const S = VM_REV[kind] || VM_REV.colt, nick = !!S.nick;
+  const steel = S.steel, frame = S.frame, hammerM = S.hammer || S.frame, cylM = S.cyl || steel;
+  const guard = S.guard, strap = S.strap, grip = S.grip, ember = o.glow ? VM_EMBER_LO : VM_EMBER;
+  const L = S.L, ch = S.ch || 6, cr = ch > 6 ? 1.22 : 1; // neuf chambres : barillet plus gros
+  const cy = -1.15 - (cr - 1) * 1.6; // axe du barillet
   // barillet (sorti du cadre pendant le rechargement du Schofield)
-  sc.push(vmChain(vmT(0, -1.15, 0.3), vmRz(o.spin || 0)));
+  sc.push(vmChain(vmT(0, cy, 0.3), vmRz(o.spin || 0), vmS(cr, cr, 1)));
   // barillet : arrière chanfreiné (prend la lumière vu de derrière), bague avant un peu plus large
-  sc.cyl(steel, 1.75, 0.5, { segs: 24, r2: 2.24 });
-  sc.push(vmT(0, 0, 0.5)).cyl(steel, 2.2, 3.5, { segs: 24, same: true }).pop();
-  sc.push(vmT(0, 0, 3.6)).cyl(steel, 2.26, 0.4, { segs: 24, same: true }).pop();
-  for (let k = 0; k < 6; k++) {
+  sc.cyl(cylM, 1.75, 0.5, { segs: 24, r2: 2.24 });
+  sc.push(vmT(0, 0, 0.5)).cyl(cylM, 2.2, 3.5, { segs: 24, same: true }).pop();
+  sc.push(vmT(0, 0, 3.6)).cyl(cylM, 2.26, 0.4, { segs: 24, same: true }).pop();
+  for (let k = 0; k < ch; k++) {
     // cannelures : sillons sombres entre les chambres, avec un liseré clair sur le bord éclairé
-    const a = (k / 6) * Math.PI * 2 + Math.PI / 6;
+    const a = (k / ch) * Math.PI * 2 + Math.PI / ch;
     sc.push(vmChain(vmT(Math.cos(a) * 2.12, Math.sin(a) * 2.12, 2.05), vmRz(a)));
-    sc.box(VM_DARK, 0.3, 0.72, 2.5);
+    sc.box(VM_DARK, 0.3, 0.72 * 6 / ch, 2.5);
     sc.pop();
     sc.push(vmChain(vmT(Math.cos(a + 0.2) * 2.2, Math.sin(a + 0.2) * 2.2, 2.05), vmRz(a + 0.2)));
-    sc.box(nick ? VM_NICKEL : VM_STEEL, 0.06, 0.14, 2.5);
+    sc.box(S.devil ? ember : nick ? VM_NICKEL : S.cyl ? VM_BRASS : VM_STEEL, S.devil ? 0.12 : 0.06, 0.14, 2.5);
     sc.pop();
   }
-  if (o.rounds) for (let k = 0; k < 6; k++) {
+  if (o.rounds) for (let k = 0; k < ch; k++) {
     // culots des cartouches à l'arrière du barillet
-    const a = (k / 6) * Math.PI * 2;
-    sc.push(vmT(Math.cos(a) * 1.25, Math.sin(a) * 1.25, -0.25));
-    sc.cyl(k < o.rounds ? VM_BRASS : VM_DARK, 0.55, 0.3, { segs: 10 });
+    const a = (k / ch) * Math.PI * 2;
+    sc.push(vmT(Math.cos(a) * 1.3, Math.sin(a) * 1.3, -0.25));
+    sc.cyl(k < o.rounds * ch / 6 ? (S.devil ? ember : VM_BRASS) : VM_DARK, 0.55 * (ch > 6 ? 0.8 : 1), 0.3, { segs: 10 });
     sc.pop();
   }
   sc.pop();
+  if (S.shot) {
+    // LeMat : le gros canon à chevrotine, dans l'axe du barillet (qui tourne autour), sa bague, sa bouche, et la
+    // patte qui le relie au canon du dessus
+    sc.push(vmT(0, cy, 0.2)); sc.cyl(steel, 1.05, S.shot, { segs: 16 }); sc.pop();
+    sc.push(vmT(0, cy, S.shot - 1.0)); sc.cyl(steel, 1.2, 0.8, { segs: 16 }); sc.pop();
+    sc.push(vmT(0, cy, S.shot + 0.1)); sc.cyl(VM_DARK, 0.66, 0.12, { segs: 12 }); sc.pop();
+    sc.push(vmT(0, cy / 2, S.shot - 0.6)); sc.box(steel, 0.9, -cy, 1.0); sc.pop();
+  }
+  if (S.devil) {
+    // pistolet du Diable : bagues de braise le long du canon, bouche évasée
+    for (const z of [6, 10.5, 15]) { sc.push(vmT(0, 0, z)); sc.cyl(ember, 0.88, 0.3, { segs: 14 }); sc.pop(); }
+    sc.push(vmT(0, 0, L - 1.6)); sc.cyl(steel, 0.8, 1.6, { r2: 1.25, segs: 14 }); sc.pop();
+  }
   // carcasse : bouclier derrière le barillet, pont supérieur, avant du cadre
   sc.ext(frame, [[0.3, 1.25], [-0.7, 1.25], [-1.4, 0.45], [-2.2, -2.6], [-1.6, -3.5], [0.3, -3.6]], 2.7);
   sc.push(vmT(0, 1.0, 2.1)); sc.box(frame, 1.5, 0.75, 4.6, { same: true }); sc.pop();
@@ -6938,33 +7231,70 @@ function vmRevolver(sc, kind, o) {
     sc.push(vmT(0, 1.55, -0.2)); sc.box(VM_NICKEL, 1.6, 0.6, 1.1); sc.pop();
     for (const x of [-0.42, 0.42]) { sc.push(vmT(x, 1.98, -0.3)); sc.box(VM_NICKEL, 0.42, 0.34, 0.5); sc.pop(); }
   } else {
-    // taches de trempe sur le dessus et l'arrière du cadre, hausse à cran au bout du pont
-    for (const [x, y, z, w, d, m] of [[-0.35, 1.39, 1.2, 0.6, 1.2, VM_CASE_B], [0.4, 1.39, 3.1, 0.5, 1.0, VM_CASE_S], [0.1, 1.39, 3.9, 0.7, 0.6, VM_CASE_B]]) {
+    // taches de trempe sur le dessus et l'arrière du cadre (Colt), hausse à cran au bout du pont
+    if (S.mottle) for (const [x, y, z, w, d, m] of [[-0.35, 1.39, 1.2, 0.6, 1.2, VM_CASE_B], [0.4, 1.39, 3.1, 0.5, 1.0, VM_CASE_S], [0.1, 1.39, 3.9, 0.7, 0.6, VM_CASE_B]]) {
       sc.push(vmT(x, y, z)); sc.box(m, w, 0.02, d, { same: true }); sc.pop();
     }
-    for (const x of [-0.45, 0.45]) { sc.push(vmT(x, 1.5, -0.35)); sc.box(VM_CASE, 0.4, 0.3, 0.5); sc.pop(); }
+    for (const x of [-0.45, 0.45]) { sc.push(vmT(x, 1.5, -0.35)); sc.box(frame, 0.4, 0.3, 0.5); sc.pop(); }
   }
-  // canon, logement de la baguette d'éjection (plus fin, plus court, sous le canon à droite), guidon
-  sc.push(vmT(0, 0, 4.4)); sc.cyl(steel, 0.8, L - 4.4, { segs: 14 }); sc.pop();
-  sc.push(vmT(0, 0, L - 0.05)); sc.cyl(VM_DARK, 0.42, 0.12, { segs: 10 }); sc.pop();
-  if (!nick) {
+  // canon (octogonal pour le LeMat), logement de la baguette d'éjection (plus fin, plus court, sous le canon à
+  // droite) ou levier de chargement à gauche (LeMat), guidon
+  if (S.oct) { sc.push(vmChain(vmT(0, 0, 4.4), vmRz(Math.PI / 8))); lgPrism(sc, steel, 0.88, L - 4.4, 8); sc.pop(); }
+  else { sc.push(vmT(0, 0, 4.4)); sc.cyl(steel, 0.8, L - 4.4, { segs: 14 }); sc.pop(); }
+  sc.push(vmT(0, 0, L - 0.05)); sc.cyl(VM_DARK, S.devil ? 0.62 : 0.42, 0.12, { segs: 10 }); sc.pop();
+  if (S.lever) {
+    sc.push(vmT(-1.0, -0.55, 6)); sc.cyl(steel, 0.28, 7.5, { segs: 8 }); sc.pop();
+    sc.push(vmT(-1.0, -0.55, 13.5)); sc.ell(steel, 0.42, 0.42, 0.42); sc.pop();
+  } else if (!nick) {
     sc.push(vmT(0.7, -1.0, 5.0)); sc.cyl(steel, 0.38, 8.4, { segs: 10 }); sc.pop();
     sc.push(vmT(0.7, -1.0, 13.4)); sc.ell(steel, 0.5, 0.5, 0.4); sc.pop();
   } else {
     sc.push(vmT(0, -0.95, 4.4)); sc.cyl(steel, 0.45, 2.6, { segs: 10 }); sc.pop();
   }
   sc.ext(steel, [[L - 1.3, 0.6], [L - 0.4, 0.6], [L - 0.5, 1.45], [L - 1.0, 1.45]], 0.3);
-  // chien (relevé), détente, pontet
-  if (o.hammer) sc.ext(hammerM, [[-0.5, 0.6], [-0.9, 1.9], [-1.8, 2.5], [-2.15, 2.15], [-1.5, 1.4], [-1.2, 0], [-0.5, -0.2]], 0.85);
+  // chien (relevé, ou abattu au coup ; LeMat : long éperon, le nez-sélecteur basculé vers le bas pour la chevrotine),
+  // détente, pontet
+  sc.push(vmChain(vmT(0, 0.2, -0.6), vmRx(o.selector ? -0.35 : 0), vmT(0, -0.2, 0.6)));
+  if (S.spur) sc.ext(hammerM, [[-0.4, 0.8], [-0.7, 1.9], [-1.8, 2.6], [-3.0, 3.0], [-3.2, 2.6], [-1.9, 1.9], [-1.4, 0.2], [-0.5, 0.0]], 0.9);
+  else if (o.hammer) sc.ext(hammerM, [[-0.5, 0.6], [-0.9, 1.9], [-1.8, 2.5], [-2.15, 2.15], [-1.5, 1.4], [-1.2, 0], [-0.5, -0.2]], 0.85);
   else sc.ext(hammerM, [[-0.4, 1.0], [-0.6, 1.75], [-1.5, 2.0], [-1.9, 1.7], [-1.5, 1.2], [-1.4, 0.2], [-0.5, 0.2]], 0.85);
-  sc.ext(VM_STEEL, [[0.9, -3.6], [0.7, -4.6], [0.15, -5.15], [0.35, -4.3], [0.25, -3.6]], 0.45);
+  if (S.devil) {
+    // deux cornes d'os qui se recourbent de part et d'autre de la crête du chien
+    for (const sx of [-1, 1]) sc.tube(VM_BONE, [[sx * 0.3, 1.85, -1.7], [sx * 0.75, 2.25, -1.95], [sx * 0.95, 2.7, -1.75], [sx * 0.85, 3.0, -1.4]], 0.2, { segs: 6 });
+  }
+  sc.pop();
+  sc.ext(S.trigger || VM_STEEL, [[0.9, -3.6], [0.7, -4.6], [0.15, -5.15], [0.35, -4.3], [0.25, -3.6]], 0.45);
   sc.tube(guard, [[0, -3.75, 2.9], [0, -4.95, 2.65], [0, -5.7, 1.7], [0, -5.75, 0.2], [0, -5.1, -0.8], [0, -4.2, -1.15]], 0.34);
   // crosse : plaquettes et dos de crosse
   sc.ext(grip, [[-0.5, -3.5], [-1.9, -3.5], [-2.9, -4.7], [-3.9, -7.4], [-4.5, -10.4], [-4.3, -11.6], [-2.2, -11.9],
-    [-1.1, -10.8], [-0.85, -8.0], [-0.4, -5.6], [0.4, -4.4]], 2.9);
+    [-1.1, -10.8], [-0.85, -8.0], [-0.4, -5.6], [0.4, -4.4]], S.gripW || 2.9);
   sc.ext(strap, [[-1.9, -3.4], [-2.4, -3.4], [-3.3, -4.6], [-4.4, -7.4], [-5.0, -10.4], [-4.8, -12.1],
     [-4.2, -12.0], [-4.4, -10.4], [-3.8, -7.4], [-2.8, -4.7]], 1.9);
   sc.push(vmT(0, -11.95, -3.2)); sc.box(strap, 1.9, 0.5, 2.6, { same: true }); sc.pop();
+  if (S.engrave) {
+    // volutes d'or sur le dos de crosse (la face qu'on voit de derrière) : une tige qui ondule et ses enroulements
+    const back = [[-2.45, -3.5], [-3.35, -4.7], [-4.45, -7.4], [-5.05, -10.4], [-4.85, -11.9]];
+    for (let i = 0; i <= 26; i++) {
+      const t = (i / 26) * (back.length - 1), k = Math.min(back.length - 2, Math.floor(t)), f = t - k;
+      const z = back[k][0] + (back[k + 1][0] - back[k][0]) * f - 0.04, y = back[k][1] + (back[k + 1][1] - back[k][1]) * f;
+      const x = Math.sin(i * 0.9) * 0.55;
+      sc.push(vmT(x, y, z)); sc.box(VM_GOLD, 0.26, 0.26, 0.1, { same: i > 0 }); sc.pop();
+      if (i % 5 === 2) { sc.push(vmT(x + (x > 0 ? -0.3 : 0.3), y - 0.2, z)); sc.box(VM_GOLD, 0.2, 0.2, 0.1, { same: true }); sc.pop(); }
+    }
+  }
+  if (S.devil) {
+    // crâne au pommeau, tourné vers l'arrière (vers nous) : orbites de braise, narines sombres
+    sc.push(vmT(0, -12.7, -3.6)); sc.ell(VM_BONE, 1.25, 1.1, 1.2); sc.pop();
+    sc.push(vmT(0, -13.5, -3.9)); sc.box(VM_BONE, 1.4, 0.7, 1.2); sc.pop();
+    for (const sx of [-0.45, 0.45]) { sc.push(vmT(sx, -12.6, -4.75)); sc.ell(ember, 0.32, 0.36, 0.12); sc.pop(); }
+    sc.push(vmT(0, -13.25, -4.72)); sc.ell(VM_DARK, 0.16, 0.22, 0.1); sc.pop();
+  }
+  if (S.ring) {
+    // anneau de dragonne sous le pommeau
+    const ring = [];
+    for (let i = 0; i <= 16; i++) { const a = (i / 16) * Math.PI * 2; ring.push([0, -12.85 + Math.cos(a) * 0.65, -3.2 + Math.sin(a) * 0.65]); }
+    sc.tube(VM_STEEL, ring, 0.14, { segs: 6 });
+  }
   if (o.gate) {
     // portière ouverte (dessinée du côté que montre le rechargement) : encoche sombre dans le bouclier, culot de la
     // cartouche dans la chambre, volet rabattu vers l'extérieur
@@ -6978,15 +7308,24 @@ const VM_REV_GRIP = { b: [0, -11.0, -3.1], t: [0, -4.9, -1.25], trigger: [0, -4.
 
 function vmRevolverView(id, state, frame, skin, cloth) {
   const sc = vmScene();
-  const fire = state === 'fire', rel = state === 'reload';
-  const kick = fire ? (frame === 0 ? 1 : 0.35) : 0;
+  // alt : le canon à chevrotine du LeMat (recul plus fort, l'arme part en arrière et roule) ; fan : Peacemaker couché
+  // vers la gauche, la paume gauche frappe le chien (0 : main levée devant le chien, 1 : le talon de la paume l'abat)
+  // shell : LeMat canon relevé, la main gauche enfonce une cartouche de chevrotine par la bouche du canon du dessous
+  // (il se charge par la bouche, comme le vrai) : 0 la cartouche arrive au-dessus de la bouche, 1 elle est à moitié entrée
+  const alt = state === 'alt', fan = state === 'fan', fire = state === 'fire' || alt || fan, shell = state === 'shell';
+  const rel = state === 'reload';
+  const S = VM_REV[id] || VM_REV.colt;
+  const kick = fire ? (frame === 0 ? (alt ? 2.2 : 1) : alt ? 0.6 : 0.35) : 0;
   // tenue : main droite basse à droite, canon vers le viseur ; recul = le canon se relève autour de la main
-  let hold = vmChain(vmHold(0.27, -10.9, 22.6, 0), vmRx(0.08), vmT(0, -8, -2), vmRx(-0.13 * kick), vmT(0, 8, 2 - 0.5 * kick));
+  let hold = vmChain(vmHold(0.27, -10.9, 22.6, alt ? 0.06 * kick : 0), vmRx(0.08), vmT(0, -8, -2), vmRx(-0.13 * kick), vmT(0, 8, 2 - 0.5 * kick - (alt ? 1.2 * kick / 2.2 : 0)));
+  if (fan) hold = vmChain(vmHold(3.2, -18.5, 26, 0.35), vmRy(-0.1), vmT(0, -8, -2), vmRx(-0.1 * (frame ? 0.4 : 1)), vmT(0, 8, 2));
   if (rel) {
     // rechargement : l'arme se relève canon en l'air et bascule vers le centre, flanc gauche et barillet face à nous
     const t = [0.75, 0.9, 0.4][frame] ?? 1;
     hold = vmChain(vmHold(0.27 - 0.9 * t, -11.8 - 2.5 * t, 23.5 + 3.6 * t, -0.55 * t), vmRy(-0.2 * t), vmT(0, -8, -2), vmRx(-0.3 * t), vmT(0, 8, 2));
   }
+  // cartouche de chevrotine : couché sur le flanc, canon à peine relevé, la bouche du canon du dessous en vue
+  if (shell) hold = vmChain(vmHold(0.5, -17.5, 31, -0.42), vmRy(-0.3), vmT(0, -8, -2), vmRx(0.04), vmT(0, 8, 2));
   sc.push(hold);
   const G = VM_REV_GRIP;
   if (id === 'schofield' && rel) {
@@ -6994,14 +7333,39 @@ function vmRevolverView(id, state, frame, skin, cloth) {
     sc.push(vmChain(vmT(0, -3.4, 4.8), vmRx(0.6 * (frame === 1 ? 1 : 0.7)), vmT(0, 3.4, -4.8)));
     vmRevolver(sc, id, { rounds: frame + 3 });
     sc.pop();
-  } else vmRevolver(sc, id, { rounds: rel ? 2 + frame * 2 : 0, spin: rel ? frame * 0.5 : 0, hammer: fire && frame === 1, gate: rel ? (frame === 0 ? 'empty' : 'full') : null });
-  vmGrip(sc, G.b, G.t, { skin, cloth, rx: 1.45, rz: 1.35, web: 2.2, trigger: G.trigger, thumb: G.thumb, arm: [1, -36, -16] });
+  } else vmRevolver(sc, id, { rounds: rel ? 2 + frame * 2 : shell ? 6 : 0, spin: rel ? frame * 0.5 : fan ? frame * 0.7 : 0, hammer: (fire && frame === 1) || (fan && frame === 0), selector: alt || shell, glow: state === 'idle' && frame === 1, gate: rel ? (frame === 0 ? 'empty' : 'full') : null });
+  vmGrip(sc, G.b, G.t, { skin, cloth, rx: 1.45, rz: 1.35, web: 2.2, trigger: G.trigger, thumb: fan ? 'up' : G.thumb, arm: [1, -36, -16] });
+  if (fan) {
+    // main gauche à plat, paume tournée vers le chien : devant lui, puis le talon de la paume posé sur l'éperon
+    const P = frame === 0 ? [2.5, 3.8, 1.5] : [-0.4, 3.4, -2.4];
+    vmGrip(sc, vmAdd(P, [-5.5, 0.4, -1.0]), P, { skin, cloth, side: -1, curl: 0.08, rx: 0.6, rz: 0.6, fwd: [0, -1, 0.2], arm: vmAdd(P, [-18, -24, -12]) });
+  }
   if (fire) sc.fx((p, proj) => {
-    const [mx, my] = proj([0, 0, (id === 'schofield' ? 17.5 : 16.4) + 0.6]);
-    if (frame === 0) vmFlash(p, mx, my, 15, 3);
-    else vmSmoke(p, mx, my - 2, 1);
+    const cy = -1.15 - ((S.ch || 6) > 6 ? 0.22 * 1.6 : 0);
+    const [mx, my] = proj(alt ? [0, cy, S.shot + 1.2] : [0, 0, S.L + 0.6]);
+    if (alt) {
+      // chevrotine : trois éclairs en gerbe et les plombs qui partent ; puis une fumée épaisse
+      if (frame === 0) {
+        vmFlash(p, mx - 6, my - 2, 12, 9); vmFlash(p, mx + 6, my - 1, 12, 4); vmFlash(p, mx, my, 21, 6);
+        const rand = rng(17);
+        for (let k = 0; k < 9; k++) { const a = rand() * Math.PI * 2, d = 14 + rand() * 12; p.R(Math.round(mx + Math.cos(a) * d), Math.round(my + Math.sin(a) * d * 0.6), 2, 2, '#3a3a40'); }
+      } else { vmSmoke(p, mx - 3, my - 2, 1); vmSmoke(p, mx + 3, my - 1, 4); vmSmoke(p, mx, my - 5, 7); }
+    } else if (frame === 0) vmFlash(p, mx, my, 15, 3, S.devil ? VM_DEVIL_FLASH : undefined);
+    else vmSmoke(p, mx, my - 2, 1, S.devil ? VM_DEVIL_SMOKE : undefined);
   });
   sc.pop();
+  if (shell) {
+    // main gauche : la cartouche rouge, culot de laiton en avant, enfoncée dans la bouche du canon à chevrotine ; les
+    // doigts tiennent son bout, de l'autre côté de la bouche (plus loin que l'arme : la main reste petite)
+    const S2 = VM_REV.lemat, cy = -1.15 - 0.22 * 1.6, gap = frame === 0 ? 3.5 : -2.6;
+    const at = [0, cy, S2.shot + gap], cart = vmP(hold, vmAdd(at, [0, 0, 5.6])), ax = vmUnit(vmSub(vmP(hold, at), cart));
+    sc.push(vmAlong(cart, vmAdd(cart, ax)));
+    lgRound(sc, 'shell');
+    sc.pop();
+    vmGrip(sc, vmSub(cart, vmK(ax, 3.0)), vmSub(cart, vmK(ax, 0.4)), {
+      skin, cloth, side: -1, rx: 0.95, rz: 0.95, fwd: vmUnit(vmCross([0, 1, 0], ax)), curl: 0.75, arm: [-9, -42, 42],
+    });
+  }
   if (rel && frame < 2) {
     // main gauche : une cartouche entre le pouce et l'index, poussée dans la chambre de gauche du barillet
     const back = frame === 0 ? 4.5 : 1.2;
@@ -7018,21 +7382,48 @@ function vmRevolverView(id, state, frame, skin, cloth) {
   return vmRender(sc);
 }
 
+// Armes en main dessinées hors de ce fichier (js/fpsvm/*.js) : chaque module s'enregistre ici avec une fonction
+// (id, state, frame, skin, cloth) → canvas 200x130 ou null si l'id n'est pas à lui. VMK : la boîte à outils 3D.
+const VM_EXTRA = [];
+export function registerViewModel(fn) { VM_EXTRA.push(fn); }
+
 export function viewModel(id, state, frame, skin, cloth) {
   return memo(`vm3:${id}:${state}:${frame}:${skin}:${cloth}`, () => {
-    // armes blanches (melee.js), armes longues (longguns3d.js), divers (misc3d.js) : null si l'id n'est pas à eux
+    // armes blanches (melee.js), armes longues (longguns3d.js), divers (misc3d.js), modules js/fpsvm/ : null si l'id n'est pas à eux
     for (const f of [typeof knViewModel === 'function' && knViewModel, typeof lgViewModel === 'function' && lgViewModel,
-      typeof msViewModel === 'function' && msViewModel]) {
+      typeof msViewModel === 'function' && msViewModel, ...VM_EXTRA.map((g) => (...a) => {
+        try { return g(...a); } catch (e) { console.error('viewModel', id, state, frame, e); return null; }
+      })]) {
       const k = f && f(id, state, frame, skin, cloth);
       if (k) return k;
     }
     switch (id) {
-      case 'colt': case 'schofield':
-        return vmRevolverView(id, state === 'fire' || state === 'reload' ? state : 'idle', state === 'fire' ? frame % 2 : state === 'reload' ? frame % 3 : 0, skin, cloth);
+      case 'colt': case 'schofield': case 'peacemaker': case 'diablo': case 'lemat': {
+        const st = state === 'fire' || state === 'reload' || ((state === 'alt' || state === 'shell') && id === 'lemat') || (state === 'fan' && id === 'peacemaker') ? state : 'idle';
+        // le pistolet du Diable luit au repos (2 images : la braise pulse)
+        const f = st === 'fire' || st === 'alt' || st === 'fan' || st === 'shell' ? frame % 2 : st === 'reload' ? frame % 3 : id === 'diablo' ? frame % 2 : 0;
+        return vmRevolverView(id, st, f, skin, cloth);
+      }
       default: return checker(160, 120);
     }
   });
 }
+
+// Boîte à outils des armes en main, pour les modules de js/fpsvm/ (lecture seule)
+export const VMK = {
+  VM_W, VM_H, VM_X0, VM_Y0, VM_F, vmI, vmMul, vmChain, vmT, vmS, vmRx, vmRy, vmRz, vmP, vmAdd, vmSub, vmK, vmDot,
+  vmCross, vmLen, vmUnit, vmLerp, vmNormalMat, vmNM, VM_TILT, VM_DIP, vmHold, vmAim, vmAlong, vmProj, vmRgb,
+  vmMatRamp, vmMat, VM_STEEL, VM_BLUED, VM_NICKEL, VM_BRASS, VM_GOLD, VM_WALNUT, VM_STAG, VM_RUBBER, VM_LEATHER,
+  VM_PAPER, VM_FUSE, VM_DARK, vmScene, vmQuad, vmBoxTris, vmCylTris, vmEllTris, vmExtTris, vmRender, vmHand, vmFlash,
+  vmSmoke, knFrame, knInv, knLoft, KN_STEEL, KN_STEEL_HI, KN_STEEL_LO, KN_STEELS, knSpeckle, knHand, knStreak,
+  knTomahawk, knSaber, knBowie, knPose, knHold, KN_POSES, LG_K, LG_CASE, LG_WOOD, LG_GRAIN, LG_GLOW, LG_ENGRAVE,
+  LG_BLACK, LG_GUNMETAL, LG_LEAD, LG_SHELL, lgPrism, lgSE, lgLoft, lgStn, lgSurf, lgStrip, lgGrain, lgMottle,
+  lgEngraveTop, lgAt, lgPlate, lgPivot, lgHandAt, lgRound, lgHammer, LG_WIN, lgWinchester, LG_PUMP, lgPump,
+  LG_SHARPS, lgSharps, LG_SAWED, lgSawed, LG_POSE, LG_RARM, LG_LARM, lgUn, lgPose, LG_REL, lgCart, lgView, MS_PEARL,
+  MS_LABEL, MS_REIN, MS_IRON, MS_TAU, msStrap, msToLocal, msSag, msFlashR, msIn, msSparks, msPuff, msStick,
+  msDynHold, msFuseFx, msDynamiteView, msDerringer, msGatling, vmInv, vmGrip, VM_CASE, VM_CASE_B, VM_CASE_S,
+  vmRevolver, VM_REV_GRIP, vmRevolverView, memo, canvas, sprite, clamp, hash, OUT, shade, mix,
+};
 
 // ------------------------------------------------------------------ 5) objets à ramasser  6) décor  7) effets
 // Origine des sprites au centre du bas (x vers la droite, y négatif vers le haut ; la rangée y = 0 est le sol).
@@ -7438,9 +7829,40 @@ function prGold() {
   });
 }
 
+// Piège à loup posé au sol, vu de biais : ouvert (mâchoires à plat, dents en l'air, ressorts de part et d'autre),
+// ou refermé (les deux mâchoires dressées, dents croisées)
+function prTrap(shut) {
+  return sprite(32, 12, (p) => {
+    const { R, P } = p;
+    const I = PR_IRON;
+    // ressorts plats de part et d'autre, et la palette au milieu
+    R(-15, -2, 7, 2, I[2]); R(-15, -2, 7, 1, I[3]); R(8, -2, 7, 2, I[2]); R(8, -2, 7, 1, I[3]);
+    P(-15, -3, I[4]); P(14, -3, I[4]);
+    if (!shut) {
+      // mâchoires ouvertes : deux demi-cercles à plat, dents qui pointent vers le centre
+      for (let i = 0; i <= 16; i++) {
+        const a = (i / 16) * Math.PI, x = Math.round(Math.cos(a) * 8), y = Math.round(-2 - Math.sin(a) * 3);
+        P(x, y, I[3]); P(x, -2 + (y + 2) * -0.4 | 0, I[2]);
+      }
+      for (let x = -6; x <= 6; x += 2) { P(x, -4, I[5]); P(x, -1, I[4]); }
+      R(-2, -3, 4, 2, PR_BRASS[2]); // la palette (laiton terni)
+    } else {
+      // refermé : arche des deux mâchoires dressées, dents croisées sur le dessus
+      for (let i = 0; i <= 16; i++) {
+        const a = (i / 16) * Math.PI, x = Math.round(Math.cos(a) * 7), y = Math.round(-1 - Math.sin(a) * 7);
+        P(x, y, I[3]); P(x, y + 1, I[2]);
+      }
+      for (let x = -5; x <= 5; x += 2) { P(x, -8 + Math.abs(x) / 3 | 0, I[5]); P(x + 1, -7 + Math.abs(x) / 3 | 0, I[4]); }
+      R(-8, -2, 17, 2, I[1]);
+    }
+    // la chaîne qui part sur le côté
+    for (let k = 0; k < 4; k++) P(-16 + k * 2, -1 + (k % 2), I[k % 2 ? 2 : 4]);
+  });
+}
 const PR_PICKUPS = {
   crate: prCrate, ammo: prAmmo, whisky: prWhisky, bandage: prBandage, vest: prVest, dynamite: prDynamite,
   star: prStar, gatling: prGatling, akimbo: prAkimbo, goldwin: prGoldWin, gold: prGold,
+  trapSet: () => prTrap(false), trapShut: () => prTrap(true),
 };
 export function pickupSprite(id) {
   const make = PR_PICKUPS[id];
@@ -8939,6 +9361,34 @@ function prFlash(f) {
 
 // Flammes 24x32 (base en bas) : langues qui ondulent d'une image à l'autre, cœur blanc-jaune, liseré rouge sombre,
 // escarbilles au-dessus (feu de lanterne, d'huile ou de foin)
+// Cocktail en vol : bouteille verte qui tournoie, chiffon enflammé au goulot
+function prMolFly(f) {
+  return sprite(16, 16, (p) => {
+    const g = prGrid(4, 12);
+    g.R(1, 0, 2, 2, 'c'); g.R(1, 2, 2, 3, 'n'); g.R(0, 5, 4, 7, 'g'); g.R(0, 5, 1, 7, 'l'); g.R(3, 5, 1, 7, 'd'); g.R(1, 7, 2, 3, 'e');
+    const a = (f * Math.PI) / 4 + 0.6;
+    prBlit(p, [prRot(g, { c: '#e8d8b0', n: '#3e6a34', g: '#4a7a3c', l: '#7aaa5a', d: '#2a4a24', e: '#c8a048' }, 0, -7, a, 2, 6)]);
+    // la flamme du chiffon, au bout du goulot
+    const sx = Math.round(Math.sin(a) * 6), sy = Math.round(-7 - Math.cos(a) * 6);
+    p.R(sx - 1, sy - 2, 3, 3, '#f87818'); p.P(sx, sy - 1, '#fff070'); p.P(sx + (f % 2 ? 1 : -1), sy - 3, '#f8b830');
+  });
+}
+// Nœud de lasso serré autour de la taille d'une cible prise (ellipse de corde vue de face)
+function prLoop(f) {
+  return sprite(28, 10, (p) => {
+    const cols = ['#6a5028', '#9a7a44', '#c8a868'];
+    for (let i = 0; i < 40; i++) {
+      const a = (i / 40) * Math.PI * 2, x = Math.cos(a) * 12, y = -4 + Math.sin(a) * 3;
+      p.R(Math.round(x), Math.round(y), 2, 1, cols[Math.sin(a) > 0 ? 2 : (i + f) % 2]);
+    }
+    // la corde qui part vers le lanceur
+    for (let k = 0; k < 4; k++) p.P(10 + k, -6 - (k + f) % 2, '#9a7a44');
+  });
+}
+// Un nœud de corde vu de loin (0 : chanvre du lasso, 1 : câble goudronné du harpon)
+function prRopeDot(f) {
+  return sprite(4, 4, (p) => { p.R(-1, -3, 3, 3, f ? '#5a4a3a' : '#b48a52'); p.P(-1, -3, f ? '#8a7a68' : '#e0c08a'); });
+}
 function prFlame(f) {
   return sprite(24, 32, (p) => {
     const r = rng(700 + f);
@@ -8962,7 +9412,7 @@ function prBall() {
   });
 }
 
-const PR_FX = { dynFly: [4, prDynFly], boom: [5, prBoom], blood: [3, prBlood], dust: [3, prDust], smoke: [3, prSmoke], flash: [2, prFlash], flame: [4, prFlame], ball: [1, prBall] };
+const PR_FX = { dynFly: [4, prDynFly], boom: [5, prBoom], blood: [3, prBlood], dust: [3, prDust], smoke: [3, prSmoke], flash: [2, prFlash], flame: [4, prFlame], ball: [1, prBall], molFly: [4, prMolFly], loop: [2, prLoop], ropeDot: [2, prRopeDot] };
 export function fxSprite(id, frame = 0) {
   const d = PR_FX[id];
   if (!d) return checker(16, 16);

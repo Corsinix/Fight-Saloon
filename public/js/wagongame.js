@@ -36,7 +36,7 @@ export const STAGES = [
   { id: 'prairie', view: 'side', t0: 0, name: 'LA PRAIRIE' },
   { id: 'canyon', view: 'in', t0: 21000, name: 'LE CANYON', sub: 'ILS ARRIVENT DEVANT ET DERRIÈRE !' },
   { id: 'camp', view: 'side', t0: 42000, name: 'LE CAMPEMENT' },
-  { id: 'bart', view: 'in', t0: 63000, name: 'LA BANDE À BLACK BART', sub: 'TIENS BON JUSQU\'À RED ROCK !' },
+  { id: 'bart', view: 'in', t0: 63000, name: 'LA BANDE À BLACK BART', sub: 'LES HOMMES D\'EL DIABLO : TIENS BON JUSQU\'À RED ROCK !' },
 ];
 STAGES.forEach((s, i) => { s.i = i; s.t1 = STAGES[i + 1]?.t0 ?? MODES.wagon.duration; });
 export function stageAt(t) {

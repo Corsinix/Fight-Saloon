@@ -42,7 +42,7 @@ export const STAGES = [
   { id: 'inonde', name: 'LA GALERIE INONDÉE', from: 0.39, cam: 'back', drag: 0.88 },
   { id: 'gouffre', name: 'LE GOUFFRE', from: 0.52, cam: 'wide' },
   { id: 'filon', name: 'LE FILON D\'OR', from: 0.65, cam: 'back', slope: true },
-  { id: 'grisou', name: 'LA GALERIE EN FEU', from: 0.78, cam: 'back' },
+  { id: 'grisou', name: 'LA FOURNAISE D\'EL DIABLO', from: 0.78, cam: 'back' },
   { id: 'sortie', name: 'LA SORTIE', from: 0.9, cam: 'back' },
 ];
 export function stageAt(wx) {

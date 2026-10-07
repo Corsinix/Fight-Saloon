@@ -94,7 +94,11 @@ Une table accueille jusqu'à 6 joueurs. Dans le lobby, l'hôte choisit le jeu : 
 
 ### Fusillade (rail shooter, 2 min 30)
 
-La caméra avance toute seule. On descend du train à la **gare** de Dusty Gulch (bâtiment, château d'eau, train à quai : bandits aux fenêtres, aux portes et sur le toit des wagons), on traverse **les abords de la ville**, puis la grand-rue, et on pousse les portes battantes du saloon, au bout de la rue, pour le face-à-face avec El Diablo.
+La caméra avance toute seule. On descend du train à la **gare** de Dusty Gulch (bâtiment, château d'eau, train à quai : bandits aux fenêtres, aux portes et sur le toit des wagons), on traverse **les abords de la ville**, puis la grand-rue, et on affronte El Diablo dans son repaire, tiré au sort à chaque partie (`lairOf` dans `public/js/worlds.js` ; `mini-test.html?game=shooter&lair=mine` pour en imposer un) :
+
+- **Le saloon** : on pousse les portes battantes au bout de la rue ; El Diablo arpente le balcon.
+- **La mine abandonnée** : galeries à l'étage, passerelle sur ses palées, trémie à minerai, wagonnet renversé, lanternes (on peut les abattre) et chauves-souris. El Diablo roule en **wagonnet** d'un bout à l'autre de la passerelle (des étincelles jaillissent des roues quand il file) et lance de la **dynamite** toutes les 5 à 7 s. Au lieu de la panne de lumière, **les lampes s'éteignent**.
+- **La poursuite** : El Diablo saute en selle et s'enfuit ; on le poursuit au galop dans le désert (saguaros, buttes), puis dans un canyon de grès rouge. Le décor défile, sa bande galope à nos côtés et nous tire dessus (cavaliers qui nous rattrapent ou se laissent distancer, +150), et **la bande d'El Diablo** nous double d'un coup. Lui zigzague au galop sur son cheval noir, se retourne pour tirer et jette de la dynamite derrière lui.
 Le train change à chaque partie : voitures de voyageurs, wagons de marchandises (grande porte coulissante, lucarnes) et wagons à bestiaux (bœufs derrière la claire-voie).
 Les abords de la ville sont tirés au sort parmi trois variantes (`public/js/shooteredge.js`), chacune avec son coup dur :
 
@@ -109,7 +113,7 @@ Les bandits surgissent des fenêtres, des portes, des toits et de derrière les 
 - Bandit +100 · bandit sur un toit ou dans le clocher +150 · cavalier +150 · bâton de dynamite abattu en vol +75 · bouteille +50 · El Diablo +50 par balle, +500 pour l'abattre
 - Civil (mains en l'air) ou prospecteur −100 · se faire tirer dessus −50 · dynamite qui touche le sol −75 pour tout le monde
 
-**El Diablo** s'annonce par des battements de cœur, des bandes noires et son avis de recherche, puis surgit au balcon dans un coup de tonnerre. Une fois et demie plus grand que ses hommes, entouré d'une aura rouge, il arpente tout le balcon avec ses deux revolvers ; sa jauge en haut de l'écran a une case par point de vie. À mi-vie, il est **enragé** (jauge orange, aura plus vive). Abattu, il bascule par-dessus la rambarde.
+**El Diablo** s'annonce par des battements de cœur, des bandes noires et son avis de recherche, puis surgit au balcon dans un coup de tonnerre. Une fois et demie plus grand que ses hommes, entouré d'une aura rouge, il arpente tout le balcon avec ses deux revolvers ; sa jauge en haut de l'écran a une case par point de vie. À mi-vie, il est **enragé** (jauge orange, aura plus vive). Abattu, il bascule par-dessus la rambarde (dans la mine, il tombe de son wagonnet, qui continue de rouler à vide ; à cheval, il vide les étriers et son cheval file sans lui). Sa dynamite, comme celle de ses hommes, s'abat en vol (+75) ; s'il tombe avant de l'avoir lancée, elle ne part pas.
 
 Les bonus font partie de la fusillade, et le premier qui les touche gagne leur contenu, indiqué par le symbole :
 
@@ -453,10 +457,10 @@ Les murs ont des hauteurs différentes : on tire par-dessus les comptoirs, les b
 
 | Emplacement | Au choix |
 |---|---|
-| Arme blanche (1) | Couteau Bowie (rapide), tomahawk (lent mais fort), sabre (plus d'allonge) |
-| Arme de poing (2) | Colt (6 coups), Schofield (recharge éclair), Derringer (2 coups, très fort de près) |
-| Arme d'épaule (3) | Winchester (12 coups, précise), fusil à pompe (gerbe de plombs), canon scié (2 coups dévastateurs au contact), carabine Sharps (1 coup, lunette au clic droit) |
-| Équipement | Dynamite (3 bâtons à lancer, **G**), gilet de cuir (+50 d'armure), gourde (les PV reviennent à l'abri), éperons (+15 % de vitesse), cartouchière (munitions ×1,6) |
+| Arme blanche (1) | Couteau Bowie (rapide), tomahawk (lent mais fort), sabre (plus d'allonge), pioche (très lente, casse d'un coup tonneaux, caisses, rochers et barils de poudre), lasso (se lance à 5 cases ; la cible prise est désarçonnée, et tant qu'on maintient le clic elle est ramenée vers soi au bout de la corde ; relâchée, elle reste ligotée 2,5 s) |
+| Arme de poing (2) | Colt (6 coups), Schofield (recharge éclair), Derringer (2 coups, très fort de près), LeMat (9 coups, et un canon à chevrotine au clic droit, rechargé avec le barillet : la cartouche s'enfonce par la bouche), Peacemaker (précis ; clic droit maintenu : *fanning*, le barillet vidé en une demi-seconde, n'importe où) |
+| Arme d'épaule (3) | Winchester (12 coups, précise), fusil à pompe (gerbe de plombs), canon scié (2 coups dévastateurs au contact), carabine Sharps (1 coup, lunette au clic droit), arc (silencieux ; on le bande en maintenant le tir et on décoche en relâchant : plus il est bandé, plus la flèche fait mal, et bandé à fond elle part enflammée), fusil à harpon (1 coup lourd ; tant qu'on maintient le clic, la cible harponnée est ramenée au bout du câble, et relâché, il la libère) |
+| Équipement | Dynamite (3 bâtons à lancer, **G**), cocktail de tord-boyaux (3 bouteilles : une grande flaque de feu, sans souffle), pièges à loup (2 à poser au sol : 25 dégâts et 2,2 s sur place pour qui marche dessus, sauf son poseur), gilet de cuir (+50 d'armure), gourde (les PV reviennent à l'abri), éperons (+15 % de vitesse), cartouchière (munitions ×1,6) |
 
 Plus de balles : l'autre arme à feu prend le relais, puis l'arme blanche.
 
@@ -467,10 +471,13 @@ Plus de balles : l'autre arme à feu prend le relais, puis l'arme blanche.
 | Gatling | 90 balles en rafale (clic maintenu), 15 s, mais on marche moins vite |
 | Deux colts | Akimbo : 2 balles par clic, 32 balles, 15 s |
 | Winchester dorée | 15 balles qui traversent tout ce qu'elles touchent, 20 s |
+| Mortier Coehorn | 4 obus en cloche, 25 s : la portée suit le regard (levé : loin, baissé : près), une mire marque le point de chute |
+| Canardière | 3 coups d'une énorme gerbe de plombs, 20 s ; le recul repousse le tireur de plus de deux cases |
+| Pistolet du Diable | Seulement dans la caisse que lâche El Diablo en tombant : 24 balles, 25 s, et 40 % des dégâts reviennent en PV |
 
 **Montures** (**E** pour monter et descendre) :
 
-- **À cheval** : deux fois plus vite, on voit de plus haut, et lancé au galop on renverse ce qu'on croise. Le cheval encaisse une partie des balles ; abattu, il désarçonne son cavalier, et un autre revient à l'écurie 20 s plus tard. On n'entre pas à cheval dans les bâtiments. Des chevaux attendent devant le saloon, devant le bureau du shérif et dans l'enclos du ranch.
+- **À cheval** : deux fois plus vite, on voit de plus haut, et lancé au galop on renverse ce qu'on croise. On voit son encolure, sa crinière et ses oreilles devant soi, qui hochent au galop. Le cheval encaisse une partie des balles (55 %, 120 PV) : sa barre CHEVAL baisse et rougit à chaque coup, et sous 35 % elle clignote avec l'ordre de descendre (E). Celui qui tire voit qu'il blesse le cheval (« CHEVAL -22 », une petite barre au-dessus du cavalier, « SON CHEVAL VA TOMBER ! »). Abattu, il désarçonne son cavalier (« TON CHEVAL EST À TERRE ! », « CHEVAL ABATTU : … À PIED ! »), et un autre revient à l'écurie 20 s plus tard. On n'entre pas à cheval dans les bâtiments. Des chevaux attendent devant le saloon, devant le bureau du shérif et dans l'enclos du ranch.
 - **En wagonnet** : sur la boucle de rails de la mine (avancer / freiner), jusqu'à 8,5 cases par seconde, et la caisse de fer arrête la moitié des balles.
 
 **Le décor s'en mêle** (`PROPS` dans `public/js/fpsgame.js` ; l'hôte arbitre, tout le monde voit la même chose) :
@@ -496,10 +503,11 @@ Le feu brûle ceux qui restent dedans (le point est marqué sur la carte), et un
 
 **Retournements de situation** (`public/js/fpsevents.js`, tirés de la graine : 4 à 6 par partie) : prime doublée, avis de recherche (le premier au score est mis à prix et marqué d'une étoile visible à travers les murs : +300 pour qui l'abat), la bande attaque la ville, les dynamiteurs, midi sonne (dégâts doublés), bagarre générale (armes blanches seulement), le train entre en gare (sur les rails, c'est la mort), la diligence a versé (sacs d'or à ramasser, +50), le ravitaillement du fort (caisses pleines d'armes), la tournée du patron (soins), la tornade (tout le monde est emporté ailleurs), la tempête de sable, l'orage, la nuit qui tombe, et **El Diablo** en personne (600 PV, +1000 pour celui qui l'abat ; il repart s'il survit).
 
-- Clavier : **Z Q S D** (ou **W A S D** sur un clavier QWERTY, ou les flèches) pour avancer, la souris pour viser (clic dans l'image pour capturer la souris, Échap pour la libérer), clic pour tirer (maintenu pour la Gatling et les armes blanches), **1** à **5** ou la molette pour changer d'arme, **R** recharger, **Maj** courir, **E** monter (ou servir un canon, boire au comptoir), **G** dynamite, **Tab** le tableau des scores, **M** la grande carte.
+- Clavier : **Z Q S D** (ou **W A S D** sur un clavier QWERTY, ou les flèches) pour avancer, la souris pour viser et pour regarder un peu en haut ou en bas (clic dans l'image pour capturer la souris, Échap pour la libérer ; au doigt, on glisse aussi de haut en bas), clic pour tirer (maintenu pour la Gatling et les armes blanches), **1** à **5** ou la molette pour changer d'arme, **R** recharger, **Maj** courir, **E** monter (ou servir un canon, boire au comptoir), **G** dynamite, **Tab** le tableau des scores, **M** la grande carte.
 - Au doigt : un stick à gauche (poussé à fond vers l'avant, on court), glisser à droite pour tourner la tête, **double tap** à droite pour tirer (doigt gardé posé : on continue de tirer en visant). Boutons ronds à icône sous le pouce droit, en arc autour du gros bouton de tir : arme suivante, recharger, viser, dynamite, et monter / descendre quand c'est possible.
 - **La carte** (`public/js/fpsmap.js`) : un radar rond en haut à gauche, centré sur toi (nord en haut, ta flèche tourne avec ta vue), et la grande carte avec le nom des lieux (**M**, ou au doigt en touchant le radar). Elle est dessinée à 4 pixels par case et copiée pixel pour pixel, sans flou : sols et planchers, rails et traverses, murs, comptoirs et barrières, portes, tombes, cactus, tonneaux, foin, réverbères. On y voit les caisses, les sacs d'or, les chevaux et les wagonnets libres, la dynamite qui vole, El Diablo et les bandits en vue (à moins de 12 cases) ou qui viennent de tirer. Les autres joueurs n'y apparaissent jamais.
 - La résolution interne s'adapte à la machine (pleine, trois quarts ou moitié) pour rester fluide sur téléphone (`public/js/fpsperf.js`).
+- **Au doigt, aide à la visée** (`ASSIST` et `assistTarget` dans `public/js/fps.js`) : le viseur ralentit sur un bandit ou un rival en vue et glisse doucement vers lui (il rougit quand il le tient), la balle part droit sur la cible qu'on frôle, et garder le bouton de tir enfoncé tire à la cadence de l'arme, même au colt. À la souris, rien de tout ça.
 - **La cinématique d'ouverture** (11 s, 0,8 s de plus par joueur au-delà de quatre ; un clic la passe) est tournée dans le moteur du jeu, sur la carte de la partie (`public/js/fpscut.js`) : travelling sur le quai de la gare (la locomotive fume), la caméra s'élève au-dessus de la grand-rue, la bande s'avance au ras du sol et dégaine, chaque joueur est présenté en arrêt sur image sépia avec un surnom à la Leone (« Le Bon », « La Brute »…), puis tout le monde se fait face au milieu de la rue pendant que la cloche sonne et que le titre tombe. Les plans cherchent un passage dégagé sur la carte tirée de la graine.
 - Ici, chaque navigateur simule son propre cow-boy et annonce ce qu'il touche ; l'hôte vérifie que c'est plausible (portée, dégâts de l'arme), fait vivre les bandits, les caisses, la dynamite, les chevaux et les bots, et diffuse la position des bandits dix fois par seconde. Rendu dans `public/js/fps.js`, graphismes dans `public/js/fpsart.js`, HUD dans `public/js/fpshud.js`, commandes dans `public/js/fpsinput.js`.
 
