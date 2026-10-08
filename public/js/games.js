@@ -8,6 +8,8 @@ import { MineGame } from './minegame.js';
 import { CourseGame } from './coursegame.js';
 import { RtsGame } from './rtsgame.js';
 import { FpsGame } from './fpsgame.js';
+import { BagarreGame } from './bagarregame.js';
+import { BrawlGame } from './brawlgame.js';
 
 const GAMES = {
   fort: (players, v) => new FortGame(players, v),
@@ -18,6 +20,8 @@ const GAMES = {
   rts: (players, v) => new RtsGame(players, v),
   fps: (players) => new FpsGame(players, 'fps'),
   fpsdm: (players) => new FpsGame(players, 'fpsdm'),
+  bagarre: (players) => new BagarreGame(players),
+  melee: (players, v) => new BrawlGame(players, v),
 };
 
 export const makeGame = (mode, players, variant = null) => (GAMES[mode] ? GAMES[mode](players, variant) : new MiniGame(mode, players, variant));

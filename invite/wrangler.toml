@@ -1,0 +1,4 @@
+# Worker des liens d'invitation (voir worker.js). Déploiement : npm run deploy:invite
+name = "saloon-invite"
+main = "worker.js"
+compatibility_date = "2026-10-01"

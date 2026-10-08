@@ -1,7 +1,7 @@
 // Variantes (abords, région, carte, salle…) que l'hôte peut imposer depuis le lobby, en format « Un jeu ».
 // null (« Aléatoire ») : tirée de la graine, comme avant. La roue et le championnat tirent toujours au hasard.
 // L'arbitre met la variante dans l'état (view().variant) : chaque navigateur reconstruit le même monde.
-import { EDGES, LASSO_BIOME_NAMES, FORT_MAPS, COURSE_VARIANTS, RTS_BIOMES } from './worlds.js';
+import { EDGES, LASSO_BIOME_NAMES, FORT_MAPS, COURSE_VARIANTS, RTS_BIOMES, BRAWL_MODE_NAMES } from './worlds.js';
 import { ROOM_NAMES } from './room.js';
 
 const list = (o, name = (v) => v) => Object.entries(o).map(([id, v]) => ({ id, name: name(v) }));
@@ -14,6 +14,8 @@ export const VARIANTS = {
   pinte: { label: 'Salle', list: list(ROOM_NAMES) },
   course: { label: 'Terrain', list: list(COURSE_VARIANTS) },
   rts: { label: 'Carte', list: list(RTS_BIOMES, (b) => b.name) },
+  // La mêlée : le mode de jeu (la carte est tirée au hasard parmi celles du mode)
+  melee: { label: 'Mode', any: 'Mode au hasard', list: list(BRAWL_MODE_NAMES) },
 };
 
 export const variantOk = (mode, id) => !!VARIANTS[mode]?.list.some((v) => v.id === id);

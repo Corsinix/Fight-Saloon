@@ -59,6 +59,19 @@ function vignetteSprite() {
 
 const flipX = (rects, dir) => (dir > 0 ? rects : rects.map(([dx, dy, w, h, c]) => [-dx - w, dy, w, h, c]));
 
+// Petit boxeur de profil (cinématique de la bagarre), tourné vers dir ; punch : bras tendu
+function boxerSide(ctx, x, y, dir, trunks, punch) {
+  const skin = '#d8a078';
+  outlined(ctx, x, y, flipX([
+    [-4, -12, 3, 12, skin], [1, -12, 3, 12, skin],
+    [-5, -18, 10, 7, trunks],
+    [-5, -30, 10, 12, skin],
+    [-4, -38, 8, 8, skin],
+    punch ? [5, -30, 12, 3, skin] : [4, -31, 4, 6, skin],
+    punch ? [16, -31, 4, 5, '#e8dcc0'] : [6, -34, 4, 4, '#e8dcc0'],
+  ], dir));
+}
+
 // Silhouettes : couleurs de tenue et de chapeau d'un personnage de l'éditeur
 const looks = (c = {}) => ({
   coat: CLOTH_COLORS[c.outfitColor] ?? CLOTH_COLORS[2],
@@ -795,6 +808,42 @@ const SHOTS = {
       }
       // un virevoltant traverse le plan
       S.tumbleweed(ctx, Math.round(W - el * 0.09), Math.round(196 - Math.abs(Math.sin(el / 160)) * 6), el);
+    },
+  },
+
+  // Le ring de la grange, un samedi soir : deux cogneurs s'échangent des coups sous les lanternes, la foule s'agite
+  bagarre: {
+    caption: 'LA GRANGE DES MCCOY, SAMEDI SOIR',
+    rumors: ['LE GRAND BISON N\'A JAMAIS PERDU', 'EL DIABLO PARIE SUR LE CHAMPION'],
+    indoor: true,
+    cues: [[150, 'bell'], [700, 'punch'], [1100, 'smack'], [1500, 'crowd']],
+    draw(ctx, el, players) {
+      R(ctx, 0, 0, W, H, '#2a1a12');
+      for (let x = 0; x < W; x += 14) R(ctx, x, 0, 1, 140, '#1e120c');
+      for (const lx of [80, 192, 304]) {
+        ctx.globalAlpha = 0.3;
+        ctx.drawImage(lampSprite(), lx - 90, -40);
+        ctx.globalAlpha = 1;
+        R(ctx, lx, 0, 1, 28, INK);
+        R(ctx, lx - 3, 28, 7, 8, '#f8d070');
+      }
+      // le ring
+      R(ctx, 40, 132, 304, 50, '#c8b48a');
+      R(ctx, 40, 182, 304, 8, '#5a2a1a');
+      for (const px of [40, 344]) outlined(ctx, px - 3, 92, [[0, 0, 6, 90, '#6a3a20']]);
+      for (const ry of [104, 116, 128]) R(ctx, 43, ry, 298, 2, '#d8c090');
+      // les deux cogneurs : celui du joueur à gauche, le champion à droite
+      const hit = Math.floor(el / 400) % 2;
+      boxerSide(ctx, 172 + hit * 4, 164, 1, players[0]?.color || '#f0705a', hit);
+      boxerSide(ctx, 214 - (1 - hit) * 4, 164, -1, '#3a3a4a', !hit);
+      // la foule au premier plan
+      for (let i = 0; i < 20; i++) {
+        const x = i * 21 - 6, b = (Math.floor(el / 200) + i) % 3 === 0 ? -3 : 0;
+        R(ctx, x, 188 + b, 16, 30, '#120a06');
+        R(ctx, x + 3, 179 + b, 10, 10, '#120a06');
+        if (i % 3 === 0) R(ctx, x, 177 + b, 16, 3, '#120a06');
+        if (b && i % 2) R(ctx, x + 13, 168 + b, 3, 14, '#120a06');
+      }
     },
   },
 

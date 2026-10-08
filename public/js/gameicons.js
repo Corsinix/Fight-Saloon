@@ -9,6 +9,19 @@ const PAL = {
 };
 
 const GRIDS = {
+  // La mêlée (vue de dessus) : deux revolvers croisés
+  melee: [
+    'kk.........kk',
+    'kGk.......kGk',
+    '.kGk.....kGk.',
+    '..kGk...kGk..',
+    '...kGk.kGk...',
+    '....kGkGk....',
+    '...kbkGkbk...',
+    '..kbbk.kbbk..',
+    '.kbbk...kbbk.',
+    '.kkk.....kkk.',
+  ],
   // une cartouche rouge, une blanche
   roulette: [
     '.kkkk...kkkk.',
@@ -187,6 +200,21 @@ const GRIDS = {
     'kyyyykyyok',
     'kooooooook',
     'kkkkkkkkkk',
+  ],
+  // un poing bandé
+  bagarre: [
+    '..kkkkkkkk..',
+    '.kAAkAAkAAk.',
+    'kAAAkAAkAAAk',
+    'kAAAAAAAAAAk',
+    'kAkkkkkkAAAk',
+    'kAAAAAAAkAak',
+    'kaAAAAAAAAak',
+    '.kaaaaaaaak.',
+    '..kpppppPk..',
+    '..kPPPPPPk..',
+    '..kpppppPk..',
+    '..kkkkkkkk..',
   ],
   pinte: [
     '.kkkkkkkk...',

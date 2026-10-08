@@ -102,8 +102,6 @@
             <button class="btn install hidden" id="btn-install" type="button">Installer l'app sur ce téléphone</button>
           </div>
           <div class="panel board">
-            <h3>Les plus redoutés <small>roulette</small></h3>
-            <ol id="leaderboard" class="lb"></ol>
             <h3>Ton palmarès</h3>
             <div class="stats" id="menu-stats"></div>
           </div>
@@ -165,10 +163,10 @@
           <div class="lobby-side">
             <div class="panel lobby-players">
               <h3>Joueurs <small id="players-n"></small></h3>
-              <label>Invite tes adversaires, ou ajoute des bots : <button type="button" class="mini-link" id="btn-invite-msg" title="Écrire le message envoyé avec le lien">ton message</button></label>
+              <label>Invite tes adversaires, ou ajoute des bots : <button type="button" class="mini-link" id="btn-invite-msg" title="Écrire le message affiché dans l’aperçu du lien">ton message</button></label>
               <div class="link-row">
                 <input id="lobby-link" readonly>
-                <button class="btn" id="btn-copy" title="Copier l’invitation (message et lien)">Copier</button>
+                <button class="btn" id="btn-copy" title="Copier le lien d’invitation">Copier</button>
                 <button class="btn hidden" id="btn-share">Partager</button>
               </div>
               <div class="seats many" id="seats"></div>
@@ -192,12 +190,15 @@
         <button id="btn-chat" class="tp-chat" type="button" aria-label="Écrire un message">Chat</button>
         <div id="rotate-hint" class="rotate-hint" role="note"><span class="rot-ico"></span>Tourne ton téléphone pour jouer en grand</div>
         <form id="game-chat" class="game-chat hidden"><input maxlength="120" placeholder="Message (Entrée)" autocomplete="off"></form>
+        <!-- tournoi : bandeau du spectateur (match regardé depuis le banc) -->
+        <div id="watch-bar" class="watch-bar hidden"><span id="watch-text"></span><button class="btn alt" id="btn-bench" type="button">Retour au banc</button></div>
         <div id="gameover" class="gameover hidden">
           <div class="panel">
             <h1 id="go-title"></h1>
             <p id="go-sub"></p>
             <div id="go-champ" class="go-champ"></div>
-            <div class="lobby-buttons">
+            <div id="go-tourney" class="go-tourney"></div>
+            <div class="lobby-buttons" id="go-buttons">
               <button class="btn alt" id="btn-go-menu">Retour à la table</button>
               <button class="btn big" id="btn-rematch">Revanche</button>
             </div>

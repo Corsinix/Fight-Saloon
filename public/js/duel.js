@@ -136,7 +136,7 @@ export class DuelScene extends MiniScene {
 
   draw() {
     const c = this.cur, t = this.t;
-    if (!c || c.result || this.myDraw || !this.playing || t < c.at + DUEL.intro) return;
+    if (this.watch || !c || c.result || this.myDraw || !this.playing || t < c.at + DUEL.intro) return; // spectateur : rien à dégainer
     const rt = t < c.fireAt ? -1 : Math.round(t - c.fireAt);
     this.myDraw = { rt, at: t };
     this.pose[this.me].draw = true;
@@ -250,7 +250,7 @@ export class DuelScene extends MiniScene {
       const st = this.pose[i];
       const x = POS[side], dir = side === 0 ? 1 : -1;
       if (st.shotAt != null && t - st.shotAt < 120) S.drawFlash(ctx, x + dir * 46, GROUND_Y - 52, 16, t / 30);
-      const name = i === this.me ? 'TOI' : this.name(i).slice(0, 12).toUpperCase();
+      const name = i === this.me && !this.watch ? 'TOI' : this.name(i).slice(0, 12).toUpperCase();
       if (st.fallAt == null || t < st.fallAt) canvasText(ctx, name, x, GROUND_Y - 100, { color: this.color(i) });
     });
   }
@@ -314,7 +314,7 @@ export class DuelScene extends MiniScene {
   drawResult(ctx, t, res) {
     const el = t - res.at;
     if (el < 0) return;
-    const me = this.me, op = 1 - me;
+    const me = this.watch ? -1 : this.me; // spectateur : les manches s'annoncent avec les noms
     let title, col;
     if (res.reason === 'fast') {
       title = res.winner === me ? 'MANCHE GAGNÉE !' : `${this.name(res.winner).toUpperCase()} GAGNE LA MANCHE`;
@@ -331,7 +331,9 @@ export class DuelScene extends MiniScene {
     ctx.fillRect(0, 58, W, 44);
     canvasText(ctx, title, W / 2, title.length > 24 ? 68 : 64, { size: title.length > 24 ? 8 : 16, color: col });
     const rt = (i) => (res.rts[i] == null ? '—' : res.rts[i] < 0 ? 'TROP TÔT' : secs(res.rts[i]));
-    canvasText(ctx, `TOI ${rt(me)}   ·   ${this.name(op).slice(0, 12).toUpperCase()} ${rt(op)}`, W / 2, 88, { color: '#fdf6e0' });
+    const [a, b] = this.watch ? [0, 1] : [me, 1 - me];
+    const who = (i) => (i === me ? 'TOI' : this.name(i).slice(0, 12).toUpperCase());
+    canvasText(ctx, `${who(a)} ${rt(a)}   ·   ${who(b)} ${rt(b)}`, W / 2, 88, { color: '#fdf6e0' });
   }
 
   hudStats() {

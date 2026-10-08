@@ -38,8 +38,8 @@ export const PINTE = {
   CM: 2,
   dirMs: 1800, powMs: 1400, // aller-retour de l'aiguille et de la jauge
 };
-// 10 à 18 lancers en tout (5 manches à deux, 3 de quatre à six : il faut au moins une manche à surprises avant la dernière)
-export const pinteRounds = (n) => (n <= 2 ? 5 : n === 3 ? 4 : 3);
+// 5 manches, quel que soit le nombre de joueurs (10 à 30 lancers, plus avec le double service)
+export const pinteRounds = () => 5;
 // décalage de l'ordre de passage d'une manche à l'autre : un cran, ou plus quand il y a moins de manches que de
 // joueurs, pour que la dernière place (l'avantage) tombe chaque fois sur quelqu'un de différent et bien réparti
 export const pinteShift = (n, rounds) => Math.max(1, Math.round(n / rounds));
@@ -72,6 +72,19 @@ export const COUNTERS = {
   goulet: { name: 'LE GOULET : LE COMPTOIR SE RESSERRE, LES RAMBARDES TE GUIDENT', label: 'GOULET', col: '#a8e0c8', w: 1.6,
     back: [[0, 0], [70, 0], [100, -10, 1], [175, -14, 1], [215, -14, 1], [250, -4], [320, -4]],
     front: [[0, 26], [70, 26], [100, 34, 1], [175, 4, 1], [215, 4, 1], [250, 30], [320, 30]], maxa: 0.22 },
+  banquet: { name: 'LA TABLE DU BANQUET : BIEN LARGE, MAIS SANS RAMBARDE', label: 'BANQUET', col: '#f8e0a0', w: 1.6,
+    back: [[0, 0], [70, 0], [110, -10], [320, -10]], front: [[0, 26], [70, 26], [110, 36], [320, 36]], maxa: 0.14 },
+  pointe: { name: 'LA POINTE : LE BOUT DU COMPTOIR RÉTRÉCIT, VISE BIEN DROIT', label: 'POINTE', col: '#f0c0a0', w: 1.4,
+    back: [[0, 0], [200, 0], [320, 5]], front: [[0, 26], [200, 26], [320, 21]] },
+  serpent: { name: 'LE COMPTOIR EN S : DEUX VIRAGES, LES RAMBARDES TE RENVOIENT', label: 'EN S', col: '#c8e070', w: 1.4,
+    back: [[0, 0], [80, 0, 1], [130, -12, 1], [190, -12, 1], [240, -4], [320, -4]],
+    front: [[0, 26], [80, 26, 1], [130, 18, 1], [190, 18, 1], [240, 30], [320, 30]], maxa: 0.22 },
+  tireuses: { name: 'TROIS TIREUSES : PASSE ENTRE LES DEUX, PUIS CONTOURNE LA TROISIÈME', label: 'TIREUSES', col: '#f8b070', w: 1.4,
+    back: [[0, 0, 1], [60, 0, 1], [90, -8, 1], [320, -8]], front: [[0, 26, 1], [60, 26, 1], [90, 34, 1], [320, 34]],
+    taps: [{ x: 140, y: -2 }, { x: 140, y: 28 }, { x: 240, y: 13 }], maxa: 0.24 },
+  slalom: { name: 'LE SLALOM : TROIS CLOISONS, ZIGZAGUE DE RICOCHET EN RICOCHET', label: 'SLALOM', col: '#a0c8f0', w: 1.2,
+    back: [[0, 0, 1], [320, 0]], front: [[0, 26, 1], [320, 26]],
+    walls: [[110, 0, 110, 7], [180, 26, 180, 19], [250, 0, 250, 7]], maxa: 0.3, reach: 1.2 },
 };
 
 // hauteur d'une ligne brisée en x, et la rambarde du tronçon sous x
@@ -130,14 +143,14 @@ export function counterFor(seed, n) {
 // r : rayon ; m : masse dans les chocs ; mu : freinage (moins de freinage = elle va plus loin à puissance égale) ;
 // e : rebond dans les chocs (le piment fait gicler les autres) ; curl : le tord-boyaux tourne vers toi (+1) ou vers le mur (-1).
 export const BEERS = {
-  blonde: { name: 'UNE BLONDE', desc: 'LA CLASSIQUE', r: 4, m: 1, mu: 1, w: 6 },
-  brune: { name: 'UNE BRUNE', desc: 'LOURDE : ELLE POUSSE FORT', r: 4, m: 1.9, mu: 1, w: 2.5 },
-  shot: { name: 'UN PETIT WHISKY', desc: 'PETIT ET LÉGER', r: 3, m: 0.5, mu: 1, w: 2 },
-  mousse: { name: 'UNE MOUSSEUSE', desc: 'ELLE GLISSE PLUS LOIN', r: 4, m: 1, mu: 0.8, w: 2 },
-  geante: { name: 'LA CHOPE DU MINEUR', desc: 'ÉNORME ET LOURDE : UN VRAI MUR', r: 6, m: 2.6, mu: 1, w: 1.2 },
-  tordt: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS TOI', r: 4, m: 1, mu: 1, curl: 1, w: 0.9, art: 'tord' },
-  tordm: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS LE MUR', r: 4, m: 1, mu: 1, curl: -1, w: 0.9, art: 'tord' },
-  piment: { name: 'LE PIMENT D\'EL DIABLO', desc: 'ÇA BRÛLE : AU CHOC, ELLE FAIT GICLER', r: 4, m: 1.2, mu: 1, e: 1.6, w: 1.4 },
+  blonde: { name: 'UNE BLONDE', desc: 'LA CLASSIQUE', r: 4, m: 1, mu: 1, w: 6, col: '#f0c858' },
+  brune: { name: 'UNE BRUNE', desc: 'LOURDE : ELLE POUSSE FORT', r: 4, m: 1.9, mu: 1, w: 2.5, col: '#d89a68' },
+  shot: { name: 'UN PETIT WHISKY', desc: 'PETIT ET LÉGER', r: 3, m: 0.5, mu: 1, w: 2, col: '#e8a048' },
+  mousse: { name: 'UNE MOUSSEUSE', desc: 'ELLE GLISSE PLUS LOIN', r: 4, m: 1, mu: 0.8, w: 2, col: '#fdf6e0' },
+  geante: { name: 'LA CHOPE DU MINEUR', desc: 'ÉNORME ET LOURDE : UN VRAI MUR', r: 6, m: 2.6, mu: 1, w: 1.2, col: '#f8d070' },
+  tordt: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS TOI', r: 4, m: 1, mu: 1, curl: 1, w: 0.9, art: 'tord', col: '#c8d070' },
+  tordm: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS LE MUR', r: 4, m: 1, mu: 1, curl: -1, w: 0.9, art: 'tord', col: '#c8d070' },
+  piment: { name: 'LE PIMENT D\'EL DIABLO', desc: 'ÇA BRÛLE : AU CHOC, ELLE FAIT GICLER', r: 4, m: 1.2, mu: 1, e: 1.6, w: 1.4, col: '#f0705a' },
 };
 export const beerOf = (q) => BEERS[q?.b] || BEERS.blonde;
 
@@ -173,6 +186,33 @@ export const MODS = {
   double: { label: 'POINTS X2', name: 'DERNIÈRE TOURNÉE : LES POINTS COMPTENT DOUBLE', col: '#f0907a' },
 };
 
+// ------------------------------------------------------------ événements du saloon
+// Ils changent les règles de la manche (et pas le comptoir) : tirés de la graine, jamais à la 1re ni à la dernière
+// manche, au moins un par partie, jamais deux fois le même de suite. Annoncés avec les surprises.
+export const METAS = {
+  patron: { title: 'LE PATRON EST DE BONNE HUMEUR', name: 'LA CHOPE LA PLUS PROCHE GAGNE +150 AU LIEU DE +50', label: 'TOURNÉE +150', col: '#f8d070', w: 2 },
+  seul: { title: 'TOUT OU RIEN', name: 'SEULE LA CHOPE LA PLUS PROCHE MARQUE (TOURNÉE +100)', label: 'TOUT OU RIEN', col: '#f0907a', w: 1.5 },
+  deux: { title: 'DOUBLE SERVICE', name: 'CHACUN LANCE DEUX CHOPES CETTE MANCHE', label: 'DEUX CHOPES', col: '#e8c890', w: 1.6 },
+  bagarre: { title: 'BAGARRE AU SALOON', name: 'À MI-MANCHE, QUELQU\'UN BOUSCULE LE COMPTOIR', label: 'BAGARRE', col: '#f0705a', w: 1.6 },
+  casse: { title: 'LE PATRON COMPTE LA CASSE', name: 'CHAQUE CHOPE BRISÉE COÛTE 30 PTS À SON PROPRIÉTAIRE', label: 'CASSE : -30', col: '#c8a0f0', w: 1.3 },
+  chasse: { title: 'PRIME DU SHÉRIF', name: '+40 PAR CHOPE ADVERSE POUSSÉE DANS LE VIDE', label: 'PRIME : +40', col: '#b8e070', w: 1.3 },
+  noir: { title: 'LES LAMPES S\'ÉTEIGNENT', name: 'PAS DE TRAIT DE CRAIE POUR VISER', label: 'À L\'AVEUGLE', col: '#a8b8e0', w: 1.2 },
+};
+export const META = { CASSE: 30, PRIME: 40, PATRON: 150, SEUL: 100, BRAWL: 1400 };
+
+export function metaFor(seed, n, rounds) {
+  if (n <= 1 || n >= rounds) return null;
+  // la manche qui en a un à coup sûr ; les autres, à peu près une fois sur deux
+  const sure = 2 + Math.floor(rng((seed ^ 0x2545f491) >>> 0)() * (rounds - 2));
+  const R = rng((seed ^ Math.imul(n, 0x51ed270b)) >>> 0);
+  if (n !== sure && R() >= 0.45) return null;
+  const prev = metaFor(seed, n - 1, rounds);
+  const list = Object.entries(METAS).filter(([id]) => id !== prev);
+  let x = R() * list.reduce((s, [, e]) => s + e.w, 0);
+  for (const [id, e] of list) if ((x -= e.w) <= 0) return id;
+  return list[0][0];
+}
+
 // libellé d'un modificateur (le vent change de nom selon son sens)
 export function modName(id, m) {
   if (id === 'souffle') return m.push > 0 ? 'PORTES BATTANTES : VENT DANS LE DOS, ÇA VA PLUS LOIN' : 'PORTES BATTANTES : VENT DE FACE, ÇA FREINE';
@@ -184,9 +224,39 @@ export function modLabel(id, m) {
   return MODS[id].label;
 }
 
+// Trajet du meilleur lancer d'une blonde sur ce comptoir nu (gardé en mémoire) : on n'y pose pas de bouteille
+const lines = new Map();
+function lineOf(G) {
+  let pts = lines.get(G.id);
+  if (pts) return pts;
+  const mods = { lay: G.id }, { power, angle } = bestThrow(PINTE.L - 9, mods, 'blonde'), v = speedFor(power, mods);
+  const s = new Slide([{ id: 0, b: 'blonde', x: PINTE.START, y: PINTE.D / 2, vx: v * Math.cos(angle), vy: v * Math.sin(angle) }], mods);
+  pts = [];
+  while (!s.done && s.t < 20000) { s.step(); pts.push({ x: s.p[0].x, y: s.p[0].y }); }
+  lines.set(G.id, pts);
+  return pts;
+}
+
+// Une bouteille posée à l'écart de ce trajet (une chope passe sans la frôler), ni sur une cloison ou une tireuse
+function bottleSpot(G, R, taken) {
+  const pts = lineOf(G), clear = PINTE.BOTTLE_R + PINTE.R + (G.rails ? 5 : 2), pad = PINTE.BOTTLE_R + 1;
+  for (let k = 0; k < 40; k++) {
+    const x = Math.round(110 + R() * (PINTE.L - 175));
+    if (taken.some((t) => Math.abs(t - x) < 24)) continue;
+    const near = pts.filter((p) => Math.abs(p.x - x) < clear), ok = [];
+    for (let y = Math.ceil(G.backAt(x) + pad); y <= G.frontAt(x) - pad; y++) {
+      if (near.every((p) => Math.hypot(p.x - x, p.y - y) >= clear)) ok.push(y);
+    }
+    if (!ok.length) continue;
+    taken.push(x);
+    return { x, y: ok[Math.floor(R() * ok.length)] };
+  }
+  return null;
+}
+
 // roomId : salle imposée par l'hôte (lobby), sinon tirée de la graine
 export function modsFor(seed, n, rounds, roomId = null) {
-  const m = { list: [], mult: 1, lay: counterFor(seed, n) };
+  const m = { list: [], mult: 1, lay: counterFor(seed, n), meta: metaFor(seed, n, rounds) };
   if (n <= 1) return m;
   const { L, MU } = PINTE;
   const G = counterOf(m);
@@ -195,10 +265,12 @@ export function modsFor(seed, n, rounds, roomId = null) {
   const windy = env === 'poussiere' || env === 'orage' || env === 'neige';
   const pool = [
     ['flaque', 3], ['sciure', 2], ['vent', windy ? 4 : 2], ['souffle', windy ? 2 : 1.2],
-    [env === 'neige' ? 'gel' : 'cire', env === 'neige' ? 3 : 1.2], ['bouteille', 2], ['piece', 2.2],
+    [env === 'neige' ? 'gel' : 'cire', env === 'neige' ? 3 : 1.2], ['piece', 2.2],
     ['chat', 1.6], ['sousbock', 1.8],
   ];
   if (room === 'train') pool.push(['virage', 4]);
+  // le goulet est déjà trop étroit pour y semer des bouteilles
+  if (G.id !== 'goulet') pool.push(['bouteille', 2]);
   // deux poussées de côté à la fois, ce serait injouable
   const clash = { vent: 'virage', virage: 'vent', cire: 'gel', gel: 'cire' };
   const count = R() < 0.35 ? 2 : 1;
@@ -228,12 +300,18 @@ export function modsFor(seed, n, rounds, roomId = null) {
     else if (id === 'gel') m.slick = 0.6;
     else if (id === 'virage') m.tilt = side() * MU * (0.1 + R() * 0.06);
     else if (id === 'bouteille') {
+      // jamais en travers du meilleur lancer : il reste toujours un passage (une seule sur les comptoirs à ricochets)
       m.bottles = [];
-      for (let k = R() < 0.45 ? 2 : 1; k > 0; k--) m.bottles.push(spot(110, L - 65, 6));
+      for (let k = !G.rails && R() < 0.45 ? 2 : 1; k > 0; k--) {
+        const o = bottleSpot(G, R, taken);
+        if (o) m.bottles.push(o);
+      }
     } else if (id === 'chat') m.cat = { ...spot(100, L - 70, 7), face: side() };
     else if (id === 'sousbock') m.mat = spot(L - 110, L - 40, PINTE.MAT_R + 2);
     else if (id === 'piece') m.coin = { ...spot(140, L - 40, 5, false), by: null };
   }
+  // aucune place à l'écart du passage : pas de bouteille cette manche
+  if (m.bottles && !m.bottles.length) { delete m.bottles; m.list = m.list.filter((id) => id !== 'bouteille'); }
   if (n === rounds) { m.mult = 2; m.list.push('double'); }
   return m;
 }
@@ -517,14 +595,7 @@ export class PinteGame {
     const v = speedFor(power, c.mods);
     const start = [...c.pints, { id: c.turn, o: i, b: c.beers[c.turn], x: P.START, y: P.D / 2, vx: v * Math.cos(angle), vy: v * Math.sin(angle) }];
     const mods = structuredClone(c.mods); // état avant le lancer (pièce encore là) : les joueurs rejouent la glissade avec
-    const sim = new Slide(start, c.mods).run();
-    c.pints = sim.p.filter((q) => !q.out).map(({ id, o, b, x, y }) => ({ id, o, b, x, y }));
-    if (sim.coinBy != null) {
-      c.mods.coin.by = sim.coinBy;
-      this.p[sim.coinBy].score += P.COIN;
-      this.p[sim.coinBy].stats.coins++;
-    }
-    const fell = sim.p.filter((q) => q.out);
+    const { sim, fell } = this.settle(start, i);
     const st = this.p[i].stats;
     st.throws++;
     for (const q of fell) {
@@ -534,6 +605,44 @@ export class PinteGame {
     c.phase = 'slide';
     c.nextAt = t + sim.t + (fell.length ? 1500 : 900);
     this.push({ type: 'pThrow', who: i, start, mods, dur: sim.t, round: this.publicRound() });
+  }
+
+  // Glissade jouée jusqu'au bout (who : le lanceur, null pour la bagarre) : chopes restantes, pièce d'or,
+  // et la casse ou la prime de la manche
+  settle(start, who) {
+    const c = this.cur, meta = c.mods.meta;
+    const sim = new Slide(start, c.mods).run();
+    c.pints = sim.p.filter((q) => !q.out).map(({ id, o, b, x, y }) => ({ id, o, b, x, y }));
+    if (sim.coinBy != null) {
+      c.mods.coin.by = sim.coinBy;
+      this.p[sim.coinBy].score += PINTE.COIN;
+      this.p[sim.coinBy].stats.coins++;
+    }
+    const fell = sim.p.filter((q) => q.out);
+    for (const q of fell) {
+      if (meta === 'casse') c.extra[q.o] = (c.extra[q.o] || 0) - META.CASSE;
+      if (meta === 'chasse' && who != null && q.o !== who) c.extra[who] = (c.extra[who] || 0) + META.PRIME;
+    }
+    return { sim, fell };
+  }
+
+  // Bagarre (à mi-manche) : le comptoir est bousculé, toutes les chopes glissent d'un coup vers le bout,
+  // plus ou moins loin (les lourdes bougent moins). Annoncée, puis rejouée telle quelle chez chacun.
+  brawl(t) {
+    const c = this.cur;
+    c.brawled = true;
+    if (!c.pints.length) return this.resume(t);
+    const R = rng((this.seed ^ Math.imul(c.n, 0x632be5ab)) >>> 0);
+    const a = (R() - 0.5) * 0.5;
+    const start = c.pints.map((q) => {
+      const v = Math.sqrt(2 * PINTE.MU * (8 + R() * 22) / Math.sqrt(beerOf(q).m));
+      return { ...q, vx: v * Math.cos(a), vy: v * Math.sin(a) };
+    });
+    const mods = structuredClone(c.mods);
+    const { sim, fell } = this.settle(start, null);
+    c.phase = 'brawl';
+    c.nextAt = t + META.BRAWL + sim.t + (fell.length ? 1500 : 900);
+    this.push({ type: 'pBrawl', start, mods, delay: META.BRAWL, dur: sim.t, round: this.publicRound() });
   }
 
   tick() {
@@ -550,6 +659,8 @@ export class PinteGame {
         c.nextAt = t + 1000;
         this.push({ type: 'pSkip', who, round: this.publicRound() });
       } else if (this.p[who].bot) this.botThink(who, t);
+    } else if (c.phase === 'brawl') {
+      if (t >= c.nextAt) this.resume(t);
     } else if (c.phase === 'score') {
       if (t >= c.nextAt) {
         if (c.n >= this.rounds) this.finish();
@@ -562,12 +673,14 @@ export class PinteGame {
   newRound(t) {
     const n = (this.cur?.n || 0) + 1;
     const k = ((n - 1) * this.shift) % this.base.length;
-    const order = [...this.base.slice(k), ...this.base.slice(0, k)].filter((i) => !this.p[i].left);
     const mods = modsFor(this.seed, n, this.rounds, this.variant);
+    let order = [...this.base.slice(k), ...this.base.slice(0, k)].filter((i) => !this.p[i].left);
+    // double service : on refait un tour de table, dans le même ordre
+    if (mods.meta === 'deux') order = [...order, ...order];
     const beers = order.map((_, k) => beerFor(this.seed, n, k));
-    // plus de surprises à annoncer (le comptoir compte pour une) : l'annonce de la manche dure un peu plus
-    const intro = PINTE.INTRO + 900 * (mods.list.length + (mods.lay !== 'droit'));
-    this.cur = { n, rounds: this.rounds, order, turn: 0, turnAt: t + intro, phase: 'aim', pints: [], mods, beers, res: null, bot: null };
+    // plus de surprises à annoncer (le comptoir et l'événement comptent pour une) : l'annonce dure un peu plus
+    const intro = PINTE.INTRO + 900 * (mods.list.length + (mods.lay !== 'droit') + !!mods.meta);
+    this.cur = { n, rounds: this.rounds, order, turn: 0, turnAt: t + intro, phase: 'aim', pints: [], mods, beers, res: null, extra: {}, bot: null };
     this.push({ type: 'pRound', round: this.publicRound() });
   }
 
@@ -576,6 +689,12 @@ export class PinteGame {
     c.turn++;
     c.bot = null;
     if (c.turn >= c.order.length) return this.score(t);
+    if (c.mods.meta === 'bagarre' && !c.brawled && c.turn >= Math.floor(c.order.length / 2)) return this.brawl(t);
+    this.resume(t);
+  }
+
+  resume(t) {
+    const c = this.cur;
     c.phase = 'aim';
     c.turnAt = t + 300;
     this.push({ type: 'pTurn', round: this.publicRound() });
@@ -583,19 +702,22 @@ export class PinteGame {
 
   // Fin de manche : chaque chope encore sur le comptoir rapporte 100 pts moins son écart en cm,
   // et la plus proche du bout (ex aequo compris) offre la tournée : +50. Celle qui s'est arrêtée sur le sous-bock :
-  // +50 aussi. Dernière tournée : tout compte double.
+  // +50 aussi. Dernière tournée : tout compte double. Les événements changent la tournée (patron, tout ou rien)
+  // et ajoutent la casse ou la prime (c.extra) ; un score ne descend jamais sous zéro.
   score(t) {
-    const c = this.cur;
+    const c = this.cur, meta = c.mods.meta;
     const res = c.pints.map((q) => ({ id: q.id, o: q.o, cm: gapCm(q), mat: onMat(c.mods, q) }));
     const best = res.length ? Math.min(...res.map((r) => r.cm)) : null;
+    const bonus = meta === 'patron' ? META.PATRON : meta === 'seul' ? META.SEUL : PINTE.BONUS;
     for (const r of res) {
-      r.pts = (ptsFor(r.cm) + (r.cm === best ? PINTE.BONUS : 0) + (r.mat ? PINTE.MAT : 0)) * (c.mods.mult || 1);
       r.best = r.cm === best;
+      r.pts = meta === 'seul' && !r.best ? 0 : (ptsFor(r.cm) + (r.best ? bonus : 0) + (r.mat ? PINTE.MAT : 0)) * (c.mods.mult || 1);
       const p = this.p[r.o];
       if (r.mat) p.stats.mats++;
       p.score += r.pts;
       if (p.stats.best == null || r.cm < p.stats.best) p.stats.best = r.cm;
     }
+    for (const [o, v] of Object.entries(c.extra)) this.p[o].score = Math.max(0, this.p[o].score + v);
     c.res = res;
     c.phase = 'score';
     c.nextAt = t + 4200;
@@ -636,17 +758,21 @@ export class PinteGame {
       const b = c.beers[c.turn], B = BEERS[b];
       const gap = (q) => P.L - q.x - beerOf(q).r;
       const lead = [...c.pints].sort((a, b) => gap(a) - gap(b))[0];
-      // avec une bière lourde (ou pimentée), il tente plus souvent de dégager la chope de tête
+      // avec une bière lourde (ou pimentée), il tente plus souvent de dégager la chope de tête ;
+      // la prime du shérif et le tout ou rien le rendent plus hargneux
+      const meta = c.mods.meta, mean = meta === 'chasse' || meta === 'seul';
       let angle = 0, power;
       const mat = c.mods.mat, free = mat && !c.pints.some((q) => onMat(c.mods, q));
-      if (lead && lead.o !== i && gap(lead) < 30 && Math.random() < (B.m > 1.5 || B.e > P.E ? 0.75 : B.m < 1 ? 0.3 : 0.55)) {
+      const odds = (B.m > 1.5 || B.e > P.E ? 0.75 : B.m < 1 ? 0.3 : 0.55) + (mean ? 0.2 : 0);
+      if (lead && lead.o !== i && gap(lead) < (mean ? 60 : 30) && Math.random() < odds) {
         angle = Math.atan2(lead.y - P.D / 2, lead.x - P.START);
         power = powerFor(Math.min(P.L - B.r - 1, lead.x + 40), c.mods, b, angle);
       } else if (free && Math.random() < 0.35) {
         // le sous-bock est libre : il tente de s'y arrêter
         ({ power, angle } = aimAt(mat, c.mods, b));
-      } else ({ power, angle } = bestThrow(P.L - B.r - rnd(3, 14), c.mods, b));
-      const tri = () => Math.random() + Math.random() - 1;
+      } else ({ power, angle } = bestThrow(P.L - B.r - (meta === 'casse' ? rnd(8, 20) : rnd(3, 14)), c.mods, b));
+      // dans le noir, sa main tremble plus
+      const tri = () => (Math.random() + Math.random() - 1) * (meta === 'noir' ? 1.6 : 1);
       c.bot = {
         angle: clamp(angle + tri() * 0.025, -counterOf(c.mods).maxa, counterOf(c.mods).maxa), power: clamp(power + tri() * 0.04, 0, 1),
         dirAt: c.turnAt + rnd(500, 900), stage: 0,

@@ -20,7 +20,7 @@ import { ENVS, Ambience } from './env.js';
 import {
   RTS, T, TERRAIN, BIOMES, FORT, BUILDINGS, BUILD_IDS, UNITS, UNIT_IDS, KIND_IDS, VEINS, LV, TECH, RANKS,
   rtsWorld, canBuild, inTerritory, bCenter, tileAt, terrainPx, costOf, countOf, incomeOf, popOf, siteOf,
-  maxHpOf, upNext, guardOf, uStats, qOf, DIPLO, WORDS, pairKey,
+  maxHpOf, upNext, guardOf, uStats, qOf, DIPLO, WORDS, pairKey, refundOf,
 } from './rtsgame.js';
 
 const TS = RTS.tile, MW = RTS.mapW, MH = RTS.mapH, COLS = RTS.cols, ROWS = RTS.rows;
@@ -372,6 +372,8 @@ const ICONS = {
   pact: (R) => { R(0, 2, 2, 3, '#8a5a32'); R(5, 2, 2, 3, '#5e3a1e'); R(2, 2, 3, 3, '#e0a878'); R(2, 1, 2, 1, '#e0a878'); R(3, 5, 2, 1, '#e0a878'); R(2, 3, 1, 1, '#b07848'); R(4, 2, 1, 1, '#f0c8a0'); },
   // cœur brisé (trahi : affaibli)
   weak: (R) => { R(0, 1, 3, 3, '#a050d0'); R(4, 1, 3, 3, '#a050d0'); R(1, 4, 5, 1, '#a050d0'); R(2, 5, 3, 1, '#a050d0'); R(3, 6, 1, 1, '#a050d0'); R(3, 1, 1, 2, '#1a0f0a'); R(2, 3, 2, 1, '#1a0f0a'); R(3, 4, 1, 1, '#1a0f0a'); R(1, 1, 1, 1, '#d8a0f8'); },
+  // bâton de dynamite et sa mèche (démolir)
+  dyn: (R) => { R(1, 3, 5, 3, '#c83a2a'); R(1, 3, 5, 1, '#e8705a'); R(2, 3, 1, 3, '#f0e0c8'); R(6, 1, 1, 2, '#a89a8a'); R(5, 0, 1, 1, '#f8d070'); R(6, 0, 1, 1, '#fff8c0'); },
   // bulle (message)
   talk: (R) => { R(0, 0, 7, 5, '#fdf6e0'); R(1, 5, 2, 1, '#fdf6e0'); R(1, 6, 1, 1, '#fdf6e0'); R(1, 2, 1, 1, '#6a4426'); R(3, 2, 1, 1, '#6a4426'); R(5, 2, 1, 1, '#6a4426'); },
 };
@@ -774,6 +776,8 @@ export class RtsScene extends MiniScene {
     this.alert = null; // dernier endroit attaqué chez moi
     this.alertAt = -1e9;
     this.lastHp = new Map();
+    this.bHit = new Map(); // bâtiment -> dernière fois qu'il a perdu des PV (on ne démolit pas sous le feu)
+    this.demoArm = null;
     this.rally = null;
     this.weeds = [0, 1, 2].map((k) => ({ x: -20 - k * 260, y: 30 + hash(seed + k) * (MH - 60), sp: 10 + k * 4 }));
     this.pending = []; // constructions et recrues envoyées, pas encore dans un instantané
@@ -911,6 +915,7 @@ export class RtsScene extends MiniScene {
     let hurt = null;
     for (const b of blds) {
       const was = this.lastHp.get(b.id);
+      if (was != null && b.hp < was - 0.5) this.bHit.set(b.id, this.now);
       if (b.owner === this.me && was != null && b.hp < was - 0.5 && b.maxHp <= (prev.blds.find((x) => x.id === b.id)?.maxHp ?? b.maxHp) && (!hurt || b.kind === 'fort')) hurt = b;
       this.lastHp.set(b.id, b.hp);
     }
@@ -931,7 +936,7 @@ export class RtsScene extends MiniScene {
     if (ev.type === 'snap') { this.applySnap(ev); return; }
     if (ev.type === 'razed') {
       this.boom(ev.x, ev.y, ev.kind === 'fort' ? 2 : 1);
-      if (ev.owner === this.me && ev.kind !== 'fort') this.say(`TU AS PERDU : ${BUILDINGS[ev.kind]?.name.toUpperCase() || ''}`, '#f0705a');
+      if (ev.demo) { if (ev.owner === this.me) this.say(`DÉMOLITION : ${BUILDINGS[ev.kind]?.name.toUpperCase() || ''}`, '#e8d8b8', 1600); } else if (ev.owner === this.me && ev.kind !== 'fort') this.say(`TU AS PERDU : ${BUILDINGS[ev.kind]?.name.toUpperCase() || ''}`, '#f0705a');
       else if (ev.by === this.me && ev.kind !== 'fort') { const p = this.toScreen(ev.x, ev.y); this.popup(p.x, p.y - 10, '+40', '#f8d070'); }
     } else if (ev.type === 'fortDown') {
       if (ev.who === this.me) { this.say('TON FORT EST TOMBÉ…', '#f0705a', 5000); sfx('defeat'); } else {
@@ -1178,6 +1183,7 @@ export class RtsScene extends MiniScene {
         list.push({ type: 'say', to: j, x: 222, y, w: 32, h: 11 });
       });
     } else if (b && b.owner === this.me) {
+      if (b.kind !== 'fort') list.push({ type: 'demolish', x: 72, y: PY + 12, w: 22, h: 11 });
       list.push({ type: 'up', x: 96, y: PY + 2, w: 40, h: 34 });
       const from = UNIT_IDS.filter((k) => UNITS[k].from === b.kind);
       let x = 140;
@@ -1233,6 +1239,7 @@ export class RtsScene extends MiniScene {
     if (b.type === 'unit') this.train(b.id);
     else if (b.type === 'tech') this.research(b.id);
     else if (b.type === 'up') this.upgrade();
+    else if (b.type === 'demolish') this.demolish();
     else if (b.type === 'all') this.selectAll();
     else if (b.type === 'cmd') {
       if (b.id === 'amove') { this.armed = this.armed ? null : 'amove'; sfx('click'); } else this.command(b.id);
@@ -1337,6 +1344,30 @@ export class RtsScene extends MiniScene {
     sfx('clank');
     this.hooks.send({ kind: 'upgrade', bid: b.id });
     this.pendingUp = { id: b.id, lv: b.lv, at: this.now };
+  }
+
+  // ce qui empêche de démolir ce bâtiment (ou null)
+  demoBlock(b) {
+    if (!b || b.owner !== this.me) return 'CHOISIS UN DE TES BÂTIMENTS';
+    if (b.kind === 'fort') return 'ON NE DÉMOLIT PAS SON FORT';
+    if (this.now - (this.bHit.get(b.id) ?? -1e9) < RTS.regen.calm) return 'SOUS LE FEU : IMPOSSIBLE';
+    return null;
+  }
+
+  // démolir (il faut appuyer deux fois)
+  demolish() {
+    const b = this.selBld();
+    const why = this.demoBlock(b);
+    if (why) { sfx('dry'); this.say(why, '#f0705a', 1600); return; }
+    const name = BUILDINGS[b.kind].name.toUpperCase();
+    if (!(this.demoArm?.id === b.id && this.now - this.demoArm.at < 2500)) {
+      this.demoArm = { id: b.id, at: this.now };
+      sfx('click');
+      this.say(`ENCORE UNE FOIS POUR DÉMOLIR : ${name} (+${refundOf(b, this.snapB.blds)} OR)`, '#f8d070', 2500);
+      return;
+    }
+    this.demoArm = null;
+    this.hooks.send({ kind: 'demolish', bid: b.id });
   }
 
   order(o) { this.hooks.send({ kind: 'order', ...o }); }
@@ -1490,6 +1521,7 @@ export class RtsScene extends MiniScene {
     if (k === 's' && this.sel.size) { this.press({ type: 'cmd', id: 'hold' }); return; }
     if (k === 'x' && this.sel.size) { this.press({ type: 'cmd', id: 'stop' }); return; }
     if (k === 'u' && this.mode === 'bld') { this.press({ type: 'up' }); return; }
+    if ((k === 'delete' || k === 'backspace') && this.mode === 'bld' && this.selBld()?.owner === this.me) { this.press({ type: 'demolish' }); return; }
     if (k === '+' || k === '=' || k === 'pageup') { this.zoomStep(1); return; }
     if (k === ')' || k === '_' || k === 'pagedown') { this.zoomStep(-1); return; }
     const bi = BUILD_KEYS.findIndex((ks) => ks.includes(k));
@@ -2203,6 +2235,9 @@ export class RtsScene extends MiniScene {
         sub = nx ? String(nx[0]) : 'MAX';
         subCol = !nx ? '#a89a8a' : ok ? '#8ad870' : '#e08a7a';
         on = selB?.up > 0;
+      } else if (b.type === 'demolish') {
+        ok = can && !this.demoBlock(selB);
+        on = this.demoArm?.id === selB?.id && now - this.demoArm.at < 2500;
       } else if (b.type === 'defend') {
         on = o === -1 && !selN; label = 'DÉFENDRE';
       } else if (b.type === 'all') {
@@ -2250,6 +2285,8 @@ export class RtsScene extends MiniScene {
         ctx.drawImage(icon('up'), b.x + 1, b.y + 1);
         canvasText(ctx, nx ? `NIV.${selB.lv + 1}` : 'MAX', b.x + b.w - 2, b.y + 2, { align: 'right', color: '#fdf6e0' });
         if (selB?.up > 0 && nx) this.bar(ctx, b.x + 4, b.y + 18, b.w - 8, 1 - selB.up / nx[1], '#8ad870');
+      } else if (b.type === 'demolish') {
+        ctx.drawImage(icon('dyn'), b.x + 7, b.y + 1);
       } else if (b.type === 'gift') {
         ctx.drawImage(icon(b.res), b.x + 2, b.y + 1);
         canvasText(ctx, `+${DIPLO.gift[b.res]}`, b.x + b.w - 2, b.y + 2, { align: 'right', color: b.res === 'gold' ? '#f8d070' : '#f0c8a8' });
@@ -2505,6 +2542,15 @@ export class RtsScene extends MiniScene {
         status = this.upBlock(selB);
         if (status === 'AMÉLIORATION EN COURS') stCol = '#8ad870';
       }
+    } else if (b.type === 'demolish') {
+      if (!selB) return;
+      title = `DÉMOLIR : ${BUILDINGS[selB.kind]?.name.toUpperCase() || ''} (${this.touch ? 'DEUX FOIS' : 'SUPPR'})`;
+      lines.push([{ icon: 'gold' }, `+${refundOf(selB, this.snapB.blds)} RENDUS`]);
+      lines.push([selB.build > 0 ? 'CHANTIER PAS FINI : TOUT EST RENDU' : 'LA MOITIÉ DU PRIX ET DES AMÉLIORATIONS']);
+      if (selB.queue.length) lines.push(['LA FILE DE RECRUTEMENT EST REMBOURSÉE']);
+      lines.push(['LA PLACE EST LIBÉRÉE']);
+      status = this.demoBlock(selB) || (this.touch ? 'TOUCHE DEUX FOIS POUR DÉMOLIR' : 'CLIQUE DEUX FOIS POUR DÉMOLIR');
+      if (!this.demoBlock(selB)) stCol = '#f8d070';
     } else if (b.type === 'defend') {
       title = 'DÉFENDRE LE FORT (D)';
       lines.push([selN ? 'LES UNITÉS CHOISIES RENTRENT AU FORT' : 'TOUTE TON ARMÉE RENTRE AU FORT']);

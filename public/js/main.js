@@ -1,5 +1,6 @@
 // Point d'entrée : écrans, réseau, lobby, interface de jeu.
-import { Net, fetchLeaderboard, preloadGame, preloadRealtime } from './net.js';
+import { Net, preloadGame, preloadRealtime, playableAt, tourneyFor } from './net.js';
+import { INVITE_URL } from './config.js';
 import { initAudio, playMusic, nextTrack, sfx, toggleMute, setVolume, audioSettings, setMood } from './audio.js';
 import { Scene } from './scene.js';
 import { Editor, drawPortraitInto } from './editor.js';
@@ -7,6 +8,7 @@ import * as S from './sprites.js';
 import { ITEMS } from './data.js';
 import { MODES, PLAYER_COLORS, TEAM_NAMES } from './worlds.js';
 import { VARIANTS, variantName } from './variants.js';
+import { encodePlayers } from './invitelook.js';
 import { gameIcon } from './gameicons.js';
 import { TouchPad } from './touch.js';
 
@@ -32,6 +34,8 @@ const MINI_SCENES = {
   rts: () => import('./rts.js').then((m) => m.RtsScene),
   fps: () => import('./fps.js').then((m) => m.FpsScene),
   fpsdm: () => import('./fps.js').then((m) => m.FpsDmScene),
+  bagarre: () => import('./bagarre.js').then((m) => m.BagarreScene),
+  melee: () => import('./brawl.js').then((m) => m.BrawlScene),
 };
 const sceneCls = {}; // jeu -> classe de sa scène, une fois chargée
 const sceneLoads = {}; // jeu -> chargement en cours
@@ -49,6 +53,9 @@ function preload(kind) {
   if (!lobby || isHostOf(lobby)) preloadGame(kind); // l'arbitre, pour l'hôte (ou le jeu solo)
 }
 let screen = 'title';
+// Tournoi : match affiché (le sien, ou celui qu'on regarde depuis le banc) ; watching : en spectateur
+let curMatch = null;
+let watching = false;
 const pad = new TouchPad(document.getElementById('touchpad')); // commandes tactiles des mini-jeux
 let pending = false;
 let lassoSlot = -1;
@@ -126,7 +133,8 @@ try {
 
 // Fenêtre de confirmation au style du jeu (remplace confirm()) : renvoie une promesse (true = confirmé).
 // Échap ou un clic à côté = annuler. Pour une action risquée (danger), le focus est sur « annuler ».
-// field : un texte à saisir ({ value, placeholder, max }), lu dans $('modal-field') une fois confirmé.
+// field : un texte à saisir ({ value, placeholder, max, line }), lu dans $('modal-field') une fois confirmé ;
+// line : une seule ligne, validée par Entrée.
 let modalDone = null;
 function askConfirm({ title, text, yes = 'Oui', no = 'Annuler', icon = null, danger = false, field = null }) {
   if (modalDone) modalDone(false); // une seule question à la fois
@@ -142,6 +150,8 @@ function askConfirm({ title, text, yes = 'Oui', no = 'Annuler', icon = null, dan
     f.value = field.value || '';
     f.placeholder = field.placeholder || '';
     f.maxLength = field.max || 500;
+    f.rows = field.line ? 1 : 3;
+    f.classList.toggle('line', !!field.line);
   }
   $('modal').classList.remove('hidden');
   const before = document.activeElement;
@@ -164,6 +174,7 @@ document.addEventListener('keydown', (e) => {
   if (!modalDone) return;
   e.stopImmediatePropagation();
   if (e.key === 'Escape') { e.preventDefault(); modalDone(false); }
+  else if (e.key === 'Enter' && e.target === $('modal-field') && $('modal-field').classList.contains('line')) { e.preventDefault(); modalDone(true); }
   else if (e.key === 'Tab') {
     e.preventDefault();
     const els = [$('modal-field'), $('modal-no'), $('modal-yes')].filter((el) => !el.classList.contains('hidden'));
@@ -178,6 +189,7 @@ function setMusic(name) {
 }
 
 function show(name) {
+  if (screen === 'editor' && name !== 'editor') editor.close();
   screen = name;
   hideSpin();
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('hidden', s.id !== `scr-${name}`);
@@ -186,7 +198,7 @@ function show(name) {
   $('hud').classList.toggle('hidden', !game);
   $('bottombar').classList.toggle('hidden', !game);
   $('scr-game').classList.toggle('multi', game && !!lobby && !lobby.solo); // bouton de chat tactile
-  if (!game) { $('progress-fill').style.width = '0'; $('tooltip').classList.add('hidden'); bgStart(); }
+  if (!game) { $('progress-fill').style.width = '0'; $('tooltip').classList.add('hidden'); $('watch-bar').classList.add('hidden'); bgStart(); }
   if (name === 'menu' || name === 'title') applyUpdate(); // nouvelle version du site : on la prend ici, jamais en pleine partie
 }
 
@@ -365,8 +377,16 @@ net.on('welcome', ({ user: u }) => {
 
 net.on('user', ({ user: u }) => {
   if (!u) return;
+  const renamed = u.username !== user?.username;
   user = u;
+  if (renamed) {
+    // nouveau pseudo choisi à une table : il devient celui de ce navigateur
+    savedName = u.username;
+    try { localStorage.setItem('bs-user', u.username); } catch {}
+    $('tb-info').textContent = `@${u.username}`;
+  }
   if (screen === 'menu') showMenu();
+  else if (screen === 'lobby' && renamed && lobby) showLobby();
 });
 
 net.on('error', ({ text }) => {
@@ -386,9 +406,8 @@ net.on('kicked', ({ text }) => {
 });
 
 // ------------------------------------------------------------ menu
-// board : false quand une mise à jour du joueur va suivre (elle rafraîchira le classement)
 let rtTimer = 0;
-async function showMenu(board = true) {
+function showMenu() {
   show('menu');
   // au repos sur le menu : la bibliothèque du canal Realtime se charge en douce (créer ou rejoindre une table sans attendre)
   clearTimeout(rtTimer);
@@ -400,10 +419,6 @@ async function showMenu(board = true) {
     <div class="poster-name">${esc(user.username)}</div><div class="poster-sub">Récompense : $${100 + user.stats.wins * 250}</div>`;
   drawPortraitInto(poster.querySelector('canvas'), user.character);
   renderMenuStats(user.stats || {}, user.history || []);
-  if (!board) return;
-  try {
-    renderLeaderboard(await fetchLeaderboard());
-  } catch {}
 }
 
 // Palmarès : trois tuiles (roulette, solo, mini-jeux), les tirs, puis les 3 dernières parties.
@@ -428,24 +443,13 @@ function renderMenuStats(s, history) {
     ${last ? `<ul class="last">${last}</ul>` : '<p class="empty">Aucune partie pour l’instant.</p>'}`;
 }
 
-// Classement de la roulette : rang, portrait, pseudo, victoires et défaites alignées ; ta ligne ressort.
-function renderLeaderboard(lb) {
-  const ol = $('leaderboard');
-  if (!lb.length) { ol.innerHTML = '<li class="empty">Personne encore… à toi l’honneur.</li>'; return; }
-  const me = user?.username.toLowerCase();
-  ol.innerHTML = lb.map((u, i) => `
-    <li class="${u.username.toLowerCase() === me ? 'me' : ''}" title="${esc(u.username)} : ${u.wins} victoires, ${u.losses} défaites">
-      <span class="rk">${i + 1}</span><canvas width="56" height="60"></canvas><span class="nm">${esc(u.username)}</span>
-      <span class="v">${u.wins}<small>V</small></span><span class="d">${u.losses}<small>D</small></span>
-    </li>`).join('');
-  ol.querySelectorAll('canvas').forEach((c, i) => drawPortraitInto(c, lb[i].character || {}));
-}
-
 // Cartes des jeux en solo (nom court et adversaires ; nom complet et règle en infobulle)
 const SOLO = {
   roulette: ['Roulette', '1 bot'], shooter: ['Fusillade', '3 bots'], lasso: ['Lasso', '3 bots'], duel: ['Duel', '1 bot'],
   charlie: ['Charlie', '3 bots'], fort: ['Fort', 'toi + 1 bot'], wagon: ['Roulotte', '3 bots'], pinte: ['Pinte', '3 bots'], mine: ['Mine', '3 bots'],
   course: ['Course', '3 bots'], rts: ['Conquête', '3 bots'], fps: ['Règlement', '3 bots'], fpsdm: ['Mort ou vif', '3 bots'],
+  bagarre: ['Bagarre', '5 cogneurs'],
+  melee: ['La mêlée', '5 bots'],
 };
 // Pages de 2 × 3 jeux, parcourues avec les flèches ; les cases vides annoncent les prochains jeux.
 const SOLO_PAGE = 6;
@@ -504,11 +508,26 @@ $('btn-logout').onclick = () => {
 };
 
 // ------------------------------------------------------------ éditeur
+// Ouvert depuis le menu ou depuis le lobby : on y revient en sortant (la table continue pendant ce temps).
+const editorBack = () => (lobby && !lobby.solo ? showLobby() : showMenu());
 const editor = new Editor({
-  onSave: (c) => { net.send({ t: 'saveChar', character: c }); user.character = c; showMenu(false); }, // le message « user » qui suit rafraîchit le classement
-  onBack: () => showMenu(),
+  onSave: (c) => { net.send({ t: 'saveChar', character: c }); user.character = c; editorBack(); },
+  onBack: editorBack,
 });
-$('btn-edit').onclick = () => { show('editor'); editor.open(user.character, user.username); };
+const openEditor = () => { show('editor'); editor.open(user.character, user.username); };
+$('btn-edit').onclick = openEditor;
+
+// Changer de pseudo à une table : la place, le palmarès et le pseudo retenu suivent le nouveau nom.
+async function renameAtTable() {
+  if (!(await askConfirm({
+    title: 'Changer de pseudo',
+    text: 'Ton nouveau nom à la table. Le palmarès suit le pseudo : un pseudo neuf repart de zéro.',
+    yes: 'Changer', no: 'Annuler', icon: 'hat',
+    field: { value: user.username, placeholder: 'Nouveau pseudo', max: 16, line: true },
+  }))) return;
+  const name = $('modal-field').value.trim();
+  if (name && name !== user.username) net.send({ t: 'rename', username: name });
+}
 
 // ------------------------------------------------------------ lobby
 net.on('lobby', ({ lobby: l }) => {
@@ -524,10 +543,11 @@ net.on('lobby', ({ lobby: l }) => {
       }
     }
   }
-  if (l.inGame) {
+  if (l.tourney && l.inGame) onTourney();
+  else if (l.inGame) {
     if (screen !== 'game' || !$('gameover').classList.contains('hidden')) enterGame(l.game);
   } else if (screen === 'game') updateGameOver();
-  else if (!l.solo) showLobby();
+  else if (!l.solo && screen !== 'editor') showLobby(); // chez le tailleur : la table attend qu'on revienne
 });
 
 function closeScenes() {
@@ -540,6 +560,8 @@ function closeScenes() {
 
 net.on('left', () => {
   lobby = null;
+  curMatch = null;
+  watching = false;
   setUrl(null);
   closeScenes();
   showMenu();
@@ -553,7 +575,6 @@ const FORMATS = {
 };
 const ROUNDS = [3, 5, 7, 10];
 const playersText = (m) => (m.min === m.max ? `${m.min} joueurs` : `${m.min} à ${m.max} joueurs`);
-const fits = (m, n) => n >= m.min && n <= m.max;
 
 function showLobby() {
   if (screen !== 'lobby') { show('lobby'); setMusic('menu'); }
@@ -568,7 +589,7 @@ function showLobby() {
   const champOn = !!champ && !champ.done;
   const lock = !isHost || l.spinning; // réglages réservés à l'hôte, figés pendant le tirage
   $('lobby-code').textContent = l.code;
-  $('lobby-link').value = `${location.origin}/?lobby=${l.code}`;
+  $('lobby-link').value = inviteUrl(l);
   const lk = $('btn-lock');
   lk.textContent = l.locked ? 'Table fermée' : 'Table ouverte';
   lk.classList.toggle('on', !!l.locked);
@@ -605,16 +626,19 @@ function showLobby() {
   renderSeats(l, isHost);
   renderChampBoard(l, isHost);
 
-  const compat = pool.filter((id) => MODES[id] && fits(MODES[id], n));
+  const compat = pool.filter((id) => playableAt(id, n));
   const start = $('btn-start');
   start.classList.toggle('hidden', !isHost);
   let hint;
   if (single) {
-    const tooMany = n > mode.max;
+    const tooMany = n > mode.max && !tourneyFor(l.mode, n);
+    const cup = tourneyFor(l.mode, n);
     start.disabled = n < mode.min || tooMany || l.spinning;
-    start.textContent = `Lancer : ${SOLO[l.mode]?.[0] || mode.name}${variant ? ` — ${variantName(l.mode, variant)}` : ''}`;
+    start.textContent = `Lancer : ${SOLO[l.mode]?.[0] || mode.name}${cup ? ' en tournoi' : ''}${variant ? ` — ${variantName(l.mode, variant)}` : ''}`;
     hint = tooMany
       ? `${mode.name} se joue à ${mode.max} maximum. ${isHost ? 'Choisis un autre jeu.' : 'L’hôte doit choisir un autre jeu.'}`
+      : cup
+        ? `À ${n}, ${mode.name} se joue en tournoi : des duels en même temps, les gagnants passent au tour suivant${n % 2 ? ' (un bot complète le tableau)' : ''}. Les autres regardent depuis le banc.`
       : n < mode.min
         ? 'Partage le lien ou le code, ou ajoute un bot. La partie commence quand l’hôte la lance.'
         : isHost ? 'Choisis le jeu et lance la partie !' : `L’hôte va lancer : ${mode.name}…`;
@@ -650,11 +674,12 @@ function renderModes() {
   $('modes').innerHTML = ids.map((id) => {
     const m = MODES[id];
     const short = SOLO[id]?.[0] || m.name;
-    const ok = fits(m, n);
-    const head = `${icoImg(gameIcon(id))}<b>${esc(short)}</b><small>${playersText(m)}</small>`;
+    const ok = playableAt(id, n);
+    const cup = tourneyFor(id, n);
+    const head = `${icoImg(gameIcon(id))}<b>${esc(short)}</b><small>${cup ? 'en tournoi' : playersText(m)}</small>`;
     if (single) {
-      // les jeux trop petits pour la table sont grisés (ex. roulette et duel au-delà de 2 joueurs)
-      const full = n > m.max;
+      // les jeux trop petits pour la table sont grisés ; les jeux à deux passent en tournoi
+      const full = !ok && n > m.max;
       return `<button type="button" class="solo-card${l.mode === id ? ' on' : ''}${full ? ' full' : ''}" data-mode="${id}" ${lock || full ? 'disabled' : ''}
         title="${esc(m.name)} : ${esc(m.sub)}${full ? ` (${m.max} joueurs maximum)` : ''}">${head}</button>`;
     }
@@ -707,10 +732,14 @@ function renderSeats(l, isHost) {
       const me = p.name === user.username;
       const host = key === l.host;
       d.className = `seat${p.bot ? ' bot' : ''}${host ? ' host' : ''}`;
-      const acts = canEdit && !me
-        ? `<div class="seat-acts">${!p.bot && p.connected ? `<button type="button" class="sa" data-give="${esc(key)}" data-name="${esc(p.name)}" title="Confier la table à ${esc(p.name)}"><img class="px-ico" src="${ICON.star}" width="14" height="14" alt="Hôte"></button>` : ''}
+      // ta place : changer de tenue ou de pseudo (pas pendant le tirage de la roue) ; les autres : actions de l'hôte
+      const acts = me
+        ? (l.spinning ? '' : `<div class="seat-acts"><button type="button" class="sa" data-outfit title="Changer de tenue">${pxIcon('hat', 1)}</button>
+          <button type="button" class="sa txt" data-rename title="Changer de pseudo">Aa</button></div>`)
+        : canEdit
+          ? `<div class="seat-acts">${!p.bot && p.connected ? `<button type="button" class="sa" data-give="${esc(key)}" data-name="${esc(p.name)}" title="Confier la table à ${esc(p.name)}"><img class="px-ico" src="${ICON.star}" width="14" height="14" alt="Hôte"></button>` : ''}
           <button type="button" class="sa kick" data-kick="${esc(key)}" data-name="${esc(p.name)}" data-isbot="${p.bot ? 1 : ''}" title="${p.bot ? 'Retirer' : 'Expulser'} ${esc(p.name)}">${pxIcon('close', 1)}</button></div>`
-        : '';
+          : '';
       d.innerHTML = `${acts}<canvas width="56" height="60"></canvas><div class="nm">${esc(p.name)}</div>
         <div class="tag">${host ? `<img class="px-ico" src="${ICON.star}" width="14" height="14" alt=""> hôte ` : ''}${me ? '(toi)' : ''}${p.bot ? '<span class="botag">bot</span>' : ''} ${p.connected ? '' : '<span class="off">déconnecté</span>'}</div>`;
     }
@@ -731,8 +760,10 @@ function renderSeats(l, isHost) {
 
 $('seats').onclick = async (e) => {
   if (!lobby) return;
-  const b = e.target.closest('[data-invite], [data-bot], [data-kick], [data-give]');
+  const b = e.target.closest('[data-invite], [data-bot], [data-kick], [data-give], [data-outfit], [data-rename]');
   if (!b) return;
+  if (b.dataset.outfit !== undefined) return openEditor();
+  if (b.dataset.rename !== undefined) return renameAtTable();
   if (b.dataset.kick !== undefined) {
     const name = b.dataset.name;
     if (!b.dataset.isbot && !(await askConfirm({
@@ -841,11 +872,23 @@ async function copyText(v, input) {
 }
 
 // ------------------------------------------------------------ invitation
-// Le message part avec le lien : celui du joueur s'il en a écrit un (gardé sur ce navigateur),
-// sinon un message qui décrit la table (jeu ou déroulé, places libres).
+// Le lien porte le pseudo et le message de celui qui invite : invite/worker.js en fait l'aperçu du lien
+// (Discord, WhatsApp…) « <pseudo> t'attend au Buckshot Saloon ! », puis envoie le joueur à la table.
+// Le message : celui du joueur s'il en a écrit un (gardé sur ce navigateur), sinon une description de la table.
 const INVITE_KEY = 'bs-invite';
 let inviteMsg = '';
 try { inviteMsg = localStorage.getItem(INVITE_KEY) || ''; } catch {}
+
+// avec le worker : https://<worker>/CODE/pseudo?m=message&p=joueurs&s=chaises ; sans : lien direct vers la table (aperçu générique)
+// . ! ( ) ' ~ * encodés aussi : Discord coupe la ponctuation en fin de lien
+const encodeAll = (s) => encodeURIComponent(s).replace(/[.!'()*~]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+function inviteUrl(l) {
+  if (!INVITE_URL) return `${location.origin}/?lobby=${l.code}`;
+  const who = user ? `/${encodeAll(user.username)}` : '';
+  // p : les joueurs déjà assis (apparence et nom) pour l'image de l'aperçu ; s : nombre de chaises
+  return `${INVITE_URL.replace(/\/$/, '')}/${l.code}${who}?m=${encodeAll(inviteMsg || autoInvite(l))}`
+    + `&p=${encodeAll(encodePlayers(l.players))}&s=${l.max || 6}`;
+}
 
 function inviteWhat(l) {
   if (l.format === 'wheel') return 'la roue des jeux';
@@ -858,32 +901,27 @@ function inviteWhat(l) {
 function autoInvite(l) {
   const free = (l.max || 6) - l.players.length;
   const seats = free > 1 ? ` Encore ${free} chaises libres.` : free === 1 ? ' Plus qu’une chaise libre !' : '';
-  return `${user?.username || 'Un cowboy'} t’attend au Buckshot Saloon pour ${inviteWhat(l)}.${seats}`;
-}
-
-// { text: message + code, url } pour le partage ; full : tout d'un bloc pour le presse-papiers
-function inviteText(l) {
-  const text = `${inviteMsg || autoInvite(l)}\nTable ${l.code}`;
-  const url = $('lobby-link').value;
-  return { text, url, full: `${text} : ${url}` };
+  return `Une table pour ${inviteWhat(l)}.${seats}`;
 }
 
 $('btn-invite-msg').onclick = async () => {
   if (!lobby) return;
   if (!(await askConfirm({
     title: 'Message d’invitation',
-    text: 'Envoyé avec le lien et le code de la table. Laisse vide pour le message automatique.',
+    text: 'Il s’affiche dans l’aperçu du lien (Discord, WhatsApp…). Laisse vide pour décrire la table automatiquement.',
     yes: 'Enregistrer', no: 'Annuler', icon: 'hat',
     field: { value: inviteMsg, placeholder: autoInvite(lobby), max: 200 },
   }))) return;
   inviteMsg = $('modal-field').value.trim();
   try { inviteMsg ? localStorage.setItem(INVITE_KEY, inviteMsg) : localStorage.removeItem(INVITE_KEY); } catch {}
   $('btn-invite-msg').classList.toggle('on', !!inviteMsg);
+  if (lobby) $('lobby-link').value = inviteUrl(lobby);
 };
 $('btn-invite-msg').classList.toggle('on', !!inviteMsg);
 
+// le message est dans l'aperçu du lien : on n'envoie que le lien
 async function copyLink() {
-  await copyText(inviteText(lobby).full, $('lobby-link'));
+  await copyText($('lobby-link').value, $('lobby-link'));
   $('btn-copy').textContent = 'Copié !';
   setTimeout(() => ($('btn-copy').textContent = 'Copier'), 1500);
 }
@@ -948,18 +986,19 @@ net.on('spin', ({ pick, pool, round, rounds }) => {
 
 // La partie a été interrompue (l'hôte est parti en plein mini-jeu) : retour à la table.
 net.on('aborted', () => {
+  curMatch = null;
+  watching = false;
   if (screen !== 'game') return;
   closeScenes();
   if (lobby && !lobby.solo) showLobby();
   else showMenu();
 });
 
-// Partage natif (mobile, Windows…) si dispo, sinon copie de l'invitation
+// Partage natif (mobile, Windows…) si dispo, sinon copie du lien
 async function invite() {
   if (navigator.share) {
-    const { text, url } = inviteText(lobby);
     try {
-      return await navigator.share({ title: 'Buckshot Saloon', text, url });
+      return await navigator.share({ title: 'Buckshot Saloon', url: $('lobby-link').value });
     } catch (e) { if (e.name === 'AbortError') return; }
   }
   copyLink();
@@ -1056,7 +1095,7 @@ setInterval(() => { if (mini && screen === 'game') renderMiniHud(); }, 250);
 
 function updateControls() {
   const st = scene?.state;
-  const myTurn = !!st && st.phase === 'playing' && st.turn === st.me && !scene.busy && !pending;
+  const myTurn = !watching && !!st && st.phase === 'playing' && st.turn === st.me && !scene.busy && !pending;
   $('btn-shoot-opp').disabled = !myTurn || scene.stealMode;
   $('btn-shoot-self').disabled = !myTurn || scene.stealMode;
   // pari : une fois par chargement, et seulement s'il reste des cartouches des deux couleurs (d'après l'annonce)
@@ -1103,7 +1142,7 @@ function whenScene(kind, fn) {
       console.error(e);
       if (miniHold !== hold) return;
       miniHold = null;
-      toast('Impossible de charger ce jeu (réseau ?). Quitte la table et réessaie.');
+      toast(`Impossible de charger ce jeu (réseau ?). Quitte la table et réessaie. <small>(${esc(`${e?.name || 'Erreur'} : ${e?.message || e}`)})</small>`);
     });
   }
   miniHold.todo.push(fn);
@@ -1114,6 +1153,8 @@ function enterRoulette() {
   show('game');
   setMusic('game');
   $('gameover').classList.add('hidden');
+  $('bottombar').classList.toggle('hidden', watching); // en spectateur : pas de boutons de tir
+  showWatchBar();
   $('toasts').innerHTML = '';
   closeScenes();
   liveMark('roulette');
@@ -1179,13 +1220,16 @@ function enterMini(kind) {
   closeScenes();
   liveMark(kind);
   const MiniCls = sceneCls[sceneKey(kind)];
+  const watch = watching; // en spectateur : ni coups ni positions envoyés
   mini = new MiniCls($('game'), {
-    send: (action) => net.send({ t: 'action', action }),
-    live: (d) => net.sendLive(d),
+    send: (action) => { if (!watch) net.send({ t: 'action', action }); },
+    live: (d) => { if (!watch) net.sendLive(d); },
     onState: queueHud,
     onEnd: showMiniOver,
   });
-  pad.attach(mini);
+  mini.watch = watch;
+  if (!watch) pad.attach(mini);
+  showWatchBar();
   hudHtml = hudBar = null; // le HUD et la barre ont pu servir à la roulette ou être remis à zéro entre-temps
   renderMiniHud();
 }
@@ -1202,7 +1246,7 @@ function renderMiniHud() {
   setMood(mini.mood());
   const stats = mini.hudStats().map(([k, v, cls]) => `<span class="${cls}">${k} ${v}</span>`).join('');
   const players = st.players.map((p, i) => `<span class="pl" style="color:${PLAYER_COLORS[i]}${p.left ? ';opacity:.5' : ''}" title="${esc(p.name)}">
-    <span class="nm">${esc(i === st.me ? 'Toi' : p.name)}</span>${p.score}</span>`).join('');
+    <span class="nm">${esc(i === st.me && !watching ? 'Toi' : p.name)}</span>${p.score}</span>`).join('');
   const ms = mini.clock();
   const r = Math.ceil((ms ?? 0) / 1000);
   const clock = ms == null ? '' : `<span class="cream">${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}</span>`;
@@ -1214,7 +1258,7 @@ function renderMiniHud() {
 
 function showMiniOver(ev) {
   const st = mini.state;
-  const me = st.me;
+  const me = watching ? -1 : st.me;
   const ranking = ev.ranking?.length ? ev.ranking : st.players.map((_, i) => i).sort((a, b) => st.players[b].score - st.players[a].score);
   const rank = ranking.indexOf(me) + 1;
   // jeux en équipes (assaut du fort) : toute l'équipe gagne ou perd
@@ -1222,24 +1266,41 @@ function showMiniOver(ev) {
   const tie = teams ? ev.tie : ev.tie && st.players[me].score === st.players[ranking[0]].score;
   const win = teams ? ev.winners.includes(me) : rank === 1 && !ev.tie;
   $('gameover').classList.remove('hidden');
-  $('go-title').textContent = win ? 'VICTOIRE !' : tie ? 'ÉGALITÉ !' : teams ? 'DÉFAITE !' : `${rank}e PLACE`;
-  $('go-title').style.color = win ? 'var(--green)' : tie ? 'var(--yellow)' : 'var(--salmon)';
-  const unit = MODES[mini.kind]?.unit || 'pts';
+  $('go-title').textContent = watching ? (ev.tie ? 'ÉGALITÉ !' : `${st.players[ranking[0]].name.toUpperCase()} GAGNE`)
+    : win ? 'VICTOIRE !' : tie ? 'ÉGALITÉ !' : teams ? 'DÉFAITE !' : `${rank}e PLACE`;
+  $('go-title').style.color = watching ? 'var(--yellow)' : win ? 'var(--green)' : tie ? 'var(--yellow)' : 'var(--salmon)';
+  const unit = mini.unit?.() || MODES[mini.kind]?.unit || 'pts';
   const head = teams && ev.teams ? `<b>${TEAM_NAMES[0]} ${ev.teams[0]} — ${TEAM_NAMES[1]} ${ev.teams[1]}</b> (moyenne par joueur)<br>` : '';
   $('go-sub').innerHTML = head + ranking.map((i, k) => {
     const p = st.players[i];
     return `<span style="color:${PLAYER_COLORS[i]}">${k + 1}. ${esc(p.name)} — ${p.score} ${unit}${p.left ? ' (parti)' : ''}</span>`;
   }).join('<br>');
-  sfx(win ? 'victory' : 'defeat');
-  if (win) sfx('yeehaw', 0.4);
+  if (!watching) {
+    sfx(win ? 'victory' : 'defeat');
+    if (win) sfx('yeehaw', 0.4);
+  }
   setTimeout(() => { if (screen === 'game') setMusic('menu'); }, 3500);
   updateGameOver();
 }
 
 net.on('live', ({ from, d }) => { if (mini && screen === 'game') mini.onLive(from, d); });
 
-net.on('events', ({ events }) => {
+// Tournoi : les messages d'un match portent son id (match) et, pour un spectateur, watch. Ceux d'un match
+// qu'on ne suit plus sont ignorés ; le début d'un autre match (le sien au tour suivant) remplace la scène.
+function followMatch(match, watch, starts) {
+  const tag = match ?? null;
+  if (tag === curMatch && !!watch === watching) return 'same';
+  if (!starts) return 'stale';
+  curMatch = tag;
+  watching = !!watch;
+  return 'new';
+}
+
+net.on('events', ({ events, match, watch }) => {
   const kind = events[0]?.state?.kind;
+  const follow = followMatch(match, watch, events.some((ev) => ev.type === 'mgStart' || ev.type === 'intro'));
+  if (follow === 'stale') return;
+  if (follow === 'new') closeScenes();
   if (kind) {
     whenScene(kind, () => {
       if (!mini || screen !== 'game' || mini.kind !== kind) {
@@ -1256,7 +1317,8 @@ net.on('events', ({ events }) => {
   updateControls();
 });
 
-net.on('sync', ({ state }) => {
+net.on('sync', ({ state, match, watch }) => {
+  if (followMatch(match, watch, true) === 'new') closeScenes();
   if (state.kind) {
     whenScene(state.kind, () => {
       if (!mini || screen !== 'game' || mini.kind !== state.kind) enterMini(state.kind);
@@ -1283,9 +1345,17 @@ function showGameOver(ev) {
   const win = ev.winner === st.me;
   $('gameover').classList.remove('hidden');
   $('tooltip').classList.add('hidden');
+  const me = st.players[st.me], op = st.players[1 - st.me];
+  if (watching) {
+    // spectateur d'un match du tournoi
+    const w = st.players[ev.winner], l = st.players[1 - ev.winner];
+    $('go-title').textContent = `${w.name.toUpperCase()} GAGNE`;
+    $('go-title').style.color = 'var(--yellow)';
+    $('go-sub').textContent = ev.forfeit ? `${l.name} a quitté la table.` : `${w.wins} manche${w.wins > 1 ? 's' : ''} à ${l.wins}.`;
+    return updateGameOver();
+  }
   $('go-title').textContent = win ? 'VICTOIRE !' : 'DÉFAITE…';
   $('go-title').style.color = win ? 'var(--green)' : 'var(--salmon)';
-  const me = st.players[st.me], op = st.players[1 - st.me];
   $('go-sub').textContent = ev.forfeit
     ? (win ? `${op.name} a pris la fuite. Victoire par abandon.` : 'Tu as quitté la table.')
     : `${me.wins} manche${me.wins > 1 ? 's' : ''} à ${op.wins}. ${win ? 'Le saloon te paie un verre.' : 'Le croque-mort prend tes mesures.'}`;
@@ -1299,9 +1369,14 @@ function updateGameOver() {
   const fmt = lobby.solo ? 'single' : lobby.format || 'single';
   const c = fmt === 'champ' ? lobby.champ : null;
   $('go-champ').innerHTML = c ? champHtml(lobby, true) : '';
+  // tournoi : le tableau, et depuis le banc les matchs à regarder ; pas de revanche avant la fin
+  const cup = lobby.tourney;
+  $('go-tourney').innerHTML = cup ? tourneyHtml(cup) : '';
+  $('go-buttons').classList.toggle('hidden', !!cup && cup.phase === 'playing');
+  if (cup && cup.phase === 'playing') return void ($('go-rematch').textContent = '');
   // revanche, nouveau tour de roue ou jeu suivant du championnat : chacun se dit prêt
   $('btn-rematch').textContent = c ? (c.done ? 'Nouveau championnat' : `Jeu suivant (${c.n + 1}/${c.rounds})`)
-    : fmt === 'wheel' ? 'Relancer la roue' : 'Revanche';
+    : fmt === 'wheel' ? 'Relancer la roue' : cup ? 'Nouveau tournoi' : 'Revanche';
   if (lobby.solo) {
     $('btn-rematch').disabled = false;
     $('go-rematch').textContent = '';
@@ -1324,20 +1399,108 @@ $('btn-rematch').onclick = () => net.send({ t: 'rematch' });
 $('btn-go-menu').onclick = () => {
   if (lobby?.solo) return net.send({ t: 'leaveLobby' });
   closeScenes();
+  curMatch = null;
+  watching = false;
   showLobby();
+};
+
+// ------------------------------------------------------------ tournoi : le banc
+const myKey = () => user?.username.toLowerCase();
+const tLive = (t) => (t.rounds[t.rounds.length - 1] || []).filter((m) => m.w == null);
+const roundName = (ms, r) => (ms.length === 1 ? 'Finale' : ms.length === 2 ? 'Demi-finales' : `Tour ${r + 1}`);
+
+// Message du lobby pendant un tournoi : à son match (ses événements arrivent d'eux-mêmes), au match qu'on regarde, ou au banc.
+function onTourney() {
+  const t = lobby.tourney;
+  const mine = tLive(t).find((m) => m.p.some((p) => p.key === myKey()));
+  if (mine) {
+    if (curMatch === mine.id && !watching) return; // ma partie est à l'écran
+    if (screen === 'game' && !$('gameover').classList.contains('hidden')) updateGameOver();
+    return; // ma partie va commencer : ses premiers événements ouvriront la scène
+  }
+  // le match à l'écran (le sien, ou celui qu'on regarde) est de ce tour : sa scène montre la fin d'elle-même
+  if (curMatch && (t.rounds[t.rounds.length - 1] || []).some((m) => m.id === curMatch) && screen === 'game') {
+    if (!$('gameover').classList.contains('hidden')) updateGameOver();
+    return showWatchBar();
+  }
+  showBench();
+}
+
+// Le banc : le panneau de fin de partie, avec le tableau du tournoi et les matchs à regarder.
+function showBench() {
+  if (screen !== 'game') { show('game'); setMusic('menu'); }
+  if (watching) { watching = false; curMatch = null; closeScenes(); }
+  $('bottombar').classList.add('hidden');
+  $('watch-bar').classList.add('hidden');
+  if ($('gameover').classList.contains('hidden')) {
+    // pas de résultat de match à montrer : on est simplement sur le banc
+    $('go-title').textContent = 'LE BANC';
+    $('go-title').style.color = 'var(--yellow)';
+    $('go-sub').textContent = '';
+    $('gameover').classList.remove('hidden');
+  }
+  updateGameOver();
+}
+
+function showWatchBar() {
+  const m = watching && lobby?.tourney ? tLive(lobby.tourney).find((x) => x.id === curMatch) || lobby.tourney.rounds.flat().find((x) => x.id === curMatch) : null;
+  $('watch-bar').classList.toggle('hidden', !m);
+  if (m) $('watch-text').innerHTML = `Tu regardes <b>${esc(m.p[0].name)}</b> contre <b>${esc(m.p[1].name)}</b>`;
+}
+
+function tourneyHtml(t) {
+  const me = myKey();
+  const live = tLive(t);
+  const playing = live.some((m) => m.p.some((p) => p.key === me));
+  const lost = t.rounds.flat().some((m) => m.w != null && m.p[1 - m.w].key === me);
+  const status = t.phase === 'over'
+    ? (t.champion ? `${pxIcon('trophy')} <b>${esc(t.champion)}</b> remporte le tournoi !` : 'Le tournoi s’est arrêté.')
+    : playing ? 'Ton match va commencer…'
+      : lost ? 'Éliminé : regarde la suite depuis le banc.'
+        : t.pause ? 'Qualifié ! Le tour suivant commence dans un instant.'
+          : 'Qualifié ! En attendant les autres matchs, regarde-les depuis le banc.';
+  const rounds = t.rounds.map((ms, r) => {
+    const rows = ms.map((m) => {
+      const side = (k) => {
+        const p = m.p[k];
+        const cls = [m.w === k ? 'won' : m.w === 1 - k ? 'lost' : '', p.key === me ? 'me' : ''].join(' ').trim();
+        return `<span class="${cls}">${esc(p.name)}${p.bot ? '<i class="botag">bot</i>' : ''}</span>`;
+      };
+      const seen = watching && curMatch === m.id;
+      const act = !m.live ? ''
+        : playing || m.p.every((p) => p.bot) ? '<em>en cours</em>'
+          : `<button type="button" class="btn alt t-watch" data-watch="${esc(m.id)}" ${seen ? 'disabled' : ''}>${seen ? 'À l’écran' : 'Regarder'}</button>`;
+      return `<li>${side(0)}<b>contre</b>${side(1)}${act}</li>`;
+    }).join('');
+    return `<div class="t-round"><h4>${roundName(ms, r)}</h4><ul>${rows}</ul></div>`;
+  }).join('');
+  return `<h3>Tournoi <small>${esc(MODES[t.mode]?.name || '')}</small></h3><p class="t-status">${status}</p>${rounds}`;
+}
+
+$('go-tourney').onclick = (e) => {
+  const b = e.target.closest('[data-watch]');
+  if (b) net.send({ t: 'watch', id: b.dataset.watch });
+};
+$('btn-bench').onclick = () => {
+  net.send({ t: 'watch', id: null });
+  watching = false;
+  curMatch = null;
+  closeScenes();
+  $('gameover').classList.add('hidden'); // le banc, sans le résultat du match regardé
+  showBench();
 };
 
 $('btn-exit').onclick = async () => {
   const host = lobby && isHostOf(lobby) && othersAtTable();
   const hostNote = host ? ' Tu es l’hôte : la table passera à un autre joueur.' : '';
-  if (screen === 'game' && scene?.state?.phase === 'playing') {
+  if (screen === 'game' && !watching && scene?.state?.phase === 'playing') {
     const ok = await askConfirm({
       title: 'Quitter la table ?',
       text: `Tu perds le duel par abandon${lobby?.solo ? '.' : ', et ton adversaire empoche la victoire.'}${hostNote}`,
       yes: 'Abandonner', no: 'Rester', icon: 'skull', danger: true,
     });
     if (ok) net.send({ t: 'leaveLobby' });
-  } else if (screen === 'game' && mini && !mini.over) {
+  } else if (screen === 'game' && !watching && mini && !mini.over) {
     const ok = await askConfirm({
       title: 'Quitter la partie ?',
       text: host
@@ -1347,7 +1510,7 @@ $('btn-exit').onclick = async () => {
     });
     if (ok) net.send({ t: 'leaveLobby' });
   } else if (screen === 'game' || screen === 'lobby') leaveTable();
-  else if (screen === 'editor') { editor.close(); showMenu(); }
+  else if (screen === 'editor') editorBack();
 };
 
 // chat en jeu : Entrée pour parler

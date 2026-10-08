@@ -4,13 +4,27 @@
 
 // stick : déplacements (ou fonction : stick seulement quand elle est vraie) ; key : touche envoyée au jeu ; arm : le prochain toucher fait l'action du clic droit ;
 // show / on : bouton visible / allumé selon l'état de la scène
+// La mêlée : Super (le prochain toucher vise la super), Tir automatique, les deux objets
+const BRAWL_PAD = {
+  stick: true,
+  buttons: [
+    { label: 'Super', arm: true, cls: 'gold', on: (s) => s.altArmed, show: (s) => (s.mine?.sup || 0) >= 0.999 },
+    { label: 'Tir', key: 'x', cls: 'red', title: 'Tir automatique sur l’ennemi le plus proche' },
+    { label: 'Objet 1', key: 'f' },
+    { label: 'Objet 2', key: 'g' },
+  ],
+};
 const PADS = {
   shooter: { buttons: [{ label: 'Recharger', key: 'r' }, { label: 'Parier', key: 'b', cls: 'gold', show: (s) => s.canWager() }] },
   wagon: { buttons: [{ label: 'Se retourner', key: 'e', cls: 'gold', show: (s) => s.inView }, { label: 'Recharger', key: 'r' }] },
   fort: { stick: true, buttons: [{ label: 'Dynamite', arm: true, cls: 'red', on: (s) => s.altArmed }, { label: 'Recharger', key: 'r' }] },
   lasso: { stick: true, buttons: [{ label: 'Lasso doré', key: 'e', cls: 'gold', on: (s) => s.my?.bet }] },
   mine: { buttons: [{ label: '▲', key: 'arrowup', cls: 'icon', title: 'Aiguillage en haut' }, { label: '●', key: ' ', cls: 'icon', title: 'Aiguillage au neutre' }, { label: '▼', key: 'arrowdown', cls: 'icon', title: 'Aiguillage en bas' }] },
+  // La mêlée (vue de dessus) : stick pour bouger, toucher l'image pour tirer vers ce point ; Super : le prochain toucher vise la super
+  melee: BRAWL_PAD,
   course: { stick: (s) => s.wild, buttons: [{ label: 'Cravache', key: 'x', cls: 'red' }, { label: 'Sauter', key: ' ' }] },
+  // stick : esquives (gauche, droite) et garde (bas) ; les coups : toucher l'adversaire là où on veut frapper
+  bagarre: { stick: true, buttons: [{ label: 'Spécial', key: ' ', cls: 'gold', show: (s) => s.specialReady }, { label: 'Se baisser', key: 'c' }] },
 };
 const DIRS = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
 

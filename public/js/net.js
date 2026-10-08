@@ -20,17 +20,17 @@ const SPIN_MS = 4300; // roue des jeux : animation (main.js) puis annonce, avant
 const CHAMP_PTS = [5, 3, 2, 1]; // points du championnat selon la place
 const FORMATS = ['single', 'wheel', 'champ']; // un jeu choisi, la roue (jeu au hasard), le championnat
 const ROUNDS = [3, 5, 7, 10];
+const TOURNEY_PAUSE = 6000; // tournoi : pause entre deux tours (résultats, puis tirage du tour suivant)
 
 const MAX_CATCHUP = 50; // pas d'horloge rejoués au plus d'un coup (onglet de l'hôte en arrière-plan)
 const ROSTER_MS = 5000; // noms et personnages des joueurs renvoyés avec les événements au moins toutes les 5 s
 const STATIC_KEYS = ['name', 'character', 'bot']; // champs des joueurs qui ne changent pas pendant une partie
-const BOARD_MS = 60000; // classement gardé une minute
 
 const configured = /^https:\/\//.test(SUPABASE_URL) && !SUPABASE_URL.includes('COLLE') && SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.startsWith('COLLE');
 
 // supabase-js (version fixée : le service worker la garde en cache) ne sert qu'au canal Realtime des tables :
 // chargée à la première table ouverte, pour que l'accueil et le jeu solo démarrent sans elle (hors ligne, CDN en panne…).
-// Les fonctions SQL (comptes, classement) passent par un simple fetch.
+// Les fonctions SQL (comptes, résultats) passent par un simple fetch.
 const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/+esm';
 let sbLoad = null;
 function realtime() {
@@ -53,6 +53,9 @@ const REFEREES = {
   rts: [() => import('./rtsgame.js'), (m, players, v) => new m.RtsGame(players, v)],
   fps: [() => import('./fpsgame.js'), (m, players) => new m.FpsGame(players, 'fps')],
   fpsdm: [() => import('./fpsgame.js'), (m, players) => new m.FpsGame(players, 'fpsdm')],
+  bagarre: [() => import('./bagarregame.js'), (m, players) => new m.BagarreGame(players)],
+  // « La mêlée » en vue de dessus : un arbitre pour ses cinq modes (la variante dit le mode)
+  melee: [() => import('./brawlgame.js'), (m, players, v) => new m.BrawlGame(players, v)],
 };
 const MINI_REF = [() => import('./mini.js'), (m, players, v, mode) => new m.MiniGame(mode, players, v)];
 const refLoaded = {}; // mode -> module de l'arbitre, une fois chargé
@@ -64,6 +67,10 @@ export const preloadGame = (mode) => { if (MODES[mode] && mode !== 'roulette' &&
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const keyOf = (name) => String(name).toLowerCase();
 const validUsername = (name) => typeof name === 'string' && /^[A-Za-z0-9_\-éèàçÉÈÀ]{2,16}$/.test(name);
+
+// Jeu à deux (roulette, duel) à une table de plus de deux joueurs : il se joue en tournoi (voir startTourney).
+export const tourneyFor = (mode, n) => MODES[mode]?.max === 2 && n > 2;
+export const playableAt = (mode, n) => !!MODES[mode] && n >= MODES[mode].min && (n <= MODES[mode].max || tourneyFor(mode, n));
 
 function defaultCharacter() {
   return {
@@ -122,8 +129,15 @@ function lobbyBase(code, host) {
   };
 }
 
+// Version d'un événement pour un spectateur du tournoi : vue du joueur 0, sans ses infos secrètes.
+function spectate(ev) {
+  const { states, private: priv, ...rest } = ev;
+  return { ...rest, state: states[0], ...(priv ? { hidden: true } : {}) };
+}
+
 // Classement d'une partie terminée : place de chaque joueur (ex aequo possibles).
 function placesOf(g, end) {
+  if (end.places) return end.places; // tournoi : places calculées par l'arbitre (voir finishTourney)
   if (!g.kind) return g.p.map((_, i) => (i === end.winner ? 1 : 2));
   if (end.winners) return g.p.map((_, i) => (end.tie || end.winners.includes(i) ? 1 : end.winners.length + 1));
   const order = end.ranking?.length ? end.ranking : g.p.map((_, i) => i).sort((a, b) => g.p[b].score - g.p[a].score);
@@ -142,19 +156,6 @@ function newCode() {
   return Array.from({ length: 5 }, () => A[Math.floor(Math.random() * A.length)]).join('');
 }
 
-// Classement gardé une minute (le menu le redemande à chaque passage) ; oublié dès qu'un résultat ou un personnage change.
-let board = null; // { at, data: promesse }
-export function fetchLeaderboard() {
-  if (!configured) return Promise.resolve([]);
-  if (!board || Date.now() - board.at > BOARD_MS) {
-    const b = { at: Date.now(), data: callSql('saloon_leaderboard').then((d) => d || []) };
-    b.data.catch(() => { if (board === b) board = null; });
-    board = b;
-  }
-  return board.data;
-}
-const staleBoard = () => { board = null; };
-
 export class Net {
   constructor() {
     this.handlers = {};
@@ -170,6 +171,7 @@ export class Net {
     this.hostGoneTimer = 0;
     this.roster = new Map(); // invité : clé -> { name, character, bot } des joueurs de la partie (voir packEvents)
     this.wireRoster = null; // hôte : ce qui en a été envoyé { game, at, sent }
+    this.renaming = null; // changement de pseudo en cours (voir rename)
     setTimeout(() => this.emit('open'), 0);
   }
 
@@ -178,7 +180,6 @@ export class Net {
 
   // Livraison asynchrone, comme si le message venait du réseau.
   local(msg) {
-    if (msg.t === 'user') staleBoard(); // résultat enregistré ou personnage changé : le classement aussi
     setTimeout(() => this.emit(msg.t, msg), 0);
   }
 
@@ -200,6 +201,7 @@ export class Net {
         this.local({ t: 'user', user: u });
         return this.toHost({ t: 'char', character: u.character });
       }
+      case 'rename': return this.rename(m.username);
       case 'createLobby': return this.createLobby(false);
       case 'createSolo': return this.createLobby(true, MODES[m.mode] ? m.mode : 'roulette');
       case 'joinLobby': return this.joinLobby(m.code);
@@ -218,6 +220,56 @@ export class Net {
     this.user = { key: keyOf(u.username), name: u.username };
     this.character = u.character;
     this.local({ t: 'welcome', user: u });
+  }
+
+  // Changer de pseudo sans quitter la table. Le pseudo est l'identifiant du joueur (compte, place, présence sur
+  // le canal) : l'hôte renomme la place, puis on rouvre le canal sous le nouveau nom. Le personnage actuel sert
+  // pour un pseudo neuf ; un pseudo existant retrouve le sien (et son palmarès).
+  async rename(username) {
+    username = String(username || '').trim();
+    if (!validUsername(username)) return this.local({ t: 'error', text: 'Pseudo invalide (2 à 16 lettres, chiffres, _ ou -).' });
+    if (keyOf(username) === this.user.key) return;
+    if (this.renaming) return this.local({ t: 'error', text: 'Changement de pseudo déjà en cours…' });
+    this.renaming = {}; // done : réponse de l'hôte, quand on est invité
+    try {
+      const l = this.hosting;
+      if (l) {
+        const why = this.renameRefusal(l, this.user.key, username);
+        if (why) return this.local({ t: 'error', text: why });
+      }
+      const u = toUser(await rpc('saloon_login', { p_username: username, p_character: this.character }));
+      const before = this.user.key;
+      if (l && this.hosting === l) {
+        const why = this.renameRefusal(l, before, u.username); // la table a pu bouger pendant l'appel
+        if (why) return this.local({ t: 'error', text: why });
+        this.setIdentity(u);
+        this.renamePlayer(l, before, u.username, u.character);
+        await this.openChannel(l.code); // présence sous le nouveau nom
+        return this.broadcastLobby(l);
+      }
+      const code = this.code;
+      if (code && this.hostKey && !this.hosting) {
+        const res = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve({ ok: false, text: 'L’hôte ne répond pas. Réessaie dans un instant.' }), JOIN_TIMEOUT);
+          this.renaming.done = (r) => { clearTimeout(timer); resolve(r); };
+          this.wire('host', { t: 'rename', name: u.username, character: u.character });
+        });
+        if (!res.ok) return this.local({ t: 'error', text: res.text || 'Impossible de changer de pseudo.' });
+        await this.closeChannel();
+        this.setIdentity(u);
+        return await this.joinLobby(code);
+      }
+      if (!this.code) this.setIdentity(u); // plus de table entre-temps : simple changement de compte
+      else this.local({ t: 'error', text: 'La table a changé pendant ce temps. Réessaie.' });
+    } finally {
+      this.renaming = null;
+    }
+  }
+
+  setIdentity(u) {
+    this.user = { key: keyOf(u.username), name: u.username };
+    this.character = u.character;
+    this.local({ t: 'user', user: u });
   }
 
   // ---------------------------------------------------------------- canal Realtime
@@ -393,6 +445,7 @@ export class Net {
       if (this.rejoining) { this.rejoining = false; this.local({ t: 'left' }); }
     }
     if (msg.t === 'closed') return this.hostClosed(msg.text);
+    if (msg.t === 'renamed') return this.renaming?.done?.(msg);
     // état complet (retour en cours de partie) : noms et personnages pour les lots qui suivront (unpackEvents)
     if (msg.t === 'sync' && Array.isArray(msg.state?.players)) {
       for (const p of msg.state.players) if (p?.key) this.roster.set(p.key, Object.fromEntries(STATIC_KEYS.filter((k) => k in p).map((k) => [k, p[k]])));
@@ -539,7 +592,7 @@ export class Net {
       const v = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('variant') : null;
       if (variantOk(mode, v)) l.variants[mode] = v;
       // Le jeu solo se joue entièrement dans ce navigateur.
-      const n = Math.min(SOLO_BOTS, MODES[mode].max - 1);
+      const n = Math.min(MODES[mode].soloBots ?? SOLO_BOTS, MODES[mode].max - 1); // la bagarre se joue seul
       for (let k = 0; k < n; k++) {
         let b;
         do b = botPlayer(n > 1 ? `${code}:${k}` : code); while (l.players.some((p) => p.name === b.name));
@@ -557,6 +610,7 @@ export class Net {
     clearTimeout(l.botTimer);
     clearTimeout(l.spinTimer);
     clearInterval(l.miniTimer);
+    if (l.game?.tourney) this.stopTourney(l.game);
     Object.values(l.dcTimers).forEach(clearTimeout);
     l.dcTimers = {};
     l.spinning = false;
@@ -573,7 +627,7 @@ export class Net {
     this.stopTimers(l);
     const v = this.lobbyView(l);
     if (leaving) v.players = v.players.filter((p) => p.key !== l.host);
-    Object.assign(v, { host: heirKey, game: null, inGame: false, over: false, rematch: [], spinning: false });
+    Object.assign(v, { host: heirKey, game: null, tourney: null, inGame: false, over: false, rematch: [], spinning: false });
     this.wire(heirKey, { t: 'host', lobby: v, why: leaving ? 'leave' : 'give', prev: this.user.name, aborted });
     this.hosting = null;
     this.hostKey = leaving ? null : heirKey;
@@ -586,7 +640,7 @@ export class Net {
   // Jeux de la sélection (roue, championnat) jouables au nombre actuel de joueurs
   compatPool(l) {
     const n = l.players.length;
-    return l.pool.filter((id) => MODES[id] && n >= MODES[id].min && n <= MODES[id].max);
+    return l.pool.filter((id) => playableAt(id, n));
   }
 
   deliver(key, msg) {
@@ -631,6 +685,7 @@ export class Net {
       inGame: !!l.game && l.game.phase === 'playing',
       over: !!l.game && l.game.phase === 'over',
       rematch: [...l.rematch],
+      tourney: l.game?.tourney ? this.tourneyView(l.game) : null,
     };
   }
 
@@ -678,8 +733,8 @@ export class Net {
       l.players.push({ key, name, character: sanitizeCharacter(character), connected: true });
       this.sysChat(l, `${name} rejoint la table.`);
       // jeu à 2 choisi mais la table grossit : on passe au premier jeu qui accepte tout le monde
-      if (!l.game && l.players.length > MODES[l.mode].max) {
-        l.mode = Object.keys(MODES).find((id) => MODES[id].max >= l.players.length) || l.mode;
+      if (!l.game && !playableAt(l.mode, l.players.length)) {
+        l.mode = Object.keys(MODES).find((id) => playableAt(id, l.players.length)) || l.mode;
       }
     } else {
       existing.connected = true;
@@ -688,10 +743,10 @@ export class Net {
       if (!l.game) existing.character = sanitizeCharacter(character);
     }
     this.broadcastLobby(l);
-    if (l.game) {
-      const j = this.gameIdx(l, key);
-      if (j >= 0) this.deliver(key, { t: 'sync', state: l.game.syncView ? l.game.syncView(j) : l.game.view(j) });
-    }
+    // de retour en pleine partie : l'état complet de sa partie (ou de son match du tournoi)
+    const s = l.game?.tourney ? this.matchOf(l.game, key) : l;
+    const j = s ? this.gameIdx(s, key) : -1;
+    if (j >= 0) this.deliver(key, { t: 'sync', state: s.game.syncView ? s.game.syncView(j) : s.game.view(j), ...(s === l ? {} : { match: s.id }) });
   }
 
   hostHandle(from, m, name) {
@@ -706,14 +761,21 @@ export class Net {
     switch (m.t) {
       case 'char':
         l.players[idx].character = sanitizeCharacter(m.character);
-        if (!l.game) this.broadcastLobby(l);
+        if (!busy) this.broadcastLobby(l);
         break;
+      case 'rename': {
+        // réponse à l'ancien nom d'abord : le joueur rouvre ensuite le canal sous le nouveau
+        const text = this.renameRefusal(l, from, m.name);
+        this.deliver(from, { t: 'renamed', ok: !text, text });
+        if (!text) this.renamePlayer(l, from, m.name, m.character);
+        break;
+      }
       case 'leave':
         this.removePlayer(l, idx, true);
         break;
       case 'mode':
         if (!isHost || !MODES[m.mode] || busy) return;
-        if (l.players.length > MODES[m.mode].max) return err(`${MODES[m.mode].name} : ${MODES[m.mode].max} joueurs maximum.`);
+        if (l.players.length > MODES[m.mode].max && !tourneyFor(m.mode, l.players.length)) return err(`${MODES[m.mode].name} : ${MODES[m.mode].max} joueurs maximum.`);
         l.mode = m.mode;
         l.rematch.clear();
         this.broadcastLobby(l);
@@ -771,8 +833,8 @@ export class Net {
         do b = botPlayer(`${l.code}:${Date.now().toString(36)}:${k++}`); while (l.players.some((p) => p.name === b.name || p.key === b.key));
         l.players.push({ ...b, connected: true });
         this.sysChat(l, `${b.name} (bot) s’assoit à la table.`);
-        if (!l.game && l.players.length > MODES[l.mode].max) {
-          l.mode = Object.keys(MODES).find((id) => MODES[id].max >= l.players.length) || l.mode;
+        if (!l.game && !playableAt(l.mode, l.players.length)) {
+          l.mode = Object.keys(MODES).find((id) => playableAt(id, l.players.length)) || l.mode;
         }
         l.rematch.clear();
         this.broadcastLobby(l);
@@ -807,16 +869,22 @@ export class Net {
         break;
       }
       case 'action': {
-        if (!l.game) return;
-        const gi = this.gameIdx(l, from);
+        // tournoi : le coup va à la partie du match où joue ce joueur
+        const s = l.game?.tourney ? this.matchOf(l.game, from) : l;
+        if (!s?.game) return;
+        const gi = this.gameIdx(s, from);
         if (gi < 0) return;
-        if (!l.game.kind && Date.now() < l.lockUntil - 400) return err('Patience, cowboy…');
-        const r = l.game.act(gi, m.action);
+        if (!s.game.kind && Date.now() < s.lockUntil - 400) return err('Patience, cowboy…');
+        const r = s.game.act(gi, m.action);
         if (r.error) return err(r.error);
-        this.sendEvents(l, r.events);
-        if (l.game && l.game.phase === 'over') this.broadcastLobby(l);
+        this.sendEvents(l, r.events, s);
+        if (s === l && l.game && l.game.phase === 'over') this.broadcastLobby(l);
         break;
       }
+      // tournoi : depuis le banc, regarder un match en cours (id null : revenir au banc)
+      case 'watch':
+        if (l.game?.tourney) this.watchMatch(l, l.game, from, m.id ?? null);
+        break;
       case 'rematch':
         if (!l.game || l.game.phase !== 'over' || l.spinning) return;
         if (l.solo) return this.startGame(l);
@@ -838,6 +906,14 @@ export class Net {
     const p = l.players[idx];
     clearTimeout(l.dcTimers[p.key]);
     delete l.dcTimers[p.key];
+    if (l.game?.tourney && l.game.phase === 'playing') {
+      // tournoi : le partant perd son match (ou ne jouera pas le suivant), le tournoi continue
+      l.players.splice(idx, 1);
+      l.rematch.delete(p.name);
+      this.sysChat(l, text || `${p.name} a quitté la table.`);
+      this.tourneyLeave(l, l.game, p.key);
+      return this.broadcastLobby(l);
+    }
     const gi = this.gameIdx(l, p.key);
     const playing = !!l.game && l.game.phase === 'playing';
     // Dans un mini-jeu à plusieurs, les autres continuent : le score du partant est figé.
@@ -854,6 +930,38 @@ export class Net {
     this.broadcastLobby(l);
   }
 
+  // Pourquoi le joueur `key` ne peut pas prendre ce pseudo à la table (null : il peut).
+  renameRefusal(l, key, name) {
+    const k = keyOf(name);
+    if (!validUsername(name)) return 'Pseudo invalide (2 à 16 lettres, chiffres, _ ou -).';
+    if ((l.game && l.game.phase === 'playing') || l.spinning || l.loading) return 'Attends la fin de la partie pour changer de pseudo.';
+    if (k !== key && l.players.some((p) => p.key === k)) return 'Ce pseudo est déjà assis à la table.';
+    if (l.banned.has(k)) return 'Ce pseudo a été expulsé de cette table.';
+    // les points du championnat sont rangés sous le nom : pas question d'hériter de ceux d'un joueur parti
+    if (k !== key && l.champ && Object.keys(l.champ.scores || {}).some((n) => keyOf(n) === k)) return 'Ce pseudo a déjà des points dans le championnat.';
+    return null;
+  }
+
+  // Renomme une place : clé, nom, et tout ce que la table range sous le nom (revanche, points du championnat).
+  renamePlayer(l, key, name, character) {
+    const p = l.players.find((x) => x.key === key);
+    if (!p) return;
+    const old = p.name;
+    const k = keyOf(name);
+    clearTimeout(l.dcTimers[key]);
+    delete l.dcTimers[key];
+    Object.assign(p, { key: k, name, character: sanitizeCharacter(character) });
+    if (l.host === key) l.host = k;
+    if (l.rematch.delete(old)) l.rematch.add(name);
+    const c = l.champ;
+    if (c) {
+      for (const t of [c.scores, c.firsts]) if (t && old in t) { t[name] = t[old]; delete t[old]; }
+      for (const r of c.last?.res || []) if (r.name === old) r.name = name;
+    }
+    this.sysChat(l, `${old} se fait désormais appeler ${name}.`);
+    this.broadcastLobby(l);
+  }
+
   // Ligne du narrateur dans le comptoir (arrivées, départs…), pour toute la table.
   sysChat(l, text) {
     this.deliverAll(l, { t: 'chat', sys: true, text });
@@ -866,7 +974,7 @@ export class Net {
   cantStart(l) {
     const m = MODES[l.mode] || MODES.roulette;
     if (l.players.length < m.min) return 'Il faut un adversaire !';
-    if (l.players.length > m.max) return `${m.name} : ${m.max} joueurs maximum. Choisis un autre jeu.`;
+    if (!playableAt(l.mode, l.players.length)) return `${m.name} : ${m.max} joueurs maximum. Choisis un autre jeu.`;
     return null;
   }
 
@@ -943,105 +1051,288 @@ export class Net {
         l.loading = null;
         console.error(e);
         if (this.hosting !== l) return;
-        this.deliver(l.host, { t: 'error', text: 'Impossible de charger ce jeu (réseau ?). Réessaie dans un instant.' });
+        this.deliver(l.host, { t: 'error', text: `Impossible de charger ce jeu (réseau ?). Réessaie dans un instant. [${e?.name || 'Erreur'} : ${e?.message || e}]` });
         if (l.solo && !l.game) this.hosting = null; // la partie solo n'a jamais commencé : on reste au menu
         else this.broadcastLobby(l);
       });
       return;
     }
     l.rematch.clear();
-    clearInterval(l.miniTimer);
-    clearTimeout(l.botTimer);
-    l.bot = null;
+    if (l.game?.tourney) this.stopTourney(l.game);
+    // jeu à deux et table de plus de deux : tournoi (matchs en parallèle, voir startTourney)
+    if (tourneyFor(l.mode, l.players.length)) return this.startTourney(l);
     const players = l.players.map((p) => ({ key: p.key, name: p.name, character: p.character, bot: !!p.bot }));
-    if (l.mode === 'roulette') {
-      l.game = new Game(players);
-      const bi = l.players.findIndex((p) => p.bot);
-      if (bi >= 0) l.bot = new Bot(bi);
-    } else {
-      // Mini-jeu en temps réel : l'hôte fait avancer l'horloge (tirs des bandits, bots, fin de partie).
-      // la variante choisie par l'hôte ne vaut que pour « Un jeu » : la roue et le championnat restent des surprises
-      const g = makeGame(l.mode, players, l.format === 'single' ? l.variants[l.mode] ?? null : null);
-      l.game = g;
-      let last = Date.now();
-      l.miniTimer = setInterval(() => {
-        if (this.hosting !== l || l.game !== g) return clearInterval(l.miniTimer);
-        // Onglet de l'hôte en arrière-plan : le navigateur n'appelle plus cette minuterie qu'une fois par seconde
-        // (ou moins). On rejoue les pas manqués, chacun à son heure de jeu (horloge de l'arbitre reculée le temps
-        // du pas), pour que la partie ne tourne pas au ralenti pour toute la table.
-        const now = Date.now(), late = now - last;
-        last = now;
-        const steps = late > MINI_TICK * 2 && Number.isFinite(g.startAt) ? Math.min(MAX_CATCHUP, Math.round(late / MINI_TICK)) : 1;
-        const events = [];
-        for (let k = steps - 1; k >= 0; k--) {
-          const back = Math.round((late * k) / steps);
-          if (back) g.startAt += back;
-          try { events.push(...g.tick()); } finally { if (back) g.startAt -= back; }
-        }
-        this.sendEvents(l, events);
-        this.liveOut(g.liveOut.splice(0));
-        if (g.phase === 'over') {
-          clearInterval(l.miniTimer);
-          this.broadcastLobby(l);
-        }
-      }, MINI_TICK);
-    }
+    // la variante choisie par l'hôte ne vaut que pour « Un jeu » : la roue et le championnat restent des surprises
+    this.runGame(l, l, l.mode, players, l.format === 'single' ? l.variants[l.mode] ?? null : null);
     l.game.champ = l.format === 'champ' && !!l.champ && !l.champ.done;
     this.broadcastLobby(l);
     this.sendEvents(l, l.game.start());
   }
 
-  sendEvents(l, events) {
+  // Crée la partie et ses minuteries. s : la table elle-même, ou un match du tournoi (ses joueurs, sa partie,
+  // son bot et ses minuteries, rangés comme ceux d'une table).
+  runGame(l, s, mode, players, variant) {
+    clearInterval(s.miniTimer);
+    clearTimeout(s.botTimer);
+    s.bot = null;
+    if (mode === 'roulette') {
+      s.game = new Game(players);
+      const bi = players.findIndex((p) => p.bot);
+      if (bi >= 0) s.bot = new Bot(bi);
+      return;
+    }
+    // Mini-jeu en temps réel : l'hôte fait avancer l'horloge (tirs des bandits, bots, fin de partie).
+    const g = makeGame(mode, players, variant);
+    s.game = g;
+    let last = Date.now();
+    s.miniTimer = setInterval(() => {
+      if (this.hosting !== l || s.game !== g) return clearInterval(s.miniTimer);
+      // Onglet de l'hôte en arrière-plan : le navigateur n'appelle plus cette minuterie qu'une fois par seconde
+      // (ou moins). On rejoue les pas manqués, chacun à son heure de jeu (horloge de l'arbitre reculée le temps
+      // du pas), pour que la partie ne tourne pas au ralenti pour toute la table.
+      const now = Date.now(), late = now - last;
+      last = now;
+      const steps = late > MINI_TICK * 2 && Number.isFinite(g.startAt) ? Math.min(MAX_CATCHUP, Math.round(late / MINI_TICK)) : 1;
+      const events = [];
+      for (let k = steps - 1; k >= 0; k--) {
+        const back = Math.round((late * k) / steps);
+        if (back) g.startAt += back;
+        try { events.push(...g.tick()); } finally { if (back) g.startAt -= back; }
+      }
+      this.sendEvents(l, events, s);
+      this.liveOut(g.liveOut.splice(0));
+      if (g.phase === 'over') {
+        clearInterval(s.miniTimer);
+        if (s === l) this.broadcastLobby(l);
+      }
+    }, MINI_TICK);
+  }
+
+  // Événements d'une partie : à chacun de ses joueurs sa version ; s : la table, ou un match du tournoi
+  // (alors aussi aux spectateurs de ce match, et la fin du match fait avancer le tournoi).
+  sendEvents(l, events, s = l) {
     if (!events.length) return;
-    l.lockUntil = Date.now() + events.reduce((s, e) => s + (e.dur || 0), 0);
-    const inGame = l.players.filter((p) => this.gameIdx(l, p.key) >= 0);
+    const g = s.game;
+    s.lockUntil = Date.now() + events.reduce((sum, e) => sum + (e.dur || 0), 0);
+    const inGame = s.players.filter((p) => this.gameIdx(s, p.key) >= 0);
+    const tag = s === l ? {} : { match: s.id };
     // mini-jeu : un seul lot pour toute la table (voir packEvents) ; l'hôte garde sa version personnalisée
-    const packed = l.game.kind && inGame.some((p) => p.key !== this.user.key && !p.key.startsWith('bot:')) ? this.packEvents(l.game, events) : null;
+    const packed = s === l && g.kind && inGame.some((p) => p.key !== this.user.key && !p.key.startsWith('bot:')) ? this.packEvents(g, events) : null;
     for (const p of inGame) {
       if (packed && p.key !== this.user.key) continue;
-      const j = this.gameIdx(l, p.key);
-      this.deliver(p.key, { t: 'events', events: events.map((e) => personalize(e, j)) });
+      const j = this.gameIdx(s, p.key);
+      this.deliver(p.key, { t: 'events', events: events.map((e) => personalize(e, j)), ...tag });
     }
     if (packed) this.deliverAll(l, packed, inGame.map((p) => p.key).filter((k) => k !== this.user.key));
+    if (s !== l) {
+      const eyes = this.watchersOf(l.game, s);
+      if (eyes.length) this.deliverAll(l, { t: 'events', events: events.map(spectate), ...tag, watch: true }, eyes);
+    }
     const end = events.find((e) => e.type === 'matchEnd');
     if (end) {
-      if (l.game.champ) this.champRecord(l, end);
-      if (l.game.kind) this.recordMini(l, end);
-      else this.recordMatch(l, end);
+      if (s !== l) this.matchEnd(l, l.game, s, end);
+      else {
+        if (g.champ) this.champRecord(l, end);
+        if (g.kind) this.recordMini(l, end);
+        else this.recordMatch(l, end);
+      }
     }
-    if (l.bot) {
-      l.bot.observe(events);
-      const line = l.bot.react(events);
+    if (s.bot) {
+      const bot = s.bot;
+      bot.observe(events);
+      const line = bot.react(events);
       if (line) {
-        const g = l.game;
         setTimeout(() => {
-          if (l.game !== g || this.hosting !== l) return;
-          this.deliverAll(l, { t: 'chat', from: l.players[l.bot.idx].name, text: line.text });
+          if (s.game !== g || this.hosting !== l) return;
+          // la réplique du bot : pour ceux qui sont à sa table (et ses spectateurs)
+          const keys = s === l ? undefined : [...s.players.map((p) => p.key), ...this.watchersOf(l.game, s)];
+          this.deliverAll(l, { t: 'chat', from: s.players[bot.idx].name, text: line.text }, keys);
         }, line.delay);
       }
-      this.scheduleBot(l);
+      this.scheduleBot(l, s);
     }
   }
 
   // Le bot joue quand c'est son tour, une fois les animations terminées.
-  scheduleBot(l) {
-    clearTimeout(l.botTimer);
-    const g = l.game;
-    if (!l.bot || !g || g.phase !== 'playing' || g.turn !== l.bot.idx) return;
-    const delay = Math.max(0, l.lockUntil - Date.now()) + 700 + Math.random() * 900;
-    l.botTimer = setTimeout(() => {
-      if (this.hosting !== l || l.game !== g || g.phase !== 'playing' || g.turn !== l.bot.idx) return;
-      let r = g.act(l.bot.idx, l.bot.decide(g.view(l.bot.idx)));
-      if (r.error) r = g.act(l.bot.idx, { kind: 'shoot', target: 'opp' });
+  scheduleBot(l, s = l) {
+    clearTimeout(s.botTimer);
+    const g = s.game, bot = s.bot;
+    if (!bot || !g || g.phase !== 'playing' || g.turn !== bot.idx) return;
+    const delay = Math.max(0, s.lockUntil - Date.now()) + 700 + Math.random() * 900;
+    s.botTimer = setTimeout(() => {
+      if (this.hosting !== l || s.game !== g || g.phase !== 'playing' || g.turn !== bot.idx) return;
+      let r = g.act(bot.idx, bot.decide(g.view(bot.idx)));
+      if (r.error) r = g.act(bot.idx, { kind: 'shoot', target: 'opp' });
       if (r.error) return;
-      this.sendEvents(l, r.events);
-      if (g.phase === 'over') this.broadcastLobby(l);
+      this.sendEvents(l, r.events, s);
+      if (g.phase === 'over' && s === l) this.broadcastLobby(l);
     }, delay);
   }
 
+  // ---------------------------------------------------------------- tournoi
+  // Jeu à deux (roulette, duel) à plus de deux joueurs : élimination directe, tous les matchs d'un tour en même
+  // temps (un bot complète un nombre impair). Qui a fini son match attend sur le banc, d'où il peut regarder
+  // les matchs encore en cours. Pour la table, le tournoi tient lieu de partie (l.game) : phase, joueurs, places.
+  // Chaque match se range comme une petite table (players, game, bot, minuteries) : voir runGame et sendEvents.
+  startTourney(l) {
+    const mode = l.mode;
+    const all = l.players.map((p) => ({ key: p.key, name: p.name, character: p.character, bot: !!p.bot, score: 0, left: false }));
+    for (let i = all.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [all[i], all[j]] = [all[j], all[i]];
+    }
+    const t = {
+      tourney: true, kind: mode, id: Date.now().toString(36), phase: 'playing',
+      all, // tous les inscrits, bots d'appoint compris ; score = matchs gagnés
+      p: [...all], // les joueurs de la table (places du championnat)
+      rounds: [], // tours successifs : liste des matchs
+      watch: new Map(), // spectateur -> id du match regardé
+      timer: 0, champion: null,
+      variant: l.format === 'single' ? l.variants[mode] ?? null : null,
+      champ: l.format === 'champ' && !!l.champ && !l.champ.done,
+    };
+    l.game = t;
+    this.sysChat(l, `Tournoi de ${MODES[mode].name} à ${all.length} : élimination directe.`);
+    this.tourneyRound(l, t, all);
+  }
+
+  stopTourney(t) {
+    clearTimeout(t.timer);
+    t.timer = 0;
+    for (const m of t.rounds.flat()) {
+      clearInterval(m.miniTimer);
+      clearTimeout(m.botTimer);
+    }
+  }
+
+  // Un tour : les matchs démarrent tous ensemble ; entre deux bots, le match se règle aux dés.
+  tourneyRound(l, t, entrants) {
+    const list = [...entrants];
+    if (list.length % 2) {
+      const b = this.fillerBot(l, t);
+      list.push(b);
+      this.sysChat(l, `Nombre impair : ${b.name} (bot) complète le tableau.`);
+    }
+    const r = t.rounds.length;
+    const matches = [];
+    for (let i = 0; i < list.length; i += 2) {
+      matches.push({ id: `${t.id}:${r}:${i / 2}`, players: [list[i], list[i + 1]], game: null, bot: null, botTimer: 0, miniTimer: 0, lockUntil: 0, winner: null });
+    }
+    t.rounds.push(matches);
+    const name = matches.length === 1 ? 'Finale' : matches.length === 2 ? 'Demi-finales' : `Tour ${r + 1}`;
+    this.sysChat(l, `${name} : ${matches.map((m) => `${m.players[0].name} contre ${m.players[1].name}`).join(', ')}.`);
+    for (const m of matches) {
+      if (m.players.every((p) => p.bot)) continue;
+      for (const p of m.players) t.watch.delete(p.key);
+      this.runGame(l, m, t.kind, m.players.map(({ key, name: n, character, bot }) => ({ key, name: n, character, bot })), t.variant);
+    }
+    this.broadcastLobby(l); // le tableau d'abord, puis les parties
+    for (const m of matches) {
+      if (m.game) this.sendEvents(l, m.game.start(), m);
+      else m.botTimer = setTimeout(() => { if (this.hosting === l && l.game === t) this.matchDone(l, t, m, Math.random() < 0.5 ? 0 : 1, 'bots'); }, 2500 + Math.random() * 2500);
+    }
+  }
+
+  fillerBot(l, t) {
+    let b, k = 0;
+    do b = botPlayer(`${l.code}:${t.id}:${t.all.length}:${k++}`);
+    while (k < 30 && [...l.players, ...t.all].some((p) => p.name === b.name || p.key === b.key));
+    const e = { key: b.key, name: b.name, character: b.character, bot: true, filler: true, score: 0, left: false };
+    t.all.push(e);
+    return e;
+  }
+
+  // Le match en cours de ce joueur (null : il est sur le banc).
+  matchOf(t, key) {
+    return (t.rounds[t.rounds.length - 1] || []).find((m) => m.winner == null && m.players.some((p) => p.key === key)) || null;
+  }
+
+  watchersOf(t, m) {
+    return t?.watch ? [...t.watch].filter(([, id]) => id === m.id).map(([k]) => k) : [];
+  }
+
+  // Depuis le banc : regarder un match du tour en cours (vu du côté de son premier joueur, sans ses secrets).
+  watchMatch(l, t, key, id) {
+    if (id == null) return t.watch.delete(key);
+    const m = (t.rounds[t.rounds.length - 1] || []).find((x) => x.id === id);
+    if (!m?.game || this.matchOf(t, key)) return;
+    t.watch.set(key, m.id);
+    const g = m.game;
+    this.deliver(key, { t: 'sync', state: g.syncView ? g.syncView(0) : g.view(0), match: m.id, watch: true });
+  }
+
+  // Fin de partie d'un match (appelé par sendEvents) : résultats enregistrés, vainqueur qualifié.
+  matchEnd(l, t, m, end) {
+    if (!t?.tourney || m.winner != null) return;
+    const g = m.game;
+    if (g.kind) this.recordMini(l, end, m);
+    else this.recordMatch(l, end, m);
+    if (g.kind && end.tie) return this.matchDone(l, t, m, Math.random() < 0.5 ? 0 : 1, 'tie');
+    this.matchDone(l, t, m, g.kind ? end.ranking?.[0] ?? end.winner : end.winner);
+  }
+
+  matchDone(l, t, m, w, how = '') {
+    if (m.winner != null || t.phase !== 'playing') return;
+    m.winner = w;
+    const win = m.players[w], lose = m.players[1 - w];
+    win.score = t.rounds.length;
+    const why = how === 'bots' ? ' (entre bots, aux dés)' : how === 'tie' ? ' (égalité : pile ou face)' : '';
+    this.sysChat(l, `${win.name} bat ${lose.name}${why}.`);
+    const round = t.rounds[t.rounds.length - 1];
+    if (round.includes(m) && round.every((x) => x.winner != null)) this.roundOver(l, t);
+    this.broadcastLobby(l);
+  }
+
+  // Tous les matchs du tour sont joués : tour suivant après une pause, ou fin du tournoi.
+  roundOver(l, t) {
+    const alive = () => t.rounds[t.rounds.length - 1].map((m) => m.players[m.winner]).filter((p) => !p.left);
+    if (alive().length <= 1) return this.finishTourney(l, t, alive()[0] || null);
+    this.sysChat(l, 'Tour suivant dans quelques secondes…');
+    clearTimeout(t.timer);
+    t.timer = setTimeout(() => {
+      t.timer = 0;
+      if (this.hosting !== l || l.game !== t) return;
+      const next = alive(); // un qualifié a pu quitter la table pendant la pause
+      if (next.length <= 1) this.finishTourney(l, t, next[0] || null);
+      else this.tourneyRound(l, t, next);
+    }, TOURNEY_PAUSE);
+  }
+
+  finishTourney(l, t, champion) {
+    clearTimeout(t.timer);
+    t.timer = 0;
+    t.phase = 'over';
+    t.champion = champion ? champion.name : null;
+    t.watch.clear();
+    // place : 1 + nombre d'inscrits qui ont gagné plus de matchs (ex aequo : éliminés au même tour)
+    const places = t.p.map((p) => 1 + t.all.filter((q) => q.score > p.score).length);
+    if (t.champ) this.champRecord(l, { type: 'matchEnd', places });
+    this.sysChat(l, champion ? `${champion.name} remporte le tournoi !` : 'Le tournoi s’arrête : plus personne en lice.');
+    this.broadcastLobby(l);
+  }
+
+  // Un joueur quitte la table pendant le tournoi : il perd son match en cours, ou ne jouera pas le suivant.
+  tourneyLeave(l, t, key) {
+    t.watch.delete(key);
+    const e = t.all.find((x) => x.key === key);
+    if (e) e.left = true;
+    const m = this.matchOf(t, key);
+    if (m?.game && m.game.phase === 'playing') this.sendEvents(l, m.game.forfeit(this.gameIdx(m, key)), m);
+  }
+
+  tourneyView(t) {
+    return {
+      mode: t.kind, phase: t.phase, champion: t.champion, pause: !!t.timer,
+      rounds: t.rounds.map((ms) => ms.map((m) => ({
+        id: m.id, w: m.winner, live: !!m.game && m.winner == null,
+        p: m.players.map((p) => ({ key: p.key, name: p.name, bot: p.bot, left: p.left })),
+      }))),
+    };
+  }
+
   // L'hôte enregistre le résultat de chaque joueur humain dans Supabase.
-  recordMatch(l, end) {
-    const g = l.game;
+  recordMatch(l, end, s = l) {
+    const g = s.game;
     if (g.recorded) return;
     g.recorded = true;
     g.p.forEach(async (p, i) => {
@@ -1071,8 +1362,8 @@ export class Net {
   }
 
   // Mini-jeux : classement de chaque joueur humain (ne compte pas pour le classement de la roulette).
-  recordMini(l, end) {
-    const g = l.game;
+  recordMini(l, end, s = l) {
+    const g = s.game;
     if (g.recorded) return;
     g.recorded = true;
     g.p.forEach(async (p, i) => {
@@ -1090,7 +1381,7 @@ export class Net {
         result: won ? 'victoire' : 'défaite',
         rank,
         of: g.p.length,
-        score: `${p.score} ${MODES[g.kind].unit || 'pts'}`,
+        score: `${p.score} ${g.unit || MODES[g.kind].unit || 'pts'}`,
       };
       try {
         const u = toUser(await rpc('saloon_record', { p_username: p.name, p_stats: res, p_entry: entry }));

@@ -8,6 +8,7 @@
 // &bots=5 : nombre de bots (3 par défaut, 1 pour les jeux à deux) ; &seed=123 : toujours le même monde.
 // Fusillade : &lair=mine (ou saloon, chase) impose le repaire d'El Diablo (voir LAIRS dans worlds.js).
 // Le FPS a son propre banc d'essai : fps-test.html.
+// La mêlée : &variant=gemmes impose le mode (survie, colline, prime, gemmes, manches), &variant=gemmes:desert-veine aussi la carte.
 import { MODES } from './js/worlds.js';
 import { makeGame } from './js/games.js';
 import { VARIANTS } from './js/variants.js';
@@ -21,12 +22,14 @@ import { PinteScene } from './js/pinte.js';
 import { MineScene } from './js/mine.js';
 import { CourseScene } from './js/course.js';
 import { RtsScene } from './js/rts.js';
-const SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene };
+import { BagarreScene } from './js/bagarre.js';
+import { BrawlScene } from './js/brawl.js';
+const SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene, bagarre: BagarreScene, melee: BrawlScene };
 window.onerror = (m, s, l, c, e) => { (window.errs ||= []).push(String(e?.stack || m)); };
 const q = new URLSearchParams(location.search);
 const game = SCENES[q.get('game')] ? q.get('game') : 'lasso';
 const M = MODES[game];
-const nBots = Math.max(M.min - 1, Math.min(M.max - 1, q.has('bots') ? +q.get('bots') : 3));
+const nBots = Math.max(M.min - 1, Math.min(M.max - 1, q.has('bots') ? +q.get('bots') : M.soloBots ?? 3));
 const players = [{ key: 'me', name: 'Moi', character: {} }, ...Array.from({ length: nBots }, (_, i) => ({ key: `b${i + 1}`, name: `Bot${i + 1}`, bot: true, character: i ? {} : { hat: 'sombrero' } }))];
 const variant = q.get('variant');
 if (variant && !VARIANTS[game]?.list.some((v) => v.id === variant)) (window.errs ||= []).push(`variante inconnue : ${variant} (${(VARIANTS[game]?.list || []).map((v) => v.id).join(', ') || 'aucune'})`);

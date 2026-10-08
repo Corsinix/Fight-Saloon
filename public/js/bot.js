@@ -64,7 +64,7 @@ class Bot {
     // Objet à soi, sinon volé au lasso.
     const use = (item) => {
       if (item === 'saw' && st.sawed) return null;
-      if (item === 'cuffs' && op.cuffed) return null;
+      if (item === 'cuffs' && (op.cuffed || st.cuffLock === st.me)) return null;
       if (item === 'horseshoe' && me.lucky) return null;
       const slot = me.items.indexOf(item);
       if (slot >= 0) return { kind: 'item', slot };

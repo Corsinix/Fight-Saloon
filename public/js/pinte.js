@@ -3,11 +3,11 @@
 // La glissade est simulée ici pas à pas, exactement comme chez l'hôte (pintegame.js).
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
-import { canvasText } from './scene.js';
+import { canvasText, textSprite } from './scene.js';
 import { MiniScene, pixelSprite } from './miniscene.js';
 import { Room } from './room.js';
-import { W } from './worlds.js';
-import { PINTE, Slide, gapCm, BEERS, beerOf, modName, modLabel, MODS, onMat, COUNTERS, counterOf, speedFor } from './pintegame.js';
+import { W, H } from './worlds.js';
+import { PINTE, Slide, gapCm, BEERS, beerOf, modName, modLabel, MODS, METAS, META, onMat, COUNTERS, counterOf, speedFor } from './pintegame.js';
 
 const P = PINTE;
 const OUT = S.OUT;
@@ -279,6 +279,14 @@ function drawMug(ctx, x, y, col, rot = 0, b = 'blonde') {
   ctx.restore();
 }
 
+// cartouche sombre bordé d'une couleur : le texte posé dessus se lit sur n'importe quel décor
+function plate(ctx, x, y, w, h, col) {
+  ctx.fillStyle = OUT; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+  ctx.fillStyle = 'rgba(26,15,10,0.9)'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = col; ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + h - 1, w, 1);
+}
+const textW = (str, size = 8) => textSprite(String(str), size, '#fdf6e0', '#1a0f0a').w;
+
 const hash = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
 
 // Décor des modificateurs posé sur le comptoir (sciure, vent, cire, gel, virage)
@@ -401,6 +409,7 @@ export class PinteScene extends MiniScene {
       'TROP FORT OU DE TRAVERS, ELLE TOMBE : 0 PT',
       'POUSSE LES CHOPES DES AUTRES DANS LE VIDE !',
       'CHAQUE MANCHE SES SURPRISES, ET LE BARMAN CHANGE DE BIÈRE',
+      'GARE AUX ÉVÉNEMENTS : BAGARRE, DOUBLE SERVICE, TOUT OU RIEN…',
     ];
   }
   goText() { return ''; }
@@ -486,6 +495,14 @@ export class PinteScene extends MiniScene {
       this.remoteAim = null;
       this.slide = { sim: new Slide(ev.start, ev.mods || c.mods), at: this.t, seen: 0, who: ev.who, id: ev.start[ev.start.length - 1].id };
       sfx('rope');
+    } else if (ev.type === 'pBrawl') {
+      // la bagarre est annoncée, puis le comptoir est bousculé (même glissade que chez l'hôte)
+      this.cur = c;
+      this.aim = null;
+      this.remoteAim = null;
+      this.slide = { sim: new Slide(ev.start, ev.mods || c.mods), at: this.t + (ev.delay || 0), seen: 0, who: null, id: null, brawl: true };
+      sfx('yell');
+      sfx('crate', 0.25);
     } else if (ev.type === 'pSkip') {
       this.cur = c;
       this.aim = null;
@@ -511,6 +528,7 @@ export class PinteScene extends MiniScene {
     const sl = this.slide;
     if (sl) {
       const el = t - sl.at;
+      if (sl.brawl && el >= 0 && !sl.shook) { sl.shook = true; this.shake = 5; sfx('thud'); sfx('glass', 0.05); }
       while (!sl.sim.done && sl.sim.t <= el) sl.sim.step();
       for (; sl.seen < sl.sim.log.length; sl.seen++) this.slideEvent(sl.sim.log[sl.seen], sl);
       const saw = sl.sim.m.saw;
@@ -604,8 +622,16 @@ export class PinteScene extends MiniScene {
         floor: e.edge === 'back' ? sy(this.g.backAt(q.x)) + 32 : e.edge === 'front' ? FLOOR + 6 : FLOOR + 3,
       });
       const mine = q.o === this.me;
-      const by = sl.who !== q.o ? (sl.who === this.me ? 'DANS LE VIDE !' : 'POUSSÉE !') : 'TOMBÉE !';
-      this.popup(Math.min(W - 56, sx(q.x)), TOP - 44, by, mine ? '#f0705a' : '#f8d070', true);
+      const by = sl.who == null || sl.who === q.o ? 'TOMBÉE !' : sl.who === this.me ? 'DANS LE VIDE !' : 'POUSSÉE !';
+      const px = Math.min(W - 56, sx(q.x));
+      this.popup(px, TOP - 44, by, mine ? '#f0705a' : '#f8d070', true);
+      // casse payante, ou prime du shérif pour le lanceur
+      const meta = sl.sim.m.meta;
+      if (meta === 'casse') this.popup(px, TOP - 32, `-${META.CASSE}`, METAS.casse.col);
+      else if (meta === 'chasse' && sl.who != null && sl.who !== q.o) {
+        this.popup(px, TOP - 32, `PRIME +${META.PRIME}`, METAS.chasse.col);
+        sfx('coin', 0.1);
+      }
     }
   }
 
@@ -691,6 +717,8 @@ export class PinteScene extends MiniScene {
     }
     ctx.globalAlpha = 1;
     this.room.drawOverlay(ctx, now);
+    // les lampes sont éteintes : toute la salle plonge dans la pénombre
+    if (m?.meta === 'noir' && c.phase !== 'score' && t >= c.turnAt - 300) { ctx.fillStyle = 'rgba(6,4,18,0.55)'; ctx.fillRect(0, 0, W, H); }
     if (!c || t < 0) return;
     if (c.phase === 'score') this.drawScore(ctx, c);
     else { this.drawGauges(ctx); this.drawLegend(ctx, c); }
@@ -749,8 +777,8 @@ export class PinteScene extends MiniScene {
   // trajectoire visée : des points à la craie sur le comptoir, qui suivent les ricochets sur les rambardes
   drawGuide(ctx) {
     const aim = this.aimNow();
-    if (!aim) return;
-    const g = this.g, mods = { lay: g.id }, v = speedFor(1, mods);
+    if (!aim || this.cur.mods?.meta === 'noir') return;
+    const g = this.g, mods = { lay: g.id, bottles: this.cur.mods?.bottles }, v = speedFor(1, mods);
     ctx.fillStyle = isSafe(g, aim.a) ? 'rgba(253,246,224,0.7)' : 'rgba(240,112,90,0.8)';
     const sim = new Slide([{ id: 0, b: 'blonde', x: P.START, y: P.D / 2, vx: v * Math.cos(aim.a), vy: v * Math.sin(aim.a) }], mods);
     const q = sim.p[0], len = g.rails ? 200 : 120;
@@ -798,38 +826,77 @@ export class PinteScene extends MiniScene {
 
   drawBanner(ctx, c, t) {
     if (t < c.turnAt && c.turn === 0 && c.phase === 'aim') {
-      // annonce de la manche, de son comptoir et de ses surprises, une ligne après l'autre
+      // annonce de la manche, de son comptoir, de ses surprises et de son événement, une ligne après l'autre
       const lay = c.mods?.lay && c.mods.lay !== 'droit' ? COUNTERS[c.mods.lay] : null;
+      const ev = c.mods?.meta && METAS[c.mods.meta];
       const lines = [...(lay ? [[lay.name, lay.col]] : []), ...(c.mods?.list || []).map((id) => [modName(id, c.mods), MODS[id].col])];
-      ctx.fillStyle = 'rgba(26,15,10,0.78)';
+      const items = lines.length + !!ev;
+      if (ev) lines.push([`ÉVÉNEMENT : ${ev.title} !`, ev.col], [ev.name, '#fdf6e0']);
+      ctx.fillStyle = 'rgba(26,15,10,0.85)';
       ctx.fillRect(0, 50, W, 32 + (lines.length ? 6 + lines.length * 12 : 0));
       canvasText(ctx, `MANCHE ${c.n} / ${c.rounds}`, W / 2, 56, { size: 16, color: '#f8d070' });
-      const shown = Math.floor((t - (c.turnAt - P.INTRO - 900 * lines.length)) / 700) + 1;
-      lines.slice(0, Math.max(1, shown)).forEach(([txt, col], k) => canvasText(ctx, txt, W / 2, 82 + k * 12, { color: col }));
+      const shown = Math.floor((t - (c.turnAt - P.INTRO - 900 * items)) / 700) + 1;
+      // l'événement (titre et effet) arrive d'un bloc
+      const n = ev && shown >= lines.length - 1 ? lines.length : shown;
+      lines.slice(0, Math.max(1, n)).forEach(([txt, col], k) => canvasText(ctx, txt, W / 2, 82 + k * 12, { color: col }));
+      return;
+    }
+    // bagarre : annoncée en grand avant que le comptoir ne soit bousculé
+    const sl = this.slide;
+    if (c.phase === 'brawl' && sl?.brawl && t < sl.at + 600) {
+      const j = t < sl.at ? 0 : Math.round(Math.sin(this.now / 30) * 2);
+      plate(ctx, 40, 44, W - 80, 36, METAS.bagarre.col);
+      canvasText(ctx, 'BAGARRE !', W / 2 + j, 48, { size: 16, color: METAS.bagarre.col });
+      canvasText(ctx, 'QUELQU\'UN BOUSCULE LE COMPTOIR…', W / 2, 67, { color: '#fdf6e0' });
       return;
     }
     const who = this.thrower;
     if (who == null || t < c.turnAt - 300) return;
-    const B = BEERS[c.beers?.[c.turn]] || BEERS.blonde;
+    // double service : 1re ou 2e chope
+    const two = c.mods?.meta === 'deux' ? (c.turn >= c.order.length / 2 ? '2E CHOPE : ' : '1RE CHOPE : ') : '';
     if (who === this.me) {
-      canvasText(ctx, 'À TOI !', W / 2, 8, { size: 16, color: this.color(who) });
+      const w = textW('À TOI !', 16) + 14;
+      plate(ctx, Math.round(W / 2 - w / 2), 3, w, 20, this.color(who));
+      canvasText(ctx, 'À TOI !', W / 2, 6, { size: 16, color: this.color(who) });
+      this.drawBeer(ctx, c.beers?.[c.turn], 26, true, two);
       const st = this.aim?.stage;
       const tap = this.touch ? 'TOUCHE' : 'CLIC';
       const help = st === 'dir' ? `${tap} : BLOQUE LA DIRECTION` : st === 'pow' ? `${tap} : BLOQUE LA PUISSANCE` : '';
-      if (help && Math.floor(this.now / 400) % 3) canvasText(ctx, help, W / 2, 28, { color: '#fdf6e0' });
-      canvasText(ctx, `ON TE SERT ${B.name} : ${B.desc}`, W / 2, 40, { color: '#e8c890' });
+      if (help && Math.floor(this.now / 400) % 3) {
+        const w = textW(help) + 10;
+        plate(ctx, Math.round(W / 2 - w / 2), 56, w, 12, '#fdf6e0');
+        canvasText(ctx, help, W / 2, 58, { color: '#fdf6e0' });
+      }
     } else {
-      canvasText(ctx, `AU TOUR DE ${this.name(who).toUpperCase()}`, W / 2, 10, { color: this.color(who) });
-      canvasText(ctx, `${B.name} : ${B.desc}`, W / 2, 22, { color: '#e8c890' });
+      const title = `AU TOUR DE ${this.name(who).toUpperCase()}`, w = textW(title) + 10;
+      plate(ctx, Math.round(W / 2 - w / 2), 5, w, 12, this.color(who));
+      canvasText(ctx, title, W / 2, 7, { color: this.color(who) });
+      this.drawBeer(ctx, c.beers?.[c.turn], 21, false, two);
     }
   }
 
-  // rappel des surprises de la manche, en haut à droite
+  // la bière servie et son effet, sur un cartouche bien lisible, avec la chope à gauche
+  drawBeer(ctx, b, y, mine, pre = '') {
+    const B = BEERS[b] || BEERS.blonde;
+    const head = pre + (mine ? `ON TE SERT ${B.name}` : B.name);
+    const tw = Math.max(textW(head), textW(B.desc)), w = tw + 36, x = Math.round(W / 2 - w / 2);
+    plate(ctx, x, y, w, 26, B.col);
+    drawMug(ctx, x + 13, y + 22, this.color(this.thrower), 0, b);
+    const cx = x + 28 + tw / 2;
+    canvasText(ctx, head, cx, y + 4, { color: B.col });
+    canvasText(ctx, B.desc, cx, y + 15, { color: '#fdf6e0' });
+  }
+
+  // rappel du comptoir, des surprises et de l'événement de la manche, en haut à droite
   drawLegend(ctx, c) {
     const lay = c.mods?.lay && c.mods.lay !== 'droit' ? COUNTERS[c.mods.lay] : null;
+    const ev = c.mods?.meta && METAS[c.mods.meta];
     const lines = [...(lay ? [[lay.label, lay.col]] : []), ...(c.mods?.list || []).map((id) => [modLabel(id, c.mods), MODS[id].col])];
+    if (ev) lines.push([ev.label, ev.col]);
     if (!lines.length || this.t < c.turnAt) return;
-    lines.forEach(([txt, col], k) => canvasText(ctx, txt, W - 4, 4 + k * 10, { align: 'right', color: col }));
+    const w = Math.max(...lines.map(([txt]) => textW(txt))) + 8;
+    plate(ctx, W - 2 - w, 2, w, lines.length * 10 + 3, '#8a5a34');
+    lines.forEach(([txt, col], k) => canvasText(ctx, txt, W - 6, 4 + k * 10, { align: 'right', color: col }));
   }
 
   // fin de manche : écart de chaque chope, et la tournée pour la plus proche
@@ -846,10 +913,11 @@ export class PinteScene extends MiniScene {
       const q = r.mat && c.pints.find((x) => x.id === r.id);
       if (q) canvasText(ctx, `+${P.MAT}`, sx(q.x), sy(q.y) - 30, { color: MODS.sousbock.col });
     }
-    const mult = c.mods?.mult || 1;
-    ctx.fillStyle = 'rgba(26,15,10,0.75)';
-    ctx.fillRect(0, 40, W, mult > 1 ? 72 : 62);
-    if (mult > 1) canvasText(ctx, 'DERNIÈRE TOURNÉE : POINTS DOUBLÉS', W / 2, 99, { color: MODS.double.col });
+    const mult = c.mods?.mult || 1, ev = c.mods?.meta && METAS[c.mods.meta];
+    const foot = mult > 1 ? ['DERNIÈRE TOURNÉE : POINTS DOUBLÉS', MODS.double.col] : ev ? [`${ev.title} : ${ev.label}`, ev.col] : null;
+    ctx.fillStyle = 'rgba(26,15,10,0.85)';
+    ctx.fillRect(0, 40, W, foot ? 72 : 62);
+    if (foot) canvasText(ctx, foot[0], W / 2, 99, { color: foot[1] });
     const best = c.res.filter((r) => r.best);
     if (!best.length) {
       canvasText(ctx, 'TOUTES LES CHOPES SONT TOMBÉES !', W / 2, 46, { size: 16, color: '#f0705a' });
@@ -857,17 +925,18 @@ export class PinteScene extends MiniScene {
     }
     const names = [...new Set(best.map((r) => (r.o === this.me ? 'TOI' : this.name(r.o).slice(0, 10).toUpperCase())))].join(' ET ');
     canvasText(ctx, `${names} : LA PLUS PROCHE !`, W / 2, 46, { size: names.length > 12 ? 8 : 16, color: '#f8d070' });
-    // une colonne par joueur : son écart (ou TOMBÉE) et ses points de la manche (à six, 64 px chacune : noms plus courts)
+    // une colonne par joueur : son écart (ou TOMBÉE) et ses points de la manche, casse et prime comprises
+    // (à six, 64 px chacune : noms plus courts)
     const players = this.state.players, cw = W / players.length, nl = cw < 70 ? 8 : 10;
     players.forEach((p, i) => {
       const mine = c.res.filter((r) => r.o === i);
       const x = cw * (i + 0.5);
       const threw = c.order.includes(i);
       const cm = mine.length ? `${Math.min(...mine.map((r) => r.cm))} CM` : threw ? 'TOMBÉE' : '—';
-      const pts = mine.reduce((s, r) => s + r.pts, 0);
+      const pts = mine.reduce((s, r) => s + r.pts, 0) + (c.extra?.[i] || 0);
       canvasText(ctx, i === this.me ? 'TOI' : p.name.slice(0, nl).toUpperCase(), x, 66, { color: this.color(i) });
       canvasText(ctx, cm, x, 77, { color: mine.length ? '#fdf6e0' : '#f0705a' });
-      canvasText(ctx, `+${pts}`, x, 88, { color: mine.some((r) => r.best) ? '#f8d070' : '#a89880' });
+      canvasText(ctx, pts < 0 ? `${pts}` : `+${pts}`, x, 88, { color: pts < 0 ? '#f0705a' : mine.some((r) => r.best) ? '#f8d070' : '#a89880' });
     });
   }
 

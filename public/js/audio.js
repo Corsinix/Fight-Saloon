@@ -266,6 +266,65 @@ function pluck(f, t, len, peak, { bright = 'p25', snap = 0.5, atkLen = 0.12, des
   if (echo) g.connect(echoIn);
 }
 
+// Section de cuivres (la bagarre) : deux dents de scie par note, filtre qui « claque » à l'attaque puis retombe.
+// lead : tenue plus longue, vibrato (la fanfare qui chante la mélodie) ; sinon un coup bref (stab).
+function brassHit(notes, t, d, gain, lead = false) {
+  const end = t + Math.max(0.08, d * (lead ? 0.92 : 0.6));
+  const flt = ac.createBiquadFilter();
+  flt.type = 'lowpass';
+  flt.Q.value = 2;
+  flt.frequency.setValueAtTime(400, t);
+  flt.frequency.exponentialRampToValueAtTime(4800, t + 0.035);
+  flt.frequency.exponentialRampToValueAtTime(lead ? 2600 : 1300, t + 0.2);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain * 1.4, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(gain, t + 0.12);
+  g.gain.setValueAtTime(gain, Math.max(t + 0.12, end - 0.05));
+  g.gain.exponentialRampToValueAtTime(0.0005, end + (lead ? 0.09 : 0.04));
+  for (const n of notes) {
+    for (const det of [-9, 9]) {
+      const o = osc('sawtooth', mtof(n), t);
+      o.detune.value = det;
+      if (lead) vibrato(o, t, d, 14, 5.5, 0.3);
+      o.connect(flt);
+      o.start(t);
+      o.stop(end + 0.12);
+    }
+  }
+  flt.connect(g);
+  g.connect(musicBus);
+  g.connect(echoIn);
+}
+
+// « HEY ! » de la foule (la bagarre) : voix d'hommes glissant vers le bas dans deux formants, et le souffle du cri
+function heyShout(t, gain, chip) {
+  const end = t + 0.2;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.001, end);
+  const bands = [[620, 5], [1750, 7]].map(([f, q]) => {
+    const b = ac.createBiquadFilter();
+    b.type = 'bandpass';
+    b.Q.value = q;
+    b.frequency.setValueAtTime(f, t);
+    b.frequency.exponentialRampToValueAtTime(f * 0.8, end);
+    b.connect(g);
+    return b;
+  });
+  for (const f0 of chip ? [190] : [165, 200, 238]) {
+    const o = osc(chip ? 'p25' : 'sawtooth', f0 * (0.98 + Math.random() * 0.04), t);
+    o.frequency.exponentialRampToValueAtTime(f0 * 0.8, end);
+    for (const b of bands) o.connect(b);
+    o.start(t);
+    o.stop(end + 0.02);
+  }
+  g.connect(musicBus);
+  g.connect(echoIn);
+  noise(t, 0.07, { type: 'bandpass', f: 2400, q: 1, gain: gain * 0.25, dest: musicBus, buf: chip ? nesNoise : undefined });
+}
+
 // note "8 bits" : enveloppe en paliers comme les registres de volume du NES
 function chipNote(wave, f, t, d, vol, { gate = 0.9, vib = 0, dest = musicBus, echo = false } = {}) {
   const o = osc(wave, f, t);
@@ -325,6 +384,14 @@ const INST = {
   S8(t) { noise(t, 0.13, { type: 'highpass', f: 900, gain: 0.16, dest: musicBus, buf: nesNoise }); },
   H8(t) { noise(t, 0.03, { type: 'highpass', f: 6500, gain: 0.07, dest: musicBus, buf: nesNoise, decay: false }); },
   O8(t) { noise(t, 0.16, { type: 'highpass', f: 6000, gain: 0.06, dest: musicBus, buf: nesNoise }); },
+  // arpège de salle d'arcade (la bagarre) : pulse très fine, notes piquées
+  arp8(m, t, d, v = 1) { chipNote('p12', mtof(m), t, d, 0.03 * v, { gate: 0.55 }); },
+  // claquement de mains, toms, « HEY ! » (la bagarre)
+  P8(t) { noise(t, 0.08, { type: 'highpass', f: 1500, gain: 0.16, dest: musicBus, buf: nesNoise }); },
+  M8(t) { tone(t, 230, 0.16, { type: 'tri4', f2: 110, gain: 0.32, dest: musicBus }); },
+  N8(t) { tone(t, 150, 0.2, { type: 'tri4', f2: 70, gain: 0.34, dest: musicBus }); },
+  D8(t) { INST.K8(t); INST.P8(t); },
+  Z8(t) { heyShout(t, 0.6, true); },
 
   // ---- 16 bits (SNES : échantillons filtrés + écho)
   flute(m, t, d, v = 1) {
@@ -438,6 +505,90 @@ const INST = {
   },
   H16(t) { noise(t, 0.035, { type: 'highpass', f: 8000, gain: 0.06, dest: musicBus }); },
   O16(t) { noise(t, 0.2, { type: 'highpass', f: 7000, gain: 0.045, dest: musicBus }); },
+
+  // ---- la bagarre : sonorités de ring (fanfare de cuivres, funk de Philadelphie, synthé de stade, timbales, foule)
+  brass(notes, t, d, v = 1) { brassHit(notes, t, Math.min(d, 0.5), 0.022 * v); },
+  fanfare(m, t, d, v = 1) { brassHit([m, m - 12], t, d, 0.042 * v, true); },
+  // guitare funk « wah-wah » : accord étouffé, la pédale s'ouvre d'un coup
+  wah(m, t, d, v = 1) {
+    const len = Math.min(0.17, d * 0.9 + 0.04);
+    const bp = ac.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 4;
+    bp.frequency.setValueAtTime(450, t);
+    bp.frequency.exponentialRampToValueAtTime(2300, t + len * 0.7);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.2 * v, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    for (const k of [0, 7, 12]) {
+      const o = osc('p25', mtof(m + k), t);
+      o.connect(bp);
+      o.start(t);
+      o.stop(t + len + 0.02);
+    }
+    bp.connect(g).connect(musicBus);
+  },
+  // basse disco : dent de scie qui claque puis se referme, sous-basse en dessous
+  slap16(m, t, d, v = 1) {
+    const f = mtof(m), len = Math.max(0.1, Math.min(0.35, d * 0.9));
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 6;
+    lp.frequency.setValueAtTime(2600, t);
+    lp.frequency.exponentialRampToValueAtTime(320, t + len);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.2 * v, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    const o = osc('sawtooth', f, t), sub = osc('sine', f, t);
+    o.connect(lp).connect(g);
+    sub.connect(g);
+    for (const x of [o, sub]) { x.start(t); x.stop(t + len + 0.02); }
+    g.connect(musicBus);
+  },
+  // synthé des années 80, hymne de stade : deux dents de scie désaccordées, un carré à l'octave du dessous, léger glissé
+  synlead(m, t, d, v = 1) {
+    const f = mtof(m);
+    const end = t + Math.max(0.08, d * 0.95);
+    const flt = ac.createBiquadFilter();
+    flt.type = 'lowpass';
+    flt.Q.value = 5;
+    flt.frequency.setValueAtTime(900, t);
+    flt.frequency.exponentialRampToValueAtTime(3800, t + 0.08);
+    flt.frequency.exponentialRampToValueAtTime(2200, t + 0.4);
+    const g = ac.createGain();
+    env(g, t, 0.015, 0.05 * v, 0.08, end);
+    for (const [w, det, k] of [['sawtooth', -10, 1], ['sawtooth', 10, 1], ['square', 0, 0.5]]) {
+      const o = osc(w, f * k * 0.985, t);
+      o.frequency.exponentialRampToValueAtTime(f * k, t + 0.05);
+      o.detune.value = det;
+      vibrato(o, t, d, 16, 5.5, 0.25);
+      o.connect(flt);
+      o.start(t);
+      o.stop(end + 0.03);
+    }
+    flt.connect(g);
+    g.connect(musicBus);
+    g.connect(echoIn);
+  },
+  // timbales d'orchestre : la peau se détend (la note descend un peu), coup de mailloche
+  timpani(m, t, d, v = 1) {
+    const f = mtof(m);
+    tone(t, f * 1.06, Math.min(1.2, d + 0.5), { f2: f, gain: 0.45 * v, dest: musicBus });
+    tone(t, f * 1.5, 0.4, { gain: 0.07 * v, dest: musicBus });
+    noise(t, 0.05, { f: 700, gain: 0.12 * v, dest: musicBus });
+  },
+  P16(t) {
+    for (const [k, at] of [[1, 0], [0.8, 0.011], [0.7, 0.023]]) noise(t + at, 0.02, { type: 'bandpass', f: 1250, q: 1.5, gain: 0.3 * k, dest: musicBus });
+    noise(t + 0.03, 0.14, { type: 'bandpass', f: 1100, q: 1, gain: 0.16, dest: musicBus });
+  },
+  M16(t) { tone(t, 210, 0.26, { f2: 115, gain: 0.32, dest: musicBus }); },
+  N16(t) { tone(t, 135, 0.32, { f2: 68, gain: 0.38, dest: musicBus }); },
+  D16(t) { INST.K16(t); INST.P16(t); },
+  J16(t) { tone(t, 430, 0.09, { f2: 370, gain: 0.17, dest: musicBus }); },
+  U16(t) { tone(t, 300, 0.12, { f2: 255, gain: 0.2, dest: musicBus }); },
+  Z16(t) { heyShout(t, 0.9, false); },
 
   // ---- couleurs western
   // sifflement de cowboy : sinus qui "glisse" sur la note, gros vibrato, souffle
@@ -1026,7 +1177,7 @@ function compile(song) {
     }));
   }
   // Y = cri de coyote, sur la note song.howl
-  const drum = (k, at) => ev.push(k === 'Y' ? { s: at, d: 1, fn: 'Yh' + st.drum, arg: noteNum(song.howl || 'A4') } : { s: at, d: 0, fn: k + st.drum, role: 'KSWABXG'.includes(k) ? 'loud' : null });
+  const drum = (k, at) => ev.push(k === 'Y' ? { s: at, d: 1, fn: 'Yh' + st.drum, arg: noteNum(song.howl || 'A4') } : { s: at, d: 0, fn: k + st.drum, role: 'KSWABXGDPMNZ'.includes(k) ? 'loud' : null });
   if (song.drums) pattern(song.drums, drum, song.drumsB ? (b) => b % 2 === 0 : null);
   if (song.drumsB) pattern(song.drumsB, drum, (b) => b % 2 === 1);
   // couche de tension (jouée seulement quand ça chauffe) : grosse caisse sur le temps, tambourin à contretemps,
@@ -1492,6 +1643,163 @@ Object.assign(SONGS, {
   },
 });
 
+// ---- La bagarre : musiques de ring, loin des westerns du reste du jeu. Compositions originales dans l'esprit
+// des musiques de boxe : le jeu de boxe 8 bits (arpèges rapides, basse en octaves), la fanfare et le funk de
+// Philadelphie des films de boxe, le hard rock de stade (accords étouffés en rafales), l'entrée du champion
+// (timbales, cuivres, la foule qui tape des pieds et crie « HEY ! »). Instruments : brass, fanfare, wah, slap16,
+// synlead, timpani, arp8 ; percussions P (mains), M / N (toms), D (grosse caisse et mains), J / U (bongos), Z (« HEY ! »).
+// guitare wah-wah : la même rythmique funk en doubles croches sur la fondamentale de chaque accord
+const wahBar = (n) => `${n}:1 -:1 ${n}:1 -:1 ${n}:1 ${n}:1 -:2 ${n}:1 -:1 ${n}:1 -:1 ${n}:1 ${n}:1 -:2`;
+Object.assign(SONGS, {
+  // salle d'arcade : mélodie piquée et syncopée, accords en arpèges de doubles croches, basse qui pompe en octaves,
+  // cris de la foule toutes les deux mesures ; la seconde partie monte d'un cran
+  combat: {
+    title: 'Le Grand Combat', style: '8bit', bpm: 160, div: 4, bar: 16, loops: 3, accel: 1.04,
+    inst: { tone: 'arp8' }, echoDelay: 3,
+    melody:
+      'C5:1 -:1 C5:1 -:1 Eb5:2 G5:2 -:2 G5:1 F5:1 Eb5:2 D5:2 | C5:1 -:1 C5:1 -:1 Eb5:2 G5:2 C6:4 B5:2 G5:2 |' +
+      'Db5:1 -:1 Db5:1 -:1 F5:2 Ab5:2 -:2 Ab5:1 G5:1 F5:2 Eb5:2 | Db5:2 F5:2 Ab5:2 Db6:2 C6:4 Ab5:4 |' +
+      'G5:1 -:1 G5:1 -:1 C6:2 Eb6:2 D6:2 C6:2 B5:2 G5:2 | Ab5:2 G5:2 F5:2 Eb5:2 D5:2 Eb5:2 F5:4 |' +
+      'G5:2 B5:2 D6:2 F6:2 Eb6:2 D6:2 B5:4 | G5:1 -:1 G5:1 -:1 G5:1 -:1 B5:2 D6:8 |' +
+      'Eb6:4 C6:2 Ab5:2 Eb5:4 Ab5:4 | F6:4 D6:2 Bb5:2 F5:4 Bb5:4 | G6:2 F6:2 Eb6:2 D6:2 C6:4 G5:4 | Eb6:2 D6:2 C6:2 Bb5:2 C6:8 |' +
+      'Ab5:2 C6:2 Eb6:2 Ab6:2 G6:2 F6:2 Eb6:4 | D6:2 F6:2 Bb6:4 Ab6:2 G6:2 F6:4 |' +
+      'G6:2 F6:2 D6:2 B5:2 G5:2 F5:2 D5:2 B4:2 | G5:1 G5:1 G5:1 -:1 G5:1 -:1 B5:2 D6:2 -:2 G5:2 -:2',
+    chords: 'Cm Cm Db Db Cm Cm G G Ab Bb Cm Cm Ab Bb G G',
+    bass: 'R:2 8:2 R:2 8:2 R:2 8:2 R:2 8:2',
+    comp: '1:1 3:1 5:1 8:1 1:1 3:1 5:1 8:1 1:1 3:1 5:1 8:1 1:1 3:1 5:1 8:1',
+    drums: 'K:2 H:2 S:2 H:2 K:2 K:2 S:2 H:2',
+    drumsB: 'K:2 H:2 S:2 H:2 K:1 K:1 S:1 S:1 S:2 Z:2',
+  },
+  // l'entraînement du film de boxe : fanfare de cuivres qui monte, guitare wah-wah, basse disco, cordes,
+  // grosse caisse à chaque temps, charleston ouvert à contretemps, mains qui claquent, bongos
+  debout: {
+    title: 'Debout, Champion !', style: '16bit', bpm: 112, div: 4, bar: 16, loops: 3,
+    inst: { lead: 'fanfare', comp: 'brass', bass: 'slap16' },
+    melody:
+      'A4:2 D5:2 F#5:2 A5:6 F#5:2 A5:2 | D6:8 C#6:2 B5:2 A5:4 | B5:2 -:1 B5:1 B5:2 C#6:2 D6:6 B5:2 | A5:8 -:4 A4:2 C#5:2 |' +
+      'D5:2 F#5:2 A5:2 D6:6 E6:2 F#6:2 | F#6:6 E6:2 D6:4 A5:4 | G5:2 B5:2 D6:2 G6:6 F#6:2 E6:2 | E6:8 -:4 C#6:2 E6:2 |' +
+      'F#6:6 D6:2 B5:4 F#5:4 | G5:2 B5:2 D6:4 E6:4 D6:4 | A5:6 F#5:2 D5:4 F#5:4 | E5:2 F#5:2 A5:4 C#6:8 |' +
+      'D6:2 C#6:2 B5:2 C#6:2 D6:4 F#6:4 | G6:6 F#6:2 E6:4 D6:4 | E6:2 -:1 E6:1 E6:2 F#6:2 G#6:4 B6:4 | A6:12 -:4',
+    chords: 'D D G A D D G A Bm G D A Bm G E A',
+    voices: [{
+      inst: 'wah', v: 0.9,
+      melody: riff('D D G A D D G A Bm G D A Bm G E A', { D: wahBar('D4'), G: wahBar('G3'), A: wahBar('A3'), Bm: wahBar('B3'), E: wahBar('E4') }),
+    }],
+    bass: 'R:3 R:1 8:2 R:2 5:2 8:2 R:2 8:2',
+    comp: '-:2 c:1 -:1 -:4 -:2 c:1 -:1 c:2 -:2',
+    drums: 'K:2 O:2 D:2 O:2 K:2 O:2 D:2 O:2',
+    drumsB: 'K:2 J:1 J:1 D:2 U:2 K:2 O:2 D:2 J:1 U:1',
+  },
+  // hard rock de stade : accords étouffés frappés en rafales avec la batterie, silences qui claquent,
+  // synthé des années 80 qui chante par-dessus, roulements de toms
+  cogneur: {
+    title: 'Le Regard du Cogneur', style: '16bit', bpm: 108, div: 4, bar: 16, loops: 3, accel: 1.02,
+    inst: { lead: 'synlead' }, pad: false,
+    melody:
+      '-:8 C#5:2 E5:2 F#5:4 | A5:6 G#5:2 F#5:4 E5:4 | F#5:6 A5:2 D6:4 C#6:2 A5:2 | B5:8 G#5:4 E5:4 |' +
+      '-:4 C#5:2 F#5:2 A5:2 C#6:2 B5:2 A5:2 | C#6:6 B5:2 A5:2 G#5:2 F#5:4 | D6:4 C#6:2 B5:2 A5:4 F#5:4 | G#5:4 B5:4 E6:8 |' +
+      'F#6:6 E6:2 D6:4 B5:4 | D6:2 E6:2 F#6:4 B6:8 | A6:6 G#6:2 F#6:4 C#6:4 | E6:2 F#6:2 A6:4 F#6:8 |' +
+      'F#6:4 E6:2 D6:2 A5:4 D6:4 | E6:4 F#6:4 A6:8 | G#6:6 F6:2 C#6:4 G#5:4 | C#6:12 -:4',
+    chords: 'F#m F#m D E F#m F#m D E Bm Bm F#m F#m D D C# C#',
+    voices: [{
+      inst: 'chug', v: 0.95,
+      melody: riff('F#m F#m D E F#m F#m D E Bm Bm F#m F#m D D C# C#', {
+        'F#m': 'F#2:3 F#2:3 F#2:2 -:2 A2:2 B2:2 C#3:2', D: 'D2:3 D2:3 D2:2 -:2 E2:2 F#2:2 A2:2',
+        E: 'E2:3 E2:3 E2:2 -:2 G#2:2 A2:2 B2:2', Bm: 'B2:3 B2:3 B2:2 -:2 C#3:2 D3:2 E3:2', 'C#': 'C#3:3 C#3:3 C#3:2 -:4 G#2:2 C#3:2',
+      }),
+    }],
+    bass: 'R:3 R:3 R:2 -:2 R:2 5:2 8:2',
+    drums: 'X:3 K:3 S:2 -:2 K:2 S:1 S:1 M:2',
+    drumsB: 'K:3 K:3 S:2 K:2 K:2 S:2 M:1 N:1',
+  },
+  // ---- hard rock de ring (même famille que « Le Regard du Cogneur »)
+  // riff au galop (croche, deux doubles) sous une guitare solo qui hurle, grosse caisse qui galope avec lui
+  uppercut: {
+    title: "L'Uppercut", style: '16bit', bpm: 138, div: 4, bar: 16, loops: 3, accel: 1.03,
+    inst: { lead: 'wail' }, pad: false,
+    melody:
+      'A4:4 C5:4 E5:6 D5:2 | C5:2 B4:2 A4:4 E4:8 | F4:4 A4:4 C5:6 B4:2 | D5:4 B4:4 G4:8 |' +
+      'E5:4 A5:4 G5:2 E5:2 C5:4 | D5:2 E5:2 C5:2 A4:2 E5:8 | F5:4 E5:2 C5:2 A4:4 C5:4 | B4:4 G#4:4 E4:8 |' +
+      'D5:6 F5:2 A5:4 G5:2 F5:2 | E5:2 F5:2 D5:4 A4:8 | C6:6 B5:2 A5:4 E5:4 | G5:2 A5:2 E5:4 C5:8 |' +
+      'A5:4 C6:4 F6:6 E6:2 | D6:4 B5:4 G5:4 D6:4 | E6:6 D6:2 B5:4 G#5:4 | E5:2 G#5:2 B5:2 E6:2 -:8',
+    chords: 'Am Am F G Am Am F E Dm Dm Am Am F G E E',
+    voices: [{
+      inst: 'chug', v: 0.72,
+      melody: riff('Am Am F G Am Am F E Dm Dm Am Am F G E E', {
+        Am: 'A2:2 A2:1 A2:1 A2:2 A2:1 A2:1 A2:2 A2:1 A2:1 C3:2 D3:2', F: 'F2:2 F2:1 F2:1 F2:2 F2:1 F2:1 F2:2 F2:1 F2:1 G2:2 A2:2', G: 'G2:2 G2:1 G2:1 G2:2 G2:1 G2:1 G2:2 G2:1 G2:1 A2:2 B2:2',
+        E: 'E2:2 E2:1 E2:1 E2:2 E2:1 E2:1 E2:2 E2:1 E2:1 G#2:2 B2:2', Dm: 'D3:2 D3:1 D3:1 D3:2 D3:1 D3:1 D3:2 D3:1 D3:1 E3:2 F3:2',
+      }),
+    }],
+    bass: 'R:2 R:1 R:1 R:2 R:1 R:1 R:2 R:1 R:1 5:2 8:2',
+    drums: 'K:2 K:1 K:1 S:2 K:1 K:1 K:2 K:1 K:1 S:2 S:2',
+    drumsB: 'X:2 K:1 K:1 S:2 K:1 K:1 K:2 S:1 S:1 M:1 M:1 N:2',
+  },
+  // hymne de stade : accords qui roulent en croches avec un silence qui claque, synthé qui chante le refrain,
+  // la foule crie « HEY ! » toutes les deux mesures
+  dernier: {
+    title: 'Le Dernier Round', style: '16bit', bpm: 124, div: 4, bar: 16, loops: 3, accel: 1.03,
+    inst: { lead: 'synlead' }, pad: false,
+    melody:
+      'D5:4 F5:4 A5:8 | G5:2 F5:2 E5:2 F5:2 D5:8 | D5:4 F5:4 Bb5:6 A5:2 | G5:4 E5:4 C5:8 |' +
+      'A5:6 G5:2 F5:4 A5:4 | D6:8 C6:4 A5:4 | Bb5:4 A5:2 G5:2 F5:4 D5:4 | E5:4 A5:4 C#6:8 |' +
+      'D6:6 C6:2 Bb5:4 G5:4 | A5:2 Bb5:2 G5:4 D5:8 | F5:2 A5:2 D6:4 F6:4 E6:2 D6:2 | A5:8 -:4 D5:2 F5:2 |' +
+      'Bb5:6 C6:2 D6:4 F6:4 | E6:6 D6:2 C6:4 G5:4 | A5:4 C#6:4 E6:4 G6:4 | A6:12 -:4',
+    chords: 'Dm Dm Bb C Dm Dm Bb A Gm Gm Dm Dm Bb C A A',
+    voices: [{
+      inst: 'chug', v: 0.9,
+      melody: riff('Dm Dm Bb C Dm Dm Bb A Gm Gm Dm Dm Bb C A A', {
+        Dm: 'D2:2 D2:2 D2:2 -:2 D2:2 D2:2 F2:2 G2:2', Bb: 'Bb2:2 Bb2:2 Bb2:2 -:2 Bb2:2 Bb2:2 C3:2 D3:2', C: 'C3:2 C3:2 C3:2 -:2 C3:2 C3:2 D3:2 E3:2',
+        A: 'A2:2 A2:2 A2:2 -:2 A2:2 A2:2 C#3:2 E3:2', Gm: 'G2:2 G2:2 G2:2 -:2 G2:2 G2:2 Bb2:2 C3:2',
+      }),
+    }],
+    bass: 'R:2 R:2 R:2 -:2 R:2 R:2 5:2 8:2',
+    drums: 'K:2 H:2 S:2 H:2 K:2 K:2 S:2 H:2',
+    drumsB: 'K:2 H:2 S:2 H:2 K:2 K:2 S:2 Z:2',
+  },
+  // coup pour coup : riff syncopé frappé à l'unisson avec la batterie, cymbale sur le premier coup, guitare solo
+  coup: {
+    title: 'Coup pour Coup', style: '16bit', bpm: 146, div: 4, bar: 16, loops: 3, accel: 1.03,
+    inst: { lead: 'wail' }, pad: false,
+    melody:
+      '-:8 D5:2 G5:2 Bb5:4 | A5:6 G5:2 F5:4 D5:4 | Eb5:4 G5:4 Bb5:4 C6:4 | D6:6 C6:2 A5:8 |' +
+      '-:4 G5:2 Bb5:2 D6:4 C6:2 Bb5:2 | A5:2 Bb5:2 G5:4 D5:8 | G5:4 Bb5:4 Eb6:4 D6:2 C6:2 | D6:4 A5:4 F#5:8 |' +
+      'Eb6:6 D6:2 C6:4 G5:4 | Ab5:2 G5:2 F5:2 Eb5:2 G5:8 | Bb5:6 A5:2 G5:4 D6:4 | G6:8 F6:4 D6:4 |' +
+      'Eb6:4 D6:2 C6:2 Bb5:4 G5:4 | A5:2 Bb5:2 C6:4 F6:8 | F#6:6 E6:2 D6:4 A5:4 | D6:8 -:4 D5:2 F#5:2',
+    chords: 'Gm Gm Eb F Gm Gm Eb D Cm Cm Gm Gm Eb F D D',
+    voices: [{
+      inst: 'chug', v: 0.95,
+      melody: riff('Gm Gm Eb F Gm Gm Eb D Cm Cm Gm Gm Eb F D D', {
+        Gm: 'G2:1 -:2 G2:1 -:2 G2:2 -:1 G2:1 Bb2:2 C3:2 D3:2', Eb: 'Eb2:1 -:2 Eb2:1 -:2 Eb2:2 -:1 Eb2:1 G2:2 Ab2:2 Bb2:2', F: 'F2:1 -:2 F2:1 -:2 F2:2 -:1 F2:1 A2:2 Bb2:2 C3:2',
+        D: 'D2:1 -:2 D2:1 -:2 D2:2 -:1 D2:1 F#2:2 G2:2 A2:2', Cm: 'C3:1 -:2 C3:1 -:2 C3:2 -:1 C3:1 Eb3:2 F3:2 G3:2',
+      }),
+    }],
+    bass: 'R:1 -:2 R:1 -:2 R:2 -:1 R:1 R:2 5:2 8:2',
+    drums: 'X:1 -:2 K:1 -:2 S:2 -:1 K:1 K:2 S:2 S:2',
+    drumsB: 'K:1 -:2 K:1 -:2 S:2 -:1 K:1 S:1 S:1 M:2 N:2',
+  },
+  // l'entrée du champion : la foule tape des pieds et des mains, crie « HEY ! », timbales, chœur,
+  // fanfare de cuivres en mineur, riff lourd ; le gong toutes les deux mesures
+  entree: {
+    title: "L'Entrée du Champion", style: '16bit', bpm: 96, div: 4, bar: 16, loops: 3, accel: 1.03,
+    inst: { lead: 'fanfare', comp: 'brass', bass: 'timpani', pad: 'choir' },
+    melody:
+      'F4:3 Bb4:1 Db5:4 F5:6 Db5:2 | C5:2 Db5:2 Bb4:4 F4:8 | Gb4:3 Bb4:1 Db5:4 Gb5:6 F5:2 | Eb5:2 F5:2 Ab5:4 C6:8 |' +
+      'Bb5:6 Ab5:2 F5:4 Db5:4 | Eb5:2 F5:2 Db5:2 C5:2 Bb4:8 | Db5:4 Gb5:4 Bb5:4 Db6:4 | C6:8 A5:4 F5:4',
+    chords: 'Bbm Bbm Gb Ab Bbm Bbm Gb F',
+    voices: [{
+      inst: 'chug', v: 0.85,
+      melody: riff('Bbm Bbm Gb Ab Bbm Bbm Gb F', {
+        Bbm: 'Bb2:1 Bb2:1 -:2 Bb2:1 Bb2:1 -:2 Bb2:4 Db3:2 C3:2', Gb: 'Gb2:1 Gb2:1 -:2 Gb2:1 Gb2:1 -:2 Gb2:4 Ab2:2 Bb2:2',
+        Ab: 'Ab2:1 Ab2:1 -:2 Ab2:1 Ab2:1 -:2 Ab2:4 C3:2 Eb3:2', F: 'F2:1 F2:1 -:2 F2:1 F2:1 -:2 F2:4 A2:2 C3:2',
+      }),
+    }],
+    bass: 'R:4 -:4 R:2 R:2 -:4',
+    comp: 'c:2 -:6 c:1 -:1 c:2 -:4',
+    drums: 'K:2 K:2 P:4 K:2 K:2 P:2 Z:2',
+    drumsB: 'G:4 K:2 P:2 K:2 K:2 M:1 M:1 N:2',
+  },
+});
+
 // ---- Doom-like : western métal (riffs saturés en doubles croches, trompette ou sifflement de Morricone par-dessus)
 Object.assign(SONGS, {
   // Partie : chevauchée infernale, riff galopant sur la corde de mi grave, trompette mariachi
@@ -1584,6 +1892,11 @@ const PLAYLISTS = {
   'mini-rts': ['ruee', 'collines', 'cri', 'vautour', 'glas', 'plomb'],
   'mini-fps': ['enfer', 'mesa', 'fusillade', 'cri', 'nocturne'],
   'mini-fpsdm': ['mesa', 'enfer', 'cri', 'fusillade', 'nocturne'],
+  // La mêlée (vue de dessus), tous ses modes
+  'mini-melee': ['fusillade', 'cri', 'plomb', 'filon', 'ruee', 'duel'],
+  'mini-bagarre': ['cogneur', 'uppercut', 'combat', 'dernier', 'coup', 'debout'],
+  // le combat contre le champion (bagarre.js) : son thème tourne en boucle jusqu'à la fin du combat
+  'mini-bagarre-boss': ['entree'],
   // El Diablo est sur la carte (fps.js) : son thème tourne en boucle jusqu'à sa chute
   'mini-fps-boss': ['diable'],
 };
@@ -2271,6 +2584,78 @@ const SFX = {
       noise(t + at, d, { type: 'bandpass', f: 1400, q: 1, gain: 0.12, decay: false });
     }
   },
+  // ---- bagarre : coups de poing (au corps, au visage), garde, cloche du ring, la foule
+  punch(t) { tone(t, 110, 0.16, { f2: 50, gain: 0.55 }); noise(t, 0.09, { f: 900, f2: 200, gain: 0.45 }); },
+  smack(t) { noise(t, 0.07, { type: 'bandpass', f: 1800, q: 1.2, gain: 0.7 }); tone(t, 160, 0.12, { f2: 70, gain: 0.35 }); },
+  block(t) { noise(t, 0.05, { type: 'bandpass', f: 700, q: 2, gain: 0.5 }); tone(t, 240, 0.06, { type: 'square', f2: 160, gain: 0.06 }); },
+  bell(t) {
+    for (let i = 0; i < 2; i++) for (const [k, g] of [[1, 0.14], [2.76, 0.06], [5.4, 0.03]]) tone(t + i * 0.3, 1046 * k, 0.9, { gain: g, slap: !i && k === 1 });
+  },
+  crowd(t) {
+    noise(t, 1.4, { type: 'bandpass', f: 900, f2: 1400, q: 0.7, gain: 0.35 });
+    noise(t + 0.1, 1.1, { type: 'bandpass', f: 2200, f2: 1600, q: 1, gain: 0.15 });
+  },
+  // l'adversaire encaisse : « han ! » bref et grave, jamais deux fois la même hauteur
+  ugh(t) { const p = 0.8 + Math.random() * 0.4; voice(t, 0.16, { f0: 150 * p, f1: 100 * p, from: 'u', to: 'o', gain: 0.3, growl: 0.3, breath: 0.04 }); },
+  // un gros coup se prépare : souffle grave qui monte
+  windup(t) { noise(t, 0.35, { type: 'bandpass', f: 200, f2: 900, q: 2, gain: 0.5 }); },
+  // esquive : souffle rapide et crissement de semelle sur la toile ; se baisser : souffle grave
+  dodge(t) { noise(t, 0.12, { type: 'bandpass', f: 1800, f2: 600, q: 2, gain: 0.3 }); tone(t + 0.03, 2400, 0.05, { type: 'square', f2: 3100, gain: 0.025 }); },
+  duck(t) { noise(t, 0.16, { type: 'bandpass', f: 900, f2: 300, q: 2, gain: 0.42 }); },
+  // le direct paré : choc sec des avant-bras et un tintement
+  parry(t) {
+    noise(t, 0.04, { type: 'bandpass', f: 1500, q: 3, gain: 0.5 });
+    tone(t, 1900, 0.18, { type: 'triangle', gain: 0.1 });
+    tone(t + 0.01, 2850, 0.12, { type: 'triangle', gain: 0.03 });
+  },
+  // mauvaise parade : petit bourdon
+  wrong(t) { tone(t, 160, 0.2, { type: 'square', f2: 120, gain: 0.05 }); },
+  // le coup spécial : l'énergie qui monte pendant qu'il s'arme, puis l'impact énorme
+  charge(t) {
+    tone(t, 220, 0.34, { type: 'sawtooth', f2: 880, gain: 0.05 });
+    tone(t, 330, 0.34, { type: 'square', f2: 1320, gain: 0.025 });
+    noise(t, 0.34, { type: 'bandpass', f: 400, f2: 3000, q: 3, gain: 0.15 });
+  },
+  kaboom(t) {
+    tone(t, 90, 0.6, { f2: 30, gain: 0.9, slap: true });
+    noise(t, 0.5, { f: 3000, f2: 150, gain: 0.7, slap: true });
+    noise(t, 0.06, { type: 'highpass', f: 2500, gain: 0.5 });
+  },
+  // la barre de spécial est pleine
+  ready(t) { [523, 784, 1047, 1568].forEach((f, i) => tone(t + i * 0.06, f, 0.18, { type: 'square', gain: 0.045 })); },
+  // la foule : « ooh ! » (gros coup, chute), « aah… » déçu, vivats, murmure de fond
+  ooh(t) { for (let i = 0; i < 4; i++) voice(t + i * 0.02, 0.7, { f0: 170 + i * 37, f1: 140 + i * 30, from: 'u', to: 'o', gain: 0.07, breath: 0.03 }); },
+  aww(t) { for (let i = 0; i < 4; i++) voice(t + i * 0.025, 0.8, { f0: 230 + i * 30, f1: 150 + i * 25, from: 'a', to: 'o', gain: 0.06, breath: 0.03 }); },
+  cheer(t) {
+    SFX.crowd(t);
+    for (let i = 0; i < 3; i++) voice(t + 0.05 + i * 0.05, 0.6, { f0: 260 + i * 60, f1: 300 + i * 70, from: 'e', to: 'a', gain: 0.05, breath: 0.05 });
+  },
+  murmur(t) {
+    noise(t, 2.6, { type: 'bandpass', f: 600, q: 0.8, gain: 0.08 });
+    noise(t + 0.3, 2.2, { type: 'bandpass', f: 1400, q: 1, gain: 0.025 });
+  },
+  // à bout de souffle : halètement ; dans son coin, on reprend son souffle à chaque alternance
+  pant(t) { for (let i = 0; i < 3; i++) noise(t + i * 0.28, 0.2, { type: 'bandpass', f: 1300, f2: 900, q: 1.5, gain: 0.12 }); },
+  breath(t) { noise(t, 0.12, { type: 'bandpass', f: 1000 + Math.random() * 400, q: 1.5, gain: 0.12 }); },
+  // un corps qui s'écrase sur la toile, les cordes qui vibrent ; se relever
+  bodyfall(t) {
+    tone(t, 70, 0.4, { f2: 35, gain: 0.7 });
+    noise(t, 0.3, { f: 500, f2: 80, gain: 0.45 });
+    tone(t + 0.05, 110, 0.5, { type: 'triangle', f2: 105, gain: 0.04 });
+  },
+  rise(t) { tone(t, 300, 0.3, { type: 'square', f2: 600, gain: 0.04 }); },
+  // pas lourd (les bonds du taureau avant sa charge)
+  stomp(t) { tone(t, 80, 0.15, { f2: 45, gain: 0.45 }); noise(t, 0.08, { f: 400, gain: 0.2 }); },
+  // hoquet de Pierrot, « ¡olé ! » de Toro, petit claquement de langue moqueur (la feinte, le coup de chapeau)
+  hic(t) { voice(t, 0.09, { f0: 380, f1: 520, from: 'i', to: 'e', gain: 0.28, breath: 0.02 }); },
+  ole(t) { voice(t, 0.18, { f0: 260, f1: 300, from: 'o', to: 'e', gain: 0.3 }); voice(t + 0.2, 0.35, { f0: 330, f1: 280, from: 'e', to: 'e', gain: 0.3 }); },
+  tsk(t) { tone(t, 900, 0.04, { type: 'square', gain: 0.03 }); tone(t + 0.07, 900, 0.04, { type: 'square', gain: 0.03 }); },
+  // bulle de dialogue : babillage façon jeux 8 bits (voix grave, moyenne ou aiguë selon le cogneur)
+  talkLo(t) { babble(t, 140); },
+  talkMid(t) { babble(t, 220); },
+  talkHi(t) { babble(t, 330); },
+  // l'arbitre compte : coup sec de cloche
+  count(t) { tone(t, 1250, 0.25, { type: 'triangle', gain: 0.08 }); tone(t, 625, 0.2, { gain: 0.06 }); },
   // glas : grosse cloche de l'église de Boot Hill
   toll(t) {
     for (const [k, lvl, len] of [[1, 1, 3.5], [2, 0.6, 2.4], [2.4, 0.45, 2], [3, 0.3, 1.5], [4.2, 0.2, 1]]) {
@@ -2312,6 +2697,12 @@ const SFX = {
     noise(t, 2, { f: 600, f2: 60, gain: 0.4 });
   },
 };
+
+// Babillage des bulles de dialogue : quelques bips carrés à hauteur variable autour de la voix du personnage
+function babble(t, base) {
+  const n = 4 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < n; i++) tone(t + i * 0.07, base * (0.8 + Math.random() * 0.6), 0.05, { type: 'square', gain: 0.045 });
+}
 
 // Échantillons enregistrés, dans public/sfx (publié en ligne, contrairement à public/music) et déjà passés
 // en 16 bits comme CRUSH['16bit'] : mono, 16 kHz, 10 bits, coupe-bas 40 Hz, passe-bas 6,5 kHz.

@@ -37,6 +37,7 @@ class Game {
     }));
     this.round = -1;
     this.loadNo = 0;
+    this.cuffLock = -1; // a menotté l'adversaire, qui vient de passer son tour : pas de nouvelles menottes avant qu'il ait rejoué
     this.bets = []; // paris en cours : { by, live, shot } (shot = n° absolu de la cartouche visée)
     this.shells = [];
     this.spent = [];
@@ -73,6 +74,7 @@ class Game {
       turn: this.turn,
       round: this.round + 1,
       sawed: this.sawed,
+      cuffLock: this.cuffLock,
       shellsLeft: this.shells.length,
       spent: [...this.spent],
       load: { ...this.load },
@@ -99,6 +101,7 @@ class Game {
       p.lucky = false;
       p.mercy = false;
     }
+    this.cuffLock = -1;
     this.bets = [];
     const loserStarts = first != null;
     this.turn = loserStarts ? first : Math.random() < 0.5 ? 0 : 1;
@@ -164,7 +167,7 @@ class Game {
       case 'tournee': for (const p of this.p) p.hp = Math.min(p.maxHp, p.hp + 1); break;
       case 'sherif': ev.taken = this.p.map((p) => (p.items.length ? p.items.splice(Math.floor(Math.random() * p.items.length), 1)[0] : null)); break;
       case 'bagarre': [this.p[0].items, this.p[1].items] = [this.p[1].items, this.p[0].items]; break;
-      case 'pianiste': this.turn = 1 - this.turn; break;
+      case 'pianiste': this.turn = 1 - this.turn; this.cuffLock = -1; break; // la main change : l'adversaire rejoue
       case 'poker': ev.drew = this.p.map((p) => { if (p.items.length >= MAX_ITEMS) return null; const it = pick(ITEMS); p.items.push(it); return it; }); break;
       case 'crieur': { const pos = rand(0, this.shells.length - 1); ev.pos = pos + 1; ev.live = this.shells[pos]; break; }
       case 'canicule': this.sawed = true; break;
@@ -210,14 +213,17 @@ class Game {
     return true;
   }
 
-  // Passe le tour à l'adversaire, sauf s'il est menotté.
+  // Passe le tour à l'adversaire, sauf s'il est menotté : il passe alors son tour, et on ne pourra pas
+  // le remenotter avant qu'il ait rejoué (pas de menottes à la chaîne).
   passTurn(i) {
     const o = 1 - i;
     if (this.p[o].cuffed) {
       this.p[o].cuffed = false;
+      this.cuffLock = i;
       this.turn = i;
       return true;
     }
+    this.cuffLock = -1;
     this.turn = o;
     return false;
   }
@@ -316,6 +322,7 @@ class Game {
   checkItem(i, item) {
     if (item === 'saw' && this.sawed) return 'Le canon est déjà scié.';
     if (item === 'cuffs' && this.p[1 - i].cuffed) return "L'adversaire est déjà menotté.";
+    if (item === 'cuffs' && this.cuffLock === i) return "Pas de menottes deux fois de suite : laisse d'abord rejouer ton adversaire.";
     if (item === 'horseshoe' && this.p[i].lucky) return 'Ton fer à cheval te protège déjà.';
     return null;
   }

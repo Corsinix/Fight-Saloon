@@ -35,6 +35,8 @@ export const RTS_BIOMES = {
   salines: { name: 'LES SALINES', envs: ['midi', 'aube', 'crepuscule', 'nuit', 'poussiere'] },
 };
 
+// La mêlée : ses cinq modes, au choix dans le lobby (règles dans brawlkit.js)
+export const BRAWL_MODE_NAMES = { survie: 'Chacun pour soi', colline: 'Roi de la colline', prime: 'Chasse à la prime', gemmes: 'Ruée vers les gemmes', manches: 'Au meilleur des 3' };
 
 export const MODES = {
   roulette: { name: 'Roulette', sub: 'Le duel au fusil à pompe', min: 2, max: 2 },
@@ -47,7 +49,7 @@ export const MODES = {
   // règles et arbitre dans wagongame.js
   wagon: { name: 'Défends la roulotte', sub: 'Escorte le chariot jusqu’à Red Rock malgré les hors-la-loi', min: 2, max: 6, duration: 90000 },
   // en manches, chacun son tour : la partie s'arrête après la dernière manche (pintegame.js)
-  pinte: { name: 'La pinte', sub: 'Fais glisser ta chope au ras du bout du comptoir', min: 2, max: 6, duration: 900000 },
+  pinte: { name: 'La pinte', sub: 'Fais glisser ta chope au ras du bout du comptoir', min: 2, max: 6, duration: 1800000 },
   // règles, parcours et arbitre dans minegame.js
   // course de 8 étapes ; s'arrête quand tout le monde est sorti, ou au bout de 2 min 15
   mine: { name: 'La mine', sub: 'Course en wagonnet : accélère, aiguille, sors le premier', min: 2, max: 6, duration: 135000 },
@@ -60,6 +62,13 @@ export const MODES = {
   fps: { name: 'Règlement de comptes', sub: 'FPS en ville : choisis tes armes, abats bandits et rivaux', min: 2, max: 6, duration: 240000 },
   // la même ville sans bandits, entre joueurs (ou contre les bots) : seuls les frags comptent
   fpsdm: { name: 'Mort ou vif', sub: 'FPS entre joueurs, sans bandits : seuls les frags comptent', min: 2, max: 6, duration: 240000, unit: 'frags' },
+  // boxe à mains nues façon Punch-Out : chacun affronte la même série de cogneurs, jusqu'au champion (bagarre.js, bagarregame.js).
+  // Jouable seul (soloBots : 0, pas de bots en solo) ; la partie s'arrête quand tout le monde a fini sa tournée, 30 min au plus.
+  bagarre: { name: 'La bagarre', sub: 'Boxe à mains nues : bats tous les cogneurs jusqu’au champion', min: 1, max: 6, duration: 1800000, unit: 'victoires', soloBots: 0 },
+  // « La mêlée », en vue de dessus : 9 kits, 2 objets, buissons, 60 cartes ; cinq modes dans un seul jeu (chacun pour soi,
+  // roi de la colline, chasse à la prime, ruée vers les gemmes, au meilleur des 3), choisis comme une variante (brawlkit.js,
+  // brawlgame.js, brawl.js). La durée dépend du mode (de 2 min 30 à 7 min pour les manches) : celle-ci n'est qu'un plafond.
+  melee: { name: 'La mêlée', sub: 'Vue de dessus : choisis ton kit, 5 modes de jeu', min: 2, max: 6, duration: 420000, soloBots: 5 },
 };
 
 export function rng(seed) {
@@ -957,6 +966,16 @@ export const DUEL = {
   timeout: 3000, // personne n'a tiré : manche nulle
   pause: 3800, // entre deux manches
   decoys: ['DÉJEUNEZ !', 'DÉGAGEZ !', 'DANSEZ !', 'DÉGUSTEZ !', 'DÉMÉNAGEZ !', 'DÉCOIFFEZ !', 'DÉRAPEZ !', 'DIABLO !'],
+};
+
+// ================================================================ bagarre
+
+// Chacun mène sa propre tournée de combats dans son navigateur ; l'hôte ne reçoit que le résultat de chaque combat.
+export const BAGARRE = {
+  fighters: 5, // adversaires à battre, le dernier est le champion (ROSTER dans bagarre.js)
+  lives: 3, // défaites permises : à la 3e, la tournée s'arrête
+  rounds: 3, // rounds par combat ; au bout du 3e, décision aux points
+  round: 60000, // durée d'un round (le chrono s'arrête pendant les comptes)
 };
 
 // ================================================================ où est Charlie

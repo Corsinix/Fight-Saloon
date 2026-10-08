@@ -16,7 +16,7 @@ Le site est 100 % statique (dossier `public/`) : les comptes et le classement so
 
 1. Entre un pseudo. Il sert de compte : personnage, stats et historique sont stockés dans Supabase.
 2. Personnalise ton cowboy : chapeau, cheveux, yeux, nez, bouche, moustache ou barbe, tenue et couleurs.
-3. Clique sur **Créer une partie**, puis envoie le lien `?lobby=CODE` à ton adversaire.
+3. Clique sur **Créer une partie**, puis envoie le lien `?lobby=CODE` à ton adversaire. À la table, les deux boutons sur ta place changent ta tenue (chapeau) ou ton pseudo (**Aa**), sans quitter la table (pas pendant une partie). Le palmarès suit le pseudo.
 4. L'hôte lance le duel. Le premier joueur de la première manche est tiré à pile ou face ; ensuite, c'est le perdant de la manche précédente qui commence.
 
 Pas d'adversaire sous la main ? **Jouer en solo** lance directement un duel contre un cowboy contrôlé par l'ordinateur.
@@ -35,7 +35,7 @@ Le duel se joue au meilleur des 3 manches. À chaque chargement, les cartouches 
 | Cigare | +1 PV |
 | Whisky | Éjecter la cartouche actuelle |
 | Scie | Prochain tir : 2 dégâts |
-| Menottes | L'adversaire passe son prochain tour |
+| Menottes | L'adversaire passe son prochain tour (pas deux fois de suite : il faut qu'il ait rejoué avant d'être remenotté) |
 | Télégramme | Révèle une cartouche plus loin dans le fusil |
 | Pièce truquée | Inverse la cartouche actuelle |
 | Élixir de charlatan | 50 % : +2 PV, 50 % : -1 PV |
@@ -76,7 +76,9 @@ Par les fenêtres, on voit l'heure et la météo de l'ambiance : soleil, aube, c
 
 ## Mini-jeux (2 à 6 joueurs)
 
-Une table accueille jusqu'à 6 joueurs. Dans le lobby, l'hôte choisit le jeu : la **Roulette** ou le **Duel** (à deux exactement), ou un mini-jeu à plusieurs. En solo, les mini-jeux opposent le joueur à 3 bots (un seul pour le duel).
+Une table accueille jusqu'à 6 joueurs. Dans le lobby, l'hôte choisit le jeu : la **Roulette** ou le **Duel**, ou un mini-jeu à plusieurs. En solo, les mini-jeux opposent le joueur à 3 bots (un seul pour le duel ; aucun pour la bagarre, où l'on affronte une série de cogneurs).
+
+**Tournoi** : à plus de deux joueurs, la Roulette et le Duel se jouent en tournoi à élimination directe. Tous les matchs d'un tour se jouent en même temps. Si le nombre de joueurs est impair, un bot complète le tableau (à chaque tour). Les gagnants passent au tour suivant, jusqu'à la finale. Un match entre deux bots se règle aux dés, et une égalité au Duel à pile ou face. Qui a fini son match, gagné ou perdu, attend sur le **banc** : on y suit le tableau et on peut **regarder** un match en cours, vu du côté de son premier joueur et sans ses informations secrètes. Chaque match compte dans le palmarès comme un duel ordinaire. Dans la roue et le championnat, les deux jeux peuvent aussi tomber à plus de deux joueurs ; le championnat donne alors les points selon la place au tournoi (les éliminés d'un même tour sont ex aequo).
 
 **Ambiances** : la Fusillade, le Lasso, le Duel, « Où est Charlie ? », l'Assaut du fort, la Roulotte, la Course de chevaux et la Conquête de l'Ouest se jouent chaque fois sous une ambiance tirée au hasard, annoncée pendant le compte à rebours et la même pour toute la table (`public/js/env.js`) :
 
@@ -194,7 +196,7 @@ Charlie change de tenue à chaque manche (chapeau, vêtements, couleurs, lunette
 
 ### Assaut du fort (en équipes, 2 × 45 s)
 
-Les **Rouges** (joueurs 1, 3 et 5) attaquent le fort pendant que les **Bleus** (joueurs 2, 4 et 6) le défendent du haut de la palissade, puis les camps s'échangent à la mi-temps. En solo, toi et un bot contre deux bots.
+Les **Rouges** attaquent le fort pendant que les **Bleus** le défendent du haut de la palissade, puis les camps s'échangent à la mi-temps. Les équipes sont **tirées au hasard** à chaque partie (en nombre impair, les Rouges ont un joueur de plus). En solo, toi et un bot contre deux bots.
 
 - **Attaque** : avance d'abri en abri (rochers, tonneaux, chariot…) et fais sauter la porte à la dynamite. Accroupi derrière un abri, tu es intouchable, sauf juste après avoir tiré ou lancé. Quand la porte cède, elle reste ouverte 6 s : fonce sous le porche pour **entrer dans le fort**.
 - **Défense** : déplace-toi sur le chemin de ronde (**Q** / **D**), qui passe aussi au-dessus de la porte, et **S** pour te baisser derrière les pieux.
@@ -238,7 +240,7 @@ La roulotte, tirée par ses deux chevaux, quitte Dusty Gulch pour Red Rock. Une 
 - Un bandit qui atteint le convoi le pille jusqu'à ce qu'on l'abatte. La roulotte a 50 PV ; la bande grossit avec le nombre de défenseurs (un peu plus vite au-delà de 4), et Black Bart encaisse 5 balles plus 1,5 par défenseur.
 - Si la roulotte arrive à Red Rock : +300 pour chaque défenseur. Si elle tombe en chemin, la partie s'arrête aussitôt.
 
-### La pinte (chacun son tour, 3 à 5 manches)
+### La pinte (chacun son tour, 5 manches)
 
 Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour. La chope la plus proche du bout gagne, mais si elle va trop fort, elle tombe et se brise. Le comptoir est celui de la Roulette (saloon, cantina, wagon-bar ou bureau du shérif), sous une ambiance tirée au hasard.
 
@@ -247,13 +249,18 @@ Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour
   - à rambardes : plus large, bordé de laiton, avec une tireuse à bière au milieu qu'il faut contourner ;
   - chicane : deux cloisons en travers, impossible de passer sans ricocher ;
   - coude : le bout du comptoir est décalé vers le fond, il faut rebondir sur le mur en biais ;
-  - goulet : le comptoir s'élargit puis se resserre entre deux rambardes qui guident la chope.
+  - goulet : le comptoir s'élargit puis se resserre entre deux rambardes qui guident la chope ;
+  - table du banquet : bien plus large, mais sans rambarde ;
+  - pointe : le bout du comptoir rétrécit, il faut viser droit ;
+  - en S : deux virages bordés de rambardes ;
+  - trois tireuses : passer entre les deux premières, puis contourner la troisième ;
+  - slalom : trois petites cloisons alternées, on zigzague de ricochet en ricochet.
 
 - Clic ou **Espace** : bloquer l'aiguille de **direction** (zone verte : la chope reste sur le comptoir jusqu'au bout), puis bloquer la jauge de **puissance**. 15 s pour lancer, sinon le tour passe.
 - Fin de manche : chaque chope encore sur le comptoir rapporte 100 pts moins son écart au bout, en cm. La plus proche offre la tournée : +50. Une chope tombée ne rapporte rien.
 - Une chope trop à gauche ou trop à droite tombe derrière le comptoir ou devant. Celle qui passe le bout s'écrase sur le plancher.
-- Les chopes restent sur le comptoir pendant la manche, et elles s'entrechoquent : on peut pousser celle d'un adversaire dans le vide, ou la sienne un peu plus près du bout. L'ordre de passage tourne à chaque manche, car le dernier à lancer a l'avantage (à cinq ou six, il saute deux places pour que ce ne soit jamais le même qui lance en dernier).
-- **Le barman change de bière** à chaque lancer (à partir de la 2e manche), et tout le monde voit ce qu'on te sert :
+- Les chopes restent sur le comptoir pendant la manche, et elles s'entrechoquent : on peut pousser celle d'un adversaire dans le vide, ou la sienne un peu plus près du bout. L'ordre de passage tourne à chaque manche, car le dernier à lancer a l'avantage (ce n'est jamais le même qui lance en dernier deux manches de suite).
+- **Le barman change de bière** à chaque lancer (à partir de la 2e manche), et tout le monde voit ce qu'on te sert (cartouche en haut de l'écran : la chope, son nom et son effet) :
   - blonde : la classique ;
   - brune : lourde, elle pousse fort les autres chopes ;
   - petit whisky : petit et léger, facile à dégager ;
@@ -268,12 +275,20 @@ Accoudé au bout du comptoir, chacun fait glisser sa chope de bière à son tour
   - portes battantes : vent dans le dos ou de face sur tout le comptoir ;
   - comptoir ciré, ou gelé sous la neige : tout glisse plus ;
   - virage du train : dans le wagon-bar, tout penche d'un côté ;
-  - bouteilles oubliées : des obstacles sur lesquels les chopes rebondissent ;
+  - bouteilles oubliées : des obstacles sur lesquels les chopes rebondissent (une seule sur les comptoirs à rambardes, aucune dans le goulet). Elles ne sont jamais posées en travers du meilleur lancer : il reste toujours un passage, et le trait de craie montre le rebond ;
   - pièce d'or : +30 pour la première chope qui passe dessus ;
   - chat endormi : la chope s'enfonce dans sa fourrure et perd presque tout son élan ;
   - sous-bock : +50 pour chaque chope qui s'arrête dessus en fin de manche.
+- **Événements du saloon** : ils changent les règles d'une manche (jamais la 1re ni la dernière, au moins un par partie, jamais deux fois le même de suite). Annoncés avec les surprises et rappelés en haut à droite :
+  - le patron est de bonne humeur : la tournée vaut +150 au lieu de +50 ;
+  - tout ou rien : seule la chope la plus proche marque (tournée +100) ;
+  - double service : chacun lance deux chopes ;
+  - bagarre au saloon : à mi-manche, le comptoir est bousculé et toutes les chopes glissent d'un coup vers le bout ;
+  - le patron compte la casse : chaque chope brisée coûte 30 pts à son propriétaire (un score ne descend pas sous zéro) ;
+  - prime du shérif : +40 par chope adverse poussée dans le vide ;
+  - les lampes s'éteignent : la salle est dans la pénombre, et pas de trait de craie pour viser.
 - **Dernière tournée** : la dernière manche compte double.
-- 5 manches à deux, 4 à trois, 3 de quatre à six. Les craies sur le comptoir marquent 10, 25, 50 et 100 cm du bout.
+- 5 manches, quel que soit le nombre de joueurs. Les craies sur le comptoir marquent 10, 25, 50 et 100 cm du bout.
 
 La glissade est simulée pas à pas, de la même façon dans chaque navigateur (`public/js/pintegame.js`) : seuls la direction et la puissance passent par l'hôte.
 
@@ -371,8 +386,8 @@ Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près 
 - **Écran** : en haut, tes ressources avec leurs icônes et leurs revenus (or, vivres, population, PV du fort), le bouton **Pactes** et ton chantier ou l'ordre de ton armée (ou, si l'on vient de te trahir, le temps de malus qui reste). L'horloge du bandeau compte le temps de jeu. En bas, le panneau de commandes suit la sélection : sans sélection, les bâtiments et les recrues ; avec des unités, leurs fiches (nombre, galons, PV et expérience d'une unité seule) et leurs ordres ; avec un bâtiment, sa fiche, son amélioration, ses recrues et ses entraînements. À droite, toujours : **Tous** (choisir toute l'armée), **Défendre**, les boutons d'attaque (à 5 et 6 joueurs, des boutons étroits : un trait à la couleur du joueur et ses sabres) et la **mini-carte**. Chaque bouton a sa bulle d'aide. Le survol d'une unité, d'un bâtiment ou d'un terrain particulier affiche ce qu'il est.
 - **Caméra** : **glisser** sur la carte (clic gauche ou bouton du milieu maintenu) pour la déplacer, flèches, bords de l'écran (après un court arrêt), mini-carte (clic ou glissé) ; **molette** : zoomer et dézoomer vers le pointeur (5 crans, de × 0,5, presque toute la carte, à × 2), aussi avec **+** / **=** et **)** / **_** (ou Page préc. / Page suiv.) ; Maj + molette : de côté ; **H** : retour au fort (et le choisit) ; **Espace** : là où l'on t'attaque. Au doigt : on glisse sur la carte, on pince à deux doigts pour zoomer.
 - **Choisir ses unités** : clic sur une unité, ou **Maj + glisser** (ou Ctrl + glisser) pour tirer un cadre ; Maj + clic : ajouter ou retirer ; double-clic : toutes celles de ce type à l'écran ; **T** : toute l'armée ; **Échap** : plus rien. Au doigt : toucher ses unités (deux fois : toutes celles de ce type), ou **Tous**.
-- **Ordres à la sélection** : clic droit sur la carte, elles y vont sans s'arrêter (pour se replier ou contourner), puis gardent la place ; clic droit sur un ennemi (unité ou bâtiment), elles s'acharnent sur lui ; sur ton fort, elles rentrent. **Charger** (**C** puis clic, ou Maj + clic droit) : elles y vont en tirant sur tout ce qu'elles croisent. **Tenir** (**S**) : elles ne bougent plus et tirent à portée. **Halte** (**X**) : elles s'arrêtent et gardent la place (en poursuivant un peu les ennemis qui approchent). Défendre et Attaquer valent alors pour la sélection seulement. Au doigt : toucher la carte ou un ennemi. Les unités se rangent en formation, et la portée d'une unité seule s'affiche.
-- **Ordres à toute l'armée** (sans sélection) : clic droit sur la carte, elle s'y rend en combattant ; sur un ennemi ou bouton à ses couleurs, elle attaque son fort ; **Défendre** (**D**), elle rentre. Ces ordres annulent les ordres particuliers. Les nouvelles recrues suivent l'ordre général. Les unités et bâtiments d'un allié ne sont pas des cibles : un clic droit dessus y envoie simplement les troupes.
+- **Ordres à la sélection** : clic droit sur la carte, elles y vont sans s'arrêter (pour se replier ou contourner), puis gardent la place ; clic droit sur un ennemi (unité ou bâtiment), elles s'acharnent sur lui ; sur ton fort, elles rentrent. **Charger** (**C** puis clic, ou Maj + clic droit) : elles y vont en tirant sur tout ce qu'elles croisent. **Tenir** (**S**) : elles ne bougent plus et tirent à portée. **Halte** (**X**) : elles s'arrêtent et gardent la place (en poursuivant un peu les ennemis qui approchent). Défendre et Attaquer valent alors pour la sélection seulement. Au doigt : toucher la carte ou un ennemi. Les unités se rangent en **formation** face à leur direction de marche : cavaliers puis pistoleros au centre, devant ; tireurs puis dynamiteurs sur les deux ailes, un peu en retrait. La portée d'une unité seule s'affiche.
+- **Ordres à toute l'armée** (sans sélection) : clic droit sur la carte (point de ralliement), elle s'y rend en combattant et s'y range dans la même formation (les recrues qui la rejoignent la font se reformer) ; sur un ennemi ou bouton à ses couleurs, elle attaque son fort ; **Défendre** (**D**), elle rentre. Ces ordres annulent les ordres particuliers. Les nouvelles recrues suivent l'ordre général. Les unités et bâtiments d'un allié ne sont pas des cibles : un clic droit dessus y envoie simplement les troupes.
 - **Construire** : clic sur un bâtiment du panneau (ou **1** à **6**, ou la rangée du haut en AZERTY), puis sur la carte. On bâtit dans son territoire (pointillés) : autour du fort, et autour des mines et des tours, qui l'étendent vers les filons lointains. Clic droit ou **Échap** : annuler.
 - **Pas de spam** : un seul chantier à la fois (construction ou amélioration), chaque bâtiment de plus du même type coûte plus cher, leur nombre est limité, et bâtir ne rapporte pas de points.
 
@@ -386,6 +401,7 @@ Des **filons** d'or et de minerai sont semés sur la carte : un de chaque près 
   | Armurerie | 120 (+90) | 2 | 9 s | Débloque les tireurs et les dynamiteurs | 100 or, 9 s / 180 or, 12 s |
   | Tour de guet | 80 (+30) | 5 | 7 s | Tire sur les ennemis proches ; étend le territoire | 70 or, 7 s / 130 or, 9 s |
 
+- **Démolir** : clic sur un de ses bâtiments (pas le fort), puis le bouton à la dynamite (ou **Suppr**), deux fois pour confirmer. Un chantier pas fini rend tout son or ; un bâtiment terminé rend la moitié de son prix de base et de ses améliorations. Les recrues et entraînements en file sont remboursés, le filon d'une mine se libère. Impossible sous le feu (8 s sans dégâts), pour ne pas priver l'assaillant de sa prise.
 - **Améliorer** : clic sur un de ses bâtiments, puis **Amélio.** (ou **U**). Chaque bâtiment monte deux fois : PV × 1,35 puis × 1,75 ; production (or, vivres) × 1,4 puis × 1,8 ; tir des forts et des tours × 1,45 puis × 1,9 et +8 puis +16 de portée ; recrues 20 % puis 35 % plus rapides au fort, à l'écurie et à l'armurerie ; +2 puis +4 places par ranch. Chaque niveau change l'allure du bâtiment (le bouton d'amélioration en montre l'aperçu) :
 
   | Bâtiment | Niveau 2 | Niveau 3 |
@@ -517,11 +533,88 @@ La même ville, les mêmes armes, la même armurerie, les mêmes caisses et les 
 
 Les retournements de situation liés aux bandits ou à l'or (la bande attaque, les dynamiteurs, El Diablo, la prime doublée, la diligence) n'ont pas lieu ; les autres (orage, nuit, tempête de sable, tornade, train, bagarre générale, midi sonne, ravitaillement, tournée du patron, avis de recherche) restent. Même code que « Règlement de comptes » (`FpsGame` avec le mode `fpsdm`, `FpsDmScene` dans `public/js/fps.js`).
 
+### La bagarre (boxe à mains nues façon Punch-Out, 1 à 6 joueurs)
+
+Sur le ring de la grange, vu de derrière ton cowboy : cinq cogneurs à battre à la suite, jusqu'au champion. **Seul** (pas de bots en solo), il faut décrocher la ceinture pour gagner. **À plusieurs**, chacun mène sa propre tournée en même temps ; le classement se fait au nombre d'adversaires battus, puis au moins de défaites, puis au temps passé sur le ring. Trois défaites et la tournée s'arrête (on retente le même adversaire après une défaite).
+
+- **Clic gauche** : poing gauche · **clic droit** : poing droit. Viser sa tête ou son corps choisit la hauteur du coup. Au clavier : **J** / **K** (gauche, droite), **haut** tenu pour viser le visage. Au doigt : toucher sa tête ou son corps, à gauche ou à droite.
+- **Gauche** / **droite** : esquive · **bas** tenu : garde · **bas bas** ou **C** : se baisser.
+- **Chaque coup a sa parade.** L'adversaire prépare son coup (une pose, puis un éclair dans l'œil juste avant qu'il parte) et des pictogrammes au-dessus de sa tête montrent les parades qui marchent (flèche : esquive de ce côté, flèche vers le bas : se baisser, bouclier : garde). Une mauvaise parade est signalée (« MAUVAIS CÔTÉ ! », « GARDE ENFONCÉE ! », « PAS EN DESSOUS ! ») :
+
+| Coup | Parade |
+|---|---|
+| Jab | tout marche (la garde le bloque mais ne le laisse pas découvert) |
+| Crochet | il balaie de son côté : esquive **de l'autre côté**, ou baisse-toi ; la garde ne le tient pas |
+| Direct | il suit la tête : ni esquive ni baisse, **seulement la garde** (« PARÉ ! » : il reste découvert) |
+| Uppercut, bedaine, marteau, charge | esquive sur le côté (l'uppercut cueille celui qui se baisse) |
+| Grand revers, fiole | seulement en se baissant |
+
+  Les enchaînements mélangent les parades (Doc Vipère : jab, crochet, direct ; la rafale du Grand Bison : crochet, crochet, direct, uppercut).
+- **Contre-attaque** : après une esquive (ou un direct paré), l'adversaire reste découvert un instant et tous les coups portent (jusqu'à ce qu'il se ressaisisse). Au repos, sa garde (poings hauts ou bas) bloque les coups visés au mauvais endroit.
+- **Bulles de dialogue** : les cogneurs parlent (début de round, fanfaronnades, annonce de leurs gros coups, quand ils encaissent, tombent, se relèvent ou t'envoient au tapis), chacun avec ses répliques, et un babillage façon jeux 8 bits (voix grave, moyenne ou aiguë selon le cogneur).
+- **Bruitages** : coups au corps et au visage, « han ! » de l'adversaire qui encaisse, souffle des gros coups qui se préparent, pas lourds des bonds du taureau, fiole qui se brise, esquive (souffle et semelle qui crisse), baisse, garde, direct paré (choc et tintement), mauvaise parade, halètement quand on est à bout de souffle, corps qui s'écrase sur la toile, compte de l'arbitre, se relever, souffle repris dans son coin ; le spécial (l'énergie qui monte, puis l'impact énorme) et la barre pleine ; hoquet de Pierrot, « ¡olé ! » de Toro ; la foule (« ooh ! » sur les gros coups et les chutes, « aah… » déçu, vivats, murmure de fond pendant les rounds).
+- **Barre de spécial** : elle se remplit à chaque coup porté (+4, +6 quand il est découvert), à chaque esquive réussie (+6), et surtout en le contrant juste avant que son coup parte ou en le frappant pendant qu'il fanfaronne (+25). Un coup encaissé la vide un peu (−20). Pleine, elle clignote : **clic gauche + clic droit en même temps** (ou **J + K**, deux doigts à la fois sur téléphone, ou **espace**) lâche le **coup spécial**, les deux poings ensemble : 34 de dégâts, il passe toutes les gardes, coupe l'adversaire dans son élan et le laisse sonné. Il s'arme un tiers de seconde (l'écran s'assombrit, les poings s'embrasent, l'énergie converge en spirale, léger zoom), puis l'impact fige le combat un instant : éclair blanc, onde de choc, lignes de vitesse, images rémanentes, l'adversaire projeté en arrière et « COUP SPÉCIAL ! » frappé comme un tampon.
+- **Souffle** (cœur) : −1 par coup bloqué, −3 par coup encaissé. À 0, plus de force pour frapper pendant 3 s.
+- **Rounds** de 60 s, 3 au plus (le chrono s'arrête pendant les comptes) ; entre deux, le soigneur glisse un conseil et chacun reprend des forces. Au tapis, l'arbitre compte jusqu'à 10 : pour se relever, cliquer (ou J, K) le plus vite possible. Quand c'est lui qui est au tapis, on reprend des forces dans son coin en **alternant gauche et droite** (clic gauche / clic droit, J / K, ou un côté puis l'autre de l'écran) : chaque alternance rend 1,2 PV, 15 au plus par passage au tapis ; deux fois le même poing ne compte pas. Trois passages au tapis dans un round : K.-O. technique. Au bout du 3e round : décision aux points (dégâts infligés, envois au tapis).
+- **Les cogneurs** : Pierrot la Gnôle (l'ivrogne de Dodge City, boit à sa flasque), Gros Bill (le barman, sa bedaine encaisse les coups au corps), Señor Toro (garde haute, charge comme un taureau : un coup au ventre juste avant l'impact l'envoie au tapis), Doc Vipère (feintes, garde changeante, fiole d'élixir), puis le champion, **le Grand Bison** (tout le répertoire, et il enrage sous la moitié de ses forces).
+
+Chaque combat se joue entièrement dans le navigateur du joueur (`BagarreScene`, `public/js/bagarre.js`) ; seul son résultat part chez l'hôte, qui tient le tableau, fait boxer les bots d'une table (issue tirée au sort, plus dure à chaque adversaire) et arrête la partie quand tout le monde a fini (`public/js/bagarregame.js`). Banc d'essai : `mini-test.html?game=bagarre` (`&bots=2` pour voir le tableau à plusieurs).
+
 Comment ça marche : l'hôte envoie une graine, et chaque navigateur génère exactement les mêmes cibles et les mêmes animaux (`public/js/worlds.js`), y compris toute la foule d'« Où est Charlie ? » et le trajet de chaque passant.
 Seuls les coups passent par l'hôte, qui arbitre au premier arrivé (`public/js/mini.js`, `public/js/fortgame.js` pour l'assaut du fort, `public/js/wagongame.js` pour la roulotte et `public/js/minegame.js` pour la mine) ; les viseurs et les chevaux des autres sont diffusés en direct à toute la table.
 Les résultats des mini-jeux apparaissent dans l'historique et les compteurs `mgPlayed` / `mgWins`. Ils ne comptent pas pour le classement de la roulette.
 
 > Base existante : ré-exécute `supabase/schema.sql` dans le SQL Editor pour que ces nouveaux compteurs soient enregistrés (sans ça, seul l'historique est mis à jour).
+
+### La mêlée (vue de dessus, 9 kits, 5 modes, 60 cartes)
+
+Un jeu de combat en arène vue de dessus, en 3/4 : chacun dirige son cowboy (son chapeau et ses couleurs), avec le kit de son choix. Un seul jeu dans le lobby et le menu solo, en cinq modes : en format « Un jeu », l'hôte choisit le mode (ou « Mode au hasard ») ; la roue et le championnat le tirent au hasard. La carte est tirée parmi celles du mode. Le mode et la carte s'affichent pendant le choix du kit (`public/js/brawlkit.js` pour les règles, `brawlgame.js` pour l'arbitre et les bots, `brawl.js` pour la scène, `brawlart.js` pour les dessins) :
+
+| Mode | Joueurs | But |
+|---|---|---|
+| **Chacun pour soi** | 2 à 6 | Pas de retour en jeu : le dernier debout gagne. Dès 40 s, une tempête de poussière resserre la zone vers le centre (450 à 1 100 dégâts par seconde dehors). Les **coffres à poudre** se cassent et lâchent une fiole : +350 PV max et +10 % de dégâts (8 au plus). |
+| **Roi de la colline** | 2 à 6 | Seul sur la colline du centre : 1 pt par seconde. 60 pts ou le meilleur score au bout de 2 min 30. Retour en jeu après 3 s. |
+| **Chasse à la prime** | 2 à 6 | Chaque victime rapporte sa prime en étoiles : 2 au départ, +1 par élimination (7 au plus), remise à 2 quand on tombe. Retour en jeu après 3 s, 2 min 30. |
+| **Ruée vers les gemmes** | 2 équipes (3 contre 3 en solo) | Le filon du centre crache une gemme toutes les 7 s. L'équipe qui garde 10 gemmes (et plus que l'autre) pendant 15 s gagne ; qui tombe lâche les siennes. Sinon, le plus de gemmes au bout de 3 min. |
+| **Au meilleur des 3** | 2 équipes (3 contre 3 en solo) | Pas de retour en jeu pendant une manche : l'équipe qui élimine l'autre la gagne, 2 manches pour l'emporter. 75 s par manche au plus (ensuite, l'équipe qui a gardé le plus de vie). |
+
+En solo, 5 bots (3 contre 3 dans les modes en équipes). Les équipes sont tirées au hasard ; en nombre impair, l'équipe la moins nombreuse a plus de PV et frappe plus fort.
+
+**Choix du kit** : après la cinématique, 15 s pour choisir son kit et deux objets (le choix est retenu d'une partie à l'autre). On voit ce que prennent ses coéquipiers. Quand tout le monde est prêt, la partie démarre 3 s plus tard.
+
+- **ZQSD** / **WASD** / flèches : bouger · souris : viser · clic (maintenu) : attaque · **F** / **G** (ou **1** / **2**) : objets · **X** : tir automatique sur l'ennemi le plus proche.
+- **Super-attaque** : clic droit (ou **Espace**, **E**) **maintenu** pour viser : sa zone s'affiche (cercle d'impact, trajectoire en cloche, onde autour de soi, couloir de la charge…). On la lance en **relâchant**. Pour l'annuler, ramener le curseur sur son personnage (le cercle autour de lui vire au rouge, « ANNULER ») ou tirer.
+- Au téléphone : stick pour bouger, toucher l'image pour tirer vers ce point ; boutons **Super** (puis toucher l'image, glisser pour viser, lâcher pour lancer ; revenir sur son personnage pour annuler), **Tir** (automatique), **Objet 1**, **Objet 2**.
+- Prévision de tir : la zone de l'attaque de base (couloir de la balle, éventail des plombs, arc du coup au corps à corps, point de chute de la cloche) suit le curseur et s'arrête sur le premier mur ou la première caisse, comme les balles (seules la cloche et la balle perforante passent par-dessus ou au travers). Les balles sont grosses et lumineuses, avec leur ombre au sol : jaunes pour soi et ses alliés, rouges pour les ennemis (de même que les zones d'impact des tirs en cloche ennemis). Animations : on marche et on respire, l'arme recule au tir (éclair au bout du canon, douilles éjectées), le couteau et le marteau balaient leur arc, le bâton lancé quitte la main ; poussière des pas, buissons qui bougent quand on les traverse, traînée de la charge et du bond, boules de feu et braises des explosions, mèche qui crépite, chute du personnage éliminé, rai de lumière au retour en jeu, objets ramassés qui filent vers soi. Chaque attaque consomme une charge (barres orange sous ses PV), qui se recharge seule. Les dégâts infligés remplissent la **super** (bouton en bas à droite). 3 s sans donner ni recevoir de coup : on récupère 13 % de ses PV par seconde. Au retour en jeu, 1,8 s d'invulnérabilité.
+
+| Kit | PV | Vitesse | Attaque | Super | Talent |
+|---|---|---|---|---|---|
+| Le Dynamiteur | 2 800 | 2,85 | Bâton en cloche par-dessus les murs, 1 050 en zone | Caisse de TNT : énorme explosion (2 000) qui pulvérise caisses et tonneaux | Poudre noire : explosions 20 % plus larges |
+| Le Pistolero | 3 200 | 3,1 | Double colt : 2 balles de 450 | Tourbillon : 2 salves de 12 balles tout autour | Gâchette facile : recharge 25 % plus vite |
+| Le Bison | 4 800 | 3,0 | Fusil à pompe : 5 plombs de 340 en éventail, de près | Charge du taureau : fonce (1 300), renverse et défonce les caisses | Cuir tanné : -30 % de dégâts sous 40 % de PV |
+| L'Œil de faucon | 2 300 | 2,9 | Fusil Sharps : 980, jusqu'à +40 % au loin, recharge lente | Balle perforante : 2 300, traverse murs et ennemis | Œil de lynx : voit dans les buissons jusqu'à 4,5 cases |
+| La Lame | 3 200 | 3,8 | Couteau au corps à corps (960) | Bond du puma : saute par-dessus les murs, 1 500 à l'atterrissage | Embuscade : invisible dans les buissons, même de près |
+| Le Chasseur | 2 900 | 3,1 | Flèche à longue portée (1 000) | Pluie de flèches : 5 volées sur une zone | Pisteur : les ennemis touchés restent visibles 4 s |
+| Le Forgeron | 5 400 | 2,9 | Marteau au corps à corps (1 100), large | Coup de tonnerre : onde (1 400) qui sonne 1,3 s et casse les caisses | Cuir épais : récupère ses PV 50 % plus vite, et plus tôt |
+| Le Docteur | 3 200 | 3,0 | Fiole en cloche : 820 aux ennemis, soigne les alliés (600) | Grand remède : nuage qui soigne les alliés et ronge les ennemis | Automédication : se soigne d'un quart des dégâts infligés |
+| La Gatling | 3 700 | 2,8 | Rafale de 7 balles de 210 | Tourelle : une Gatling posée qui tire seule 12 s (3 200 PV) | Trépied : +20 % de dégâts immobile |
+
+| Objet (3 fois chacun, 2,5 s entre deux) | Effet |
+|---|---|
+| Whisky | +1 500 PV d'un coup |
+| Étoile du shérif | Bouclier : -70 % de dégâts pendant 3 s |
+| Éperons | Vitesse +60 % pendant 3 s |
+| Longue-vue | Voit les ennemis cachés, et loin dans le noir, 6 s |
+| Piège à loup | Posé à ses pieds, invisible pour l'adversaire : bloque 1,5 s et blesse (700) |
+| Fumigène | Invisible 3 s, sauf tout près |
+| Cartouchière | Recharge aussitôt toutes ses munitions |
+| Sacs de sable | Un muret de 3 sacs devant soi, 8 s |
+
+**La carte** : murs infranchissables, caisses et tonneaux (cassés par les supers qui défoncent), eau (on ne la traverse pas, les balles si), et **buissons** : un ennemi caché dans un buisson ne se voit qu'à 2,6 cases (ou s'il vient de tirer, ou s'il a été pisté). Ses coéquipiers, eux, se voient toujours. **Sous terre** (mine de gemmes) et **la nuit**, on ne voit qu'autour de soi et de ses alliés, des coups de feu et des explosions ; la longue-vue porte plus loin.
+
+**60 cartes dessinées à la main** (`public/js/brawlmaps/`, un fichier par mode) : 12 par mode, 2 par environnement, symétriques pour que personne ne parte avantagé. Environnements : **désert** (rochers, cactus, oasis), **forêt** (arbres, fougères, rivière et gués), **prairie** (hautes herbes, murets, foin, mares), **mine de gemmes** (galeries, rails, cristaux, champignons, dans le noir), **canyon** (crêtes de roche rouge, rivière boueuse), **montagne enneigée** (sapins, rochers de glace, lac gelé). La carte est tirée au hasard parmi celles du mode ; l'heure et la météo vont avec l'environnement. `node tools/brawlmaps.mjs [mode] [--show]` vérifie les cartes (dimensions, départs, tout le sol relié, règles du mode) et les affiche en entier.
+
+Chaque joueur simule ses déplacements et ses tirs et annonce ce qu'il touche ; l'hôte vérifie (portée, super disponible, coup déjà compté), applique les dégâts, et fait vivre les bots (ils contournent les murs, respectent les buissons, gardent leur distance selon leur kit, ramassent gemmes et fioles, utilisent supers et objets), les tourelles, les pièges, les gemmes et la tempête. Banc d'essai : `mini-test.html?game=melee`, `&variant=gemmes` pour imposer le mode (`survie`, `colline`, `prime`, `gemmes`, `manches`), `&variant=gemmes:desert-veine` pour imposer aussi la carte.
 
 ## Musique
 
@@ -544,6 +637,7 @@ La musique est composée pour le jeu, façon western spaghetti, et synthétisée
 | La course de chevaux | Rodéo au Ranch (emprunté au lasso, en attendant son propre thème) | La Diligence, Le Train de Minuit |
 | Conquête de l'Ouest | La Ruée vers l'Or (trompette, chœur, chant d'hommes) | L'Or des Collines, Le Cri du Coyote, Le Vautour, Le Glas de Boot Hill, Sous le Soleil de Plomb |
 | Règlement de comptes | Fusillade à Dodge City (emprunté à la Fusillade) | Le Cri du Coyote, Sous le Soleil de Plomb, Chevauchée Nocturne |
+| La bagarre (musiques de boxe, pas de western) | Le Regard du Cogneur (hard rock de stade : accords étouffés en rafales, synthé des années 80, toms) | L'Uppercut (riff au galop, guitare solo qui hurle), Le Grand Combat (8 bits façon jeu de boxe d'arcade : arpèges rapides, basse en octaves, la foule crie « HEY ! »), Le Dernier Round (hymne de stade, synthé, « HEY ! » de la foule), Coup pour Coup (riff syncopé frappé avec la batterie, guitare solo), Debout, Champion ! (film de boxe : fanfare de cuivres, guitare wah-wah, basse disco, cordes, bongos) ; contre le champion : L'Entrée du Champion (la foule tape des pieds et des mains et crie « HEY ! », timbales, chœur, cuivres en mineur, gong), en boucle jusqu'à la fin du combat |
 
 **Musique dynamique** : la musique suit ce qui se passe (`setMood` et `musicCue` dans `public/js/audio.js`).
 
@@ -563,5 +657,20 @@ Les bruitages enregistrés vont dans `public/sfx/` (liste `SAMPLES` dans `public
 ## Jouer à distance
 
 Une fois le site sur Surge, il suffit d’envoyer le lien `https://saloon-roulette.surge.sh/?lobby=CODE`.
-À la table, **Copier** et **Partager** envoient une invitation complète : un message, le code et le lien. Le message décrit la table (jeu ou déroulé, chaises libres) ; le lien « ton message » permet d’écrire le sien, gardé sur ce navigateur (vide = message automatique).
 Si l’hôte ferme son onglet, la table est fermée.
+
+### Aperçu personnalisé des invitations
+
+Discord, WhatsApp ou Messenger lisent l'aperçu d'un lien (balises `og:`) sans exécuter le JS. Surge ne sert que des fichiers fixes, donc sur `?lobby=CODE` l'aperçu est le même pour toutes les tables. Pour que l'aperçu affiche **« Django t'attend au Buckshot Saloon ! »** et le message de celui qui invite, les liens passent par un petit Cloudflare Worker (`invite/worker.js`), sans base de données :
+
+- Le lien porte tout : `https://<worker>/CODE/Pseudo?m=message&p=joueurs&s=chaises`. Le message est celui écrit avec « ton message » (gardé sur ce navigateur), ou à défaut une description de la table (jeu ou déroulé, chaises libres). `p` liste les joueurs déjà assis : 13 caractères d'apparence et le nom (`public/js/invitelook.js`).
+- Pour les robots des messageries, le worker renvoie une page avec l'aperçu personnalisé ; les joueurs sont redirigés aussitôt vers `https://saloon-roulette.surge.sh/?lobby=CODE`.
+- L'image de l'aperçu (`/card/CODE.png`, `invite/card.js`) montre la table et ses joueurs, dessinés avec le code des portraits du jeu (`drawCharacter`), plus les chaises libres. Elle est dessinée en 400 × 210, agrandie × 3, encodée en PNG à palette, puis gardée dans le cache de Cloudflare.
+- **Copier** et **Partager** n'envoient que le lien : le message est dans l'aperçu.
+
+Mise en place (une fois) :
+
+1. `npm run deploy:invite` (compte Cloudflare gratuit ; `npx wrangler login` la première fois). Wrangler affiche l'adresse du worker, par exemple `https://saloon-invite.ton-compte.workers.dev`.
+2. La coller dans `INVITE_URL` (`public/js/config.js`), puis `npm run deploy`.
+
+Tant que `INVITE_URL` est vide, le jeu donne le lien direct `?lobby=CODE` avec l'aperçu générique.

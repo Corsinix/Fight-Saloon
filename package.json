@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "deploy": "node tools/stamp.mjs -- surge public saloon-roulette.surge.sh"
+    "deploy": "node tools/stamp.mjs -- surge public saloon-roulette.surge.sh",
+    "deploy:invite": "cd invite && npx wrangler deploy"
   }
 }

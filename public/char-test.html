@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8"></head>
+<body style="margin:0;background:#3a2a1e;color:#fdf6e0;font:12px monospace">
+<div id="out" style="display:flex;flex-wrap:wrap;gap:6px;padding:6px"></div>
+<pre id="errlog" style="color:#f66"></pre>
+<script type="module">
+// Planche des cowboys de « La mêlée » (brawlart.js) à côté de l'affiche de l'accueil, pour régler leur dessin.
+// ?n=8 : nombre de personnages tirés au hasard ; &seed=3 : toujours les mêmes ; &kit=colts : le kit de tous ;
+// &z=3 : zoom ; &c={...} : un personnage précis (JSON, comme dans l'éditeur) en premier.
+import { lookOf, charSprite, weaponSprite, blit, HAND_Y } from './js/brawlart.js';
+import { KITS } from './js/brawlkit.js';
+import { randomCharacter } from './js/data.js';
+import { drawPortraitInto } from './js/editor.js';
+window.onerror = (m, s, l, c, e) => { document.getElementById('errlog').textContent += `${e?.stack || m}\n`; };
+const q = new URLSearchParams(location.search);
+let seed = +(q.get('seed') || 1);
+Math.random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+const n = +(q.get('n') || 8), z = +(q.get('z') || 3);
+const kits = Object.keys(KITS);
+const chars = [...(q.has('c') ? [JSON.parse(q.get('c'))] : []), ...Array.from({ length: n }, () => randomCharacter())];
+const out = document.getElementById('out');
+chars.forEach((ch, i) => {
+  const kit = q.get('kit') || kits[i % kits.length];
+  const box = out.appendChild(document.createElement('div'));
+  box.style.cssText = 'background:#c4a468;padding:4px;display:flex;gap:4px;align-items:flex-end';
+  const poster = document.createElement('canvas');
+  poster.width = 56; poster.height = 60;
+  poster.style.cssText = `width:${56 * z}px;height:${60 * z}px;image-rendering:pixelated`;
+  drawPortraitInto(poster, ch);
+  box.appendChild(poster);
+  const look = lookOf(ch, i);
+  for (const [back, frame, a] of [[false, 0, 0.3], [false, 1, 0.3], [false, 3, 0.3], [true, 0, -1.6], [false, 0, Math.PI - 0.3]]) {
+    const cv = document.createElement('canvas');
+    const W = 26, H = 40; // pixels du jeu
+    cv.width = W * 2; cv.height = H * 2;
+    cv.style.cssText = `width:${W * 2 * z}px;height:${H * 2 * z}px;image-rendering:pixelated`;
+    const g = cv.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.setTransform(2, 0, 0, 2, 0, 0);
+    const x = 13, y = 38, flip = Math.cos(a) < 0;
+    const body = charSprite(look, kit, back, frame), wp = weaponSprite(kit, a);
+    const hx = x + (flip ? -4 : 4), hy = y + HAND_Y;
+    if (back) blit(g, wp, hx, hy);
+    blit(g, body, x, y, flip);
+    if (!back) blit(g, wp, hx, hy);
+    box.appendChild(cv);
+  }
+  const lab = box.appendChild(document.createElement('div'));
+  lab.style.cssText = 'color:#2a1c14;width:90px;font-size:10px';
+  lab.textContent = `${kit} · ${ch.hat} · ${ch.hair} · ${ch.eyes} · ${ch.nose} · ${ch.mouth} · ${ch.beard} · ${ch.outfit} · ${ch.extra}`;
+});
+</script></body></html>

@@ -149,6 +149,18 @@ export const pairKey = (a, b) => (a < b ? `${a}${b}` : `${b}${a}`); // alliance 
 export const countOf = (blds, owner, kind) => blds.reduce((n, b) => n + (b.owner === owner && b.kind === kind ? 1 : 0), 0);
 export const costOf = (blds, owner, kind) => BUILDINGS[kind].cost + BUILDINGS[kind].step * countOf(blds, owner, kind);
 
+// Or rendu quand on démolit un bâtiment : tout ce qu'il a coûté si le chantier n'est pas fini (paid : chez l'hôte ;
+// l'interface l'estime), sinon la moitié de son prix de base et de ses améliorations (en cours comprise)
+export function refundOf(b, blds) {
+  const B = BUILDINGS[b.kind];
+  if (b.build > 0) return b.paid ?? B.cost + B.step * Math.max(0, countOf(blds, b.owner, b.kind) - 1);
+  const lv = b.lv || 1;
+  let spent = B.cost;
+  for (let k = 0; k < lv - 1; k++) spent += B.up[k][0];
+  if (b.up > 0 && lv < LV.max) spent += B.up[lv - 1][0];
+  return Math.round(spent / 2);
+}
+
 // Population maximale d'un joueur : la base, plus chaque ranch terminé (et ses niveaux)
 export const popOf = (blds, owner) => Math.min(RTS.popCap, RTS.popBase + blds.reduce((n, b) => n + (b.owner === owner && b.kind === 'ranch' && b.build <= 0 ? RTS.popRanch + LV.pop[(b.lv || 1) - 1] : 0), 0));
 // Chantier en cours d'un joueur (un seul à la fois : construction ou amélioration)
@@ -571,6 +583,7 @@ export class RtsGame {
     else if (a.kind === 'train') err = this.train(i, a.u, a.bid);
     else if (a.kind === 'research') err = this.research(i, a.u, a.bid);
     else if (a.kind === 'upgrade') err = this.upgrade(i, a.bid);
+    else if (a.kind === 'demolish') err = this.demolish(i, a.bid);
     else if (a.kind === 'order') err = this.order(i, a);
     else if (a.kind === 'cmd') err = this.command(i, a);
     else if (a.kind === 'diplo') err = this.diplo(i, a);
@@ -591,7 +604,7 @@ export class RtsGame {
     const cost = costOf(this.blds, i, kind);
     if (p.gold < cost) return `Pas assez d'or : ${B.name} coûte ${cost}.`;
     p.gold -= cost;
-    const b = { id: this.nextId++, owner: i, kind, x: c, y: r, w: B.w, lv: 1, up: 0, hp: B.hp, maxHp: B.hp, build: B.time, queue: [], prog: 0, cd: 0 };
+    const b = { id: this.nextId++, owner: i, kind, x: c, y: r, w: B.w, lv: 1, up: 0, hp: B.hp, maxHp: B.hp, build: B.time, queue: [], prog: 0, cd: 0, paid: cost };
     if (kind === 'mine') { const v = this.world.veins.find((x) => x.x === c && x.y === r); b.vein = v.id; this.veinsTaken.set(v.id, b.id); }
     this.blds.push(b);
     return null;
@@ -653,6 +666,24 @@ export class RtsGame {
     return null;
   }
 
+  // démolir un de ses bâtiments (pas le fort) : on récupère une part de l'or investi (tout, si le chantier n'est pas
+  // fini) et les recrues en file sont remboursées. Pas sous le feu : on ne prive pas l'assaillant de sa prise.
+  demolish(i, bid) {
+    const b = this.blds.find((x) => x.id === bid && x.owner === i);
+    if (!b) return 'Bâtiment introuvable.';
+    if (b.kind === 'fort') return 'On ne démolit pas son fort.';
+    if (this.t - (b.hitAt ?? -1e9) < RTS.regen.calm) return 'Sous le feu : impossible de démolir.';
+    const p = this.p[i];
+    p.gold += refundOf(b, this.blds);
+    for (const q of b.queue) {
+      if (isTech(q)) { const [g, f] = TECH.cost[Math.min(TECH.max - 1, p.tech[q.slice(1)])]; p.gold += g; p.food += f; } else { p.gold += UNITS[q].gold; p.food += UNITS[q].food; }
+    }
+    this.blds = this.blds.filter((x) => x !== b);
+    if (b.vein != null) this.veinsTaken.delete(b.vein);
+    this.push({ type: 'razed', kind: b.kind, owner: i, by: i, demo: true, x: bCenter(b).x, y: bCenter(b).y });
+    return null;
+  }
+
   // ordre général à toute l'armée (les ordres particuliers sont oubliés)
   order(i, a) {
     const p = this.p[i];
@@ -663,9 +694,32 @@ export class RtsGame {
       const g = passableNear(this.world, clamp(a.x, 4, RTS.mapW - 4), clamp(a.y, 4, RTS.mapH - 4));
       p.order = { mode: 'rally', x: g.x, y: g.y };
     } else return 'Ordre invalide.';
-    for (const u of this.units) if (u.owner === i) u.cmd = null;
+    for (const u of this.units) if (u.owner === i) { u.cmd = null; u.post = null; }
+    if (p.order.mode === 'rally') this.rallyPosts(i);
     this.push({ type: 'order', by: i, order: p.order });
     return null;
+  }
+
+  // places d'une formation autour de (x, y), dans la direction où marchent les unités (depuis leur centre)
+  posts(units, x, y) {
+    const cx = units.reduce((s, u) => s + u.x, 0) / units.length, cy = units.reduce((s, u) => s + u.y, 0) / units.length;
+    const ang = Math.hypot(x - cx, y - cy) > 4 ? Math.atan2(y - cy, x - cx) : 0;
+    return formation(units, ang).map(([ox, oy]) => passableNear(this.world, clamp(x + ox, 4, RTS.mapW - 4), clamp(y + oy, 4, RTS.mapH - 4)));
+  }
+
+  // point de ralliement de toute l'armée : chacun sa place dans la formation (les recrues qui arrivent ensuite
+  // la font se reformer, dans la même direction)
+  rallyPosts(i) {
+    const o = this.p[i].order;
+    const army = this.units.filter((u) => u.owner === i && !u.cmd);
+    if (!army.length) return;
+    if (o.ang == null) {
+      const cx = army.reduce((s, u) => s + u.x, 0) / army.length, cy = army.reduce((s, u) => s + u.y, 0) / army.length;
+      o.ang = Math.hypot(o.x - cx, o.y - cy) > 4 ? Math.atan2(o.y - cy, o.x - cx) : 0;
+    }
+    formation(army, o.ang).forEach(([ox, oy], k) => {
+      army[k].post = { o, ...passableNear(this.world, clamp(o.x + ox, 4, RTS.mapW - 4), clamp(o.y + oy, 4, RTS.mapH - 4)) };
+    });
   }
 
   // ordre à une sélection d'unités : aller (sans s'arrêter pour tirer), charger (en combattant), tenir la position,
@@ -679,15 +733,8 @@ export class RtsGame {
     if (m === 'move' || m === 'amove') {
       if (!Number.isFinite(a.x) || !Number.isFinite(a.y)) return 'Ordre invalide.';
       const x = clamp(a.x, 4, RTS.mapW - 4), y = clamp(a.y, 4, RTS.mapH - 4);
-      // en formation autour du point visé (les plus rapides devant)
-      const cx = mine.reduce((s, u) => s + u.x, 0) / mine.length, cy = mine.reduce((s, u) => s + u.y, 0) / mine.length;
-      const ang = Math.atan2(y - cy, x - cx);
-      mine.sort((u, v) => UNITS[u.kind].range - UNITS[v.kind].range);
-      mine.forEach((u, k) => {
-        const [ox, oy] = slot(k, ang);
-        const g = passableNear(this.world, clamp(x + ox, 4, RTS.mapW - 4), clamp(y + oy, 4, RTS.mapH - 4));
-        u.cmd = { mode: m, x: g.x, y: g.y, at: this.t };
-      });
+      // en formation autour du point visé (cavaliers et pistoleros devant, tireurs et dynamiteurs sur les ailes)
+      this.posts(mine, x, y).forEach((g, k) => { mine[k].cmd = { mode: m, x: g.x, y: g.y, at: this.t }; });
     } else if (m === 'hold') mine.forEach((u) => { u.cmd = { mode: 'hold', x: u.x, y: u.y }; });
     else if (m === 'stop') mine.forEach((u) => { u.cmd = { mode: 'guard', x: u.x, y: u.y }; });
     else if (m === 'attack') {
@@ -827,7 +874,7 @@ export class RtsGame {
 
   homeSpot(u) {
     const f = bCenter(this.fortOf(u.owner));
-    return { x: f.x + ((u.id * 37) % 40) - 20, y: f.y + 18 + ((u.id * 17) % 16) - 8, home: true };
+    return { x: f.x + ((u.id * 37) % 40) - 20, y: f.y + 18 + ((u.id * 17) % 16) - 8, tight: true };
   }
 
   // but de l'unité : son ordre particulier, sinon l'ordre général de son joueur
@@ -840,7 +887,11 @@ export class RtsGame {
     }
     const o = this.p[u.owner].order;
     if (o.mode === 'attack' && this.p[o.target]?.alive && this.foe(u.owner, o.target)) { const f = bCenter(this.fortOf(o.target)); return { x: f.x, y: f.y }; }
-    if (o.mode === 'rally') return { x: o.x, y: o.y };
+    if (o.mode === 'rally') {
+      // sa place dans la formation (une recrue qui arrive : on la reforme)
+      if (u.post?.o !== o && !u.cmd) this.rallyPosts(u.owner);
+      return u.post?.o === o ? { x: u.post.x, y: u.post.y, tight: true } : { x: o.x, y: o.y };
+    }
     return this.homeSpot(u);
   }
 
@@ -1034,7 +1085,7 @@ export class RtsGame {
     }
     const g = this.goalOf(u);
     const d = Math.hypot(g.x - u.x, g.y - u.y);
-    if (d > (g.home || anchor ? 3 : 10)) this.step(u, g.x, g.y, dt, st.speed);
+    if (d > (g.tight || anchor ? 3 : 10)) this.step(u, g.x, g.y, dt, st.speed);
     else if (u.cmd?.mode === 'amove') u.cmd = { mode: 'guard', x: u.cmd.x, y: u.cmd.y };
   }
 
@@ -1379,10 +1430,40 @@ export class RtsGame {
   }
 }
 
-// Place de la k-ième unité d'une formation (rangs serrés, face à la direction de marche)
-function slot(k, ang) {
-  const row = Math.floor(k / 5), col = [0, 1, -1, 2, -2][k % 5];
-  const fx = -row * 7, fy = col * 7; // derrière et sur les côtés
+// Formation autour du point visé, face à la direction de marche (ang) : cavaliers puis pistoleros au centre, devant ;
+// tireurs puis dynamiteurs sur les deux ailes, un peu en retrait. Renvoie le décalage [x, y] de chaque unité (même ordre).
+// Écarts (px) : un cavalier prend plus de place qu'un homme à pied (sprites de 16 et de 8 à 10 px de large)
+const GAP = 12, GAP_RIDER = 16;
+const WING = { rifle: 0, dyn: 1 };
+export function formation(units, ang) {
+  const out = new Array(units.length);
+  const idx = (f) => units.map((u, k) => k).filter((k) => f(units[k])).sort((a, b) => units[a].id - units[b].id);
+  const riders = idx((u) => u.kind === 'rider'), gunmen = idx((u) => u.kind === 'gunman');
+  const wing = idx((u) => WING[u.kind] != null).sort((a, b) => WING[units[a].kind] - WING[units[b].kind]);
+  // centre : des rangs plus larges que profonds ; les cavaliers aux premiers rangs, les pistoleros derrière
+  const nF = riders.length + gunmen.length;
+  const width = nF ? (Math.min(nF, Math.max(3, Math.ceil(Math.sqrt(nF * 2)))) - 1) * GAP : 0;
+  let depth = 0, half = 0; // profondeur du centre (rangs posés), demi-largeur du plus large rang
+  const block = (list, gap, prevGap) => {
+    if (!list.length) return;
+    const cols = Math.min(list.length, Math.floor(width / gap) + 1);
+    if (depth || prevGap) depth += (gap + prevGap) / 2; // un rang de plus derrière le précédent
+    list.forEach((k, n) => {
+      const row = Math.floor(n / cols), inRow = Math.min(cols, list.length - row * cols);
+      out[k] = [-(depth + row * gap), ((n % cols) - (inRow - 1) / 2) * gap];
+    });
+    depth += (Math.ceil(list.length / cols) - 1) * gap;
+    half = Math.max(half, ((cols - 1) / 2) * gap);
+  };
+  block(riders, GAP_RIDER, 0);
+  block(gunmen, GAP, riders.length ? GAP_RIDER : 0);
+  // ailes : une à droite, une à gauche, aussi profondes que le centre (au moins deux rangs), en retrait d'un demi-rang
+  const rows = Math.max(2, Math.round(depth / GAP) + 1);
+  const side0 = nF ? half + GAP + (riders.length ? 2 : 0) : GAP / 2;
+  wing.forEach((k, n) => {
+    const side = n % 2 ? -1 : 1, j = Math.floor(n / 2);
+    out[k] = [-(j % rows) * GAP - GAP / 2, side * (side0 + Math.floor(j / rows) * GAP)];
+  });
   const c = Math.cos(ang), s = Math.sin(ang);
-  return [fx * c - fy * s, fx * s + fy * c];
+  return out.map(([fx, fy]) => [fx * c - fy * s, fx * s + fy * c]);
 }

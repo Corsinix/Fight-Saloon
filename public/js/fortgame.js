@@ -192,6 +192,10 @@ export class FortGame {
     this.duration = MODES.fort.duration;
     const n = players.length;
     this.world = fortWorld(this.seed, mapId, n);
+    // équipes tirées au hasard à chaque partie : la place à la table ne décide plus du camp (fortTeam : index pair
+    // ou impair). net.js retrouve chaque joueur par sa clé, l'ordre de la partie peut différer de celui de la table.
+    players = [...players];
+    for (let k = n - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [players[k], players[j]] = [players[j], players[k]]; }
     this.p = players.map((pl, i) => {
       const maxHp = fortMaxHp(i, n);
       return {
