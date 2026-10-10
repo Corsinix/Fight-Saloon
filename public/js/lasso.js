@@ -4,7 +4,7 @@ import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText, prune } from './scene.js';
 import { SKIN, HAIR_COLORS, CLOTH_COLORS, EYE_COLORS, hatColorOf, beardHasMustache, beardHasChin } from './data.js';
-import { MiniScene, ring, pixelSprite as sprite } from './miniscene.js';
+import { MiniScene, pixelSprite as sprite } from './miniscene.js';
 import { skyDeco } from './env.js';
 import {
   W, H, MODES, rng, LASSO, LASSO_HORIZON, ANIMALS, lassoWorld, animalPos, animalVisible, obstacleX,
@@ -54,13 +54,19 @@ function leg(R, hx, hy, fx, fy, col) {
   R(fx, fy, 2, 1, '#2a1a10');
 }
 
-// pieds (x, y) des 4 jambes [arrière loin, arrière près, avant loin, avant près] pour les 4 temps du galop
+// pieds (x, y) des 4 jambes [arrière loin, arrière près, avant loin, avant près] pour les 4 temps du galop :
+// détente, appui des antérieurs, suspension, réception des postérieurs. Un pied posé (y = -1) recule toujours
+// d'une image à l'autre (le sol défile) et n'avance qu'en l'air : pas de sabot qui glisse vers l'avant.
 const GALLOP = [
   [[-18, -3], [-15, -1], [17, -4], [14, -1]],
-  [[-13, -2], [-10, -1], [12, -2], [9, -1]],
+  [[-14, -5], [-17, -3], [12, -1], [9, -1]],
   [[-7, -5], [-5, -3], [5, -6], [7, -4]],
-  [[-12, -1], [-9, -2], [10, -1], [15, -3]],
+  [[-12, -1], [-9, -2], [11, -5], [15, -3]],
 ];
+// Cheval à l'arrêt (horseSprite(…, STAND, …)) : les quatre fers au sol, d'aplomb sous la hanche et l'épaule
+// (jambes du fond décalées de deux pixels pour qu'on les voie toutes) ; hors de la boucle du galop.
+export const STAND = 'stand';
+const STANDING = [[-13, -1], [-10, -1], [8, -1], [11, -1]];
 
 // Allure d'un joueur en petit format (cavalier, duelliste) à partir de son personnage
 export function riderLook(c = {}, color, key) {
@@ -69,14 +75,37 @@ export function riderLook(c = {}, color, key) {
     skin: SKIN[c.skin] || SKIN[1], hair: HAIR_COLORS[c.hairColor] || HAIR_COLORS[1],
     cloth: CLOTH_COLORS[c.outfitColor] || CLOTH_COLORS[2], hatC: hatColorOf(c),
     hat: c.hat || 'cowboy', beard: c.beard, outfit: c.outfit, color,
+    band: CLOTH_COLORS[c.hatColor] || CLOTH_COLORS[1], // ruban du chapeau de paille (la paille garde sa couleur)
     hairStyle: c.hair, eyes: c.eyes, eyeC: EYE_COLORS[c.eyeColor] || EYE_COLORS[0], mouth: c.mouth, extra: c.extra,
   };
 }
 
-// Chapeau d'un cavalier (tête en x -6..0, y -40..-34 ; b = rebond)
+// Coiffure vue sous le chapeau (indice de hairStyle, à la couleur des cheveux) : nuque, mèches, tresse, chignon…
+// Tête en x -6..0 (regard vers la droite), y -40..-34 ; tout se joue derrière la tête, sous le bord du chapeau.
+function drawHair(R, r, b) {
+  const { hair, skin, hairStyle: s } = r;
+  const dk = S.shade(hair, -0.3);
+  switch (s) {
+    case 'bald': R(-6, -40 + b, 2, 5, skin); R(-5, -38 + b, 1, 2, S.shade(skin, -0.15)); break; // crâne nu, oreille
+    case 'long': R(-7, -39 + b, 2, 8, hair); R(-7, -32 + b, 1, 1, dk); break; // sur les épaules
+    case 'bob': R(-7, -39 + b, 2, 5, hair); R(-6, -35 + b, 1, 1, dk); break; // carré à la mâchoire
+    case 'mullet': R(-7, -37 + b, 2, 5, hair); R(-7, -33 + b, 1, 1, dk); break; // nuque longue
+    case 'ponytail': R(-8, -39 + b, 2, 2, hair); R(-9, -37 + b, 2, 4, hair); R(-9, -34 + b, 1, 1, dk); break;
+    case 'braids': // tresse nattée, nouée d'un ruban à la couleur du joueur
+      R(-7, -38 + b, 1, 7, hair); R(-7, -37 + b, 1, 1, dk); R(-7, -35 + b, 1, 1, dk); R(-7, -33 + b, 1, 1, dk);
+      R(-7, -31 + b, 1, 1, r.color || dk); break;
+    case 'bun': R(-8, -40 + b, 2, 3, hair); R(-9, -39 + b, 1, 1, hair); R(-8, -38 + b, 1, 1, dk); break;
+    case 'afro': R(-8, -40 + b, 2, 6, hair); R(-9, -39 + b, 1, 4, hair); R(0, -40 + b, 1, 1, hair); break;
+    case 'curly': R(-7, -39 + b, 1, 1, hair); R(-7, -37 + b, 1, 1, hair); R(-7, -35 + b, 1, 1, hair); break;
+    case 'messy': R(-7, -39 + b, 1, 2, hair); R(-8, -38 + b, 1, 1, hair); R(-7, -36 + b, 1, 1, hair); break;
+  }
+}
+
+// Chapeau d'un cavalier (tête en x -6..0, y -40..-34 ; b = rebond), coiffure comprise
 export function drawHat(R, r, b = 0) {
   const { hair, hatC, hat } = r;
   const band = S.shade(hatC, -0.35);
+  drawHair(R, r, b);
   switch (hat) {
     case 'sombrero': R(-11, -42 + b, 16, 2, hatC); R(-5, -47 + b, 5, 5, hatC); R(-5, -43 + b, 5, 1, band); break;
     case 'bowler': R(-7, -41 + b, 8, 1, hatC); R(-6, -44 + b, 6, 3, hatC); R(-5, -45 + b, 4, 1, hatC); break;
@@ -85,10 +114,29 @@ export function drawHat(R, r, b = 0) {
     case 'bandana': R(-6, -42 + b, 6, 2, hatC); R(-8, -41 + b, 2, 1, hatC); R(-9, -40 + b, 1, 2, hatC); break;
     case 'coonskin': R(-6, -43 + b, 6, 3, '#8a6a48'); R(-9, -42 + b, 3, 1, '#8a6a48'); R(-10, -41 + b, 2, 6, '#8a6a48'); R(-10, -38 + b, 2, 1, '#4a3420'); break;
     case 'kepi': R(-6, -44 + b, 6, 3, hatC); R(-6, -42 + b, 6, 1, '#e0b040'); R(0, -41 + b, 3, 1, '#2a2226'); break;
-    case 'none': R(-6, -41 + b, 6, 2, hair); break;
+    case 'horns': { // coiffe de bison : calotte de fourrure à frange, une corne d'ivoire de chaque côté, pointe en l'air
+      const horn = '#e8dcc0', hornD = '#a89878';
+      R(-7, -43 + b, 8, 3, hatC); R(-6, -44 + b, 6, 1, hatC); R(-5, -44 + b, 1, 1, S.shade(hatC, 0.2));
+      R(-7, -41 + b, 1, 2, band); R(-5, -41 + b, 1, 1, band); R(-3, -41 + b, 1, 1, band); R(-1, -41 + b, 1, 1, band);
+      R(1, -43 + b, 2, 1, horn); R(2, -45 + b, 1, 2, horn); R(1, -42 + b, 2, 1, hornD); // corne avant
+      R(-9, -43 + b, 2, 1, horn); R(-9, -45 + b, 1, 2, horn); R(-9, -42 + b, 2, 1, hornD); // corne arrière
+      break;
+    }
+    case 'none':
+      if (r.hairStyle === 'bald') { R(-5, -41 + b, 4, 1, r.skin); break; }
+      R(-6, -41 + b, 6, 2, hair);
+      if (r.hairStyle === 'afro') { R(-8, -44 + b, 9, 4, hair); R(-7, -45 + b, 7, 1, hair); }
+      else if (r.hairStyle === 'mohawk') { R(-5, -44 + b, 3, 3, hair); R(-4, -45 + b, 2, 1, hair); }
+      else if (r.hairStyle === 'bun') { R(-7, -44 + b, 3, 3, hair); R(-6, -43 + b, 1, 1, S.shade(hair, -0.3)); }
+      else if (r.hairStyle === 'curly' || r.hairStyle === 'messy') { R(-6, -42 + b, 1, 1, hair); R(-3, -42 + b, 1, 1, hair); R(0, -41 + b, 1, 1, hair); }
+      break;
+    case 'straw': // canotier de paille : calotte plate, bord large, ruban à la couleur choisie
+      R(-10, -41 + b, 14, 1, hatC); R(-6, -44 + b, 6, 3, hatC); R(-6, -42 + b, 6, 1, r.band || '#a8302a');
+      R(-4, -44 + b, 1, 1, S.shade(hatC, -0.2)); R(-1, -43 + b, 1, 1, S.shade(hatC, -0.2));
+      break;
     default:
       R(-9, -41 + b, 12, 1, hatC); R(-6, -44 + b, 6, 3, hatC); R(-6, -45 + b, 2, 1, hatC); R(-2, -45 + b, 2, 1, hatC);
-      R(-6, -42 + b, 6, 1, hat === 'straw' ? '#a8302a' : hat === 'cavalry' ? '#e0b040' : band);
+      R(-6, -42 + b, 6, 1, hat === 'cavalry' ? '#e0b040' : band);
       if (hat === 'feather') { R(-1, -47 + b, 1, 4, '#ece4d0'); R(0, -48 + b, 1, 2, '#ece4d0'); }
   }
 }
@@ -107,35 +155,46 @@ function drawRider(R, r, frame, b) {
   R(-6, -39 + b, 1, 5, hair); R(-2, -38 + b, 1, 1, '#1a0f0a');
   if (beardHasMustache(beard)) R(-2, -35 + b, 3, 1, hair);
   if (beardHasChin(beard)) R(-4, -34 + b, 4, 1, hair);
-  R(-6, -33 + b, 6, 1, color); R(-9, -33 + b + (frame % 2), 3, 1, color); // foulard qui flotte
+  R(-6, -33 + b, 6, 1, color);
+  if (frame === STAND) R(-7, -33 + b, 1, 3, color); // à l'arrêt, le foulard pend dans le dos
+  else R(-9, -33 + b + (frame % 2), 3, 1, color); // au galop, il flotte
   drawHat(R, r, b);
 }
 
+// frame : 0..3 (temps du galop) ou STAND (à l'arrêt : sabots au sol, tête haute, queue au repos)
 export function horseSprite(coat, mane, frame, rider) {
   return cached(`h${coat}${mane}${frame}${rider ? rider.key : ''}`, () => sprite(60, 56, 26, 54, (R) => {
+    const still = frame === STAND;
     const b = frame === 2 ? -1 : 0;
+    const hu = still ? -2 : 0; // à l'arrêt, l'encolure se redresse et la tête monte de deux pixels
     const dark = S.shade(coat, -0.28), light = S.shade(coat, 0.15);
-    const L = GALLOP[frame];
+    const L = still ? STANDING : GALLOP[frame];
     leg(R, -11, -13 + b, L[0][0], L[0][1], dark);
     leg(R, 8, -13 + b, L[2][0], L[2][1], dark);
-    const tw = [0, 1, 2, 1][frame];
-    R(-15, -21 + b, 2, 2, mane); R(-17, -20 + b + tw, 2, 3, mane); R(-19, -18 + b + tw, 2, 4, mane); R(-20, -15 + b + tw, 1, 3, mane);
+    if (still) {
+      // queue au repos : elle tombe le long de la cuisse au lieu de flotter
+      R(-15, -21, 2, 3, mane); R(-16, -19, 2, 5, mane); R(-17, -15, 2, 4, mane); R(-17, -11, 1, 3, mane); R(-16, -11, 1, 2, mane);
+    } else {
+      const tw = [0, 1, 2, 1][frame];
+      R(-15, -21 + b, 2, 2, mane); R(-17, -20 + b + tw, 2, 3, mane); R(-19, -18 + b + tw, 2, 4, mane); R(-20, -15 + b + tw, 1, 3, mane);
+    }
     R(-13, -21 + b, 25, 9, coat); R(-12, -22 + b, 22, 1, coat); R(-12, -13 + b, 22, 1, dark); R(-12, -20 + b, 20, 1, light);
     // encolure épaisse qui s'affine vers la tête, crinière le long du bord arrière
-    for (let y = -21; y >= -32; y--) {
+    for (let y = -21; y >= -32 + hu; y--) {
       const u = -21 - y;
       const xl = Math.round(6 + u * 0.5), xr = Math.round(13 + u * 0.3);
       R(xl, y + b, xr - xl + 1, 1, coat);
       if (u > 2) R(xr, y + b, 1, 1, light);
-      R(xl - 1 - ((u + frame) % 3 === 0 ? 1 : 0), y + b, 2, 1, mane);
+      R(xl - 1 - ((u + (still ? 0 : frame)) % 3 === 0 ? 1 : 0), y + b, 2, 1, mane);
     }
-    // tête allongée, chanfrein vers l'avant et le bas
-    for (const [y, x0, x1] of [[-35, 14, 16], [-34, 13, 18], [-33, 13, 20], [-32, 14, 21], [-31, 15, 22], [-30, 17, 23], [-29, 18, 23], [-28, 19, 22]]) R(x0, y + b, x1 - x0 + 1, 1, coat);
-    R(19, -29 + b, 5, 1, dark); R(19, -28 + b, 4, 1, dark); // museau
-    R(15, -31 + b, 3, 1, dark); // ganache
-    R(14, -37 + b, 1, 2, coat); R(16, -37 + b, 2, 2, coat); // oreilles
-    R(12, -35 + b, 2, 2, mane); R(13, -36 + b, 1, 1, mane); // toupet
-    R(17, -33 + b, 1, 1, '#1a0f0a'); R(22, -30 + b, 1, 1, '#1a0f0a');
+    // tête allongée, chanfrein vers l'avant et le bas (hu : relevée à l'arrêt)
+    const hb = b + hu;
+    for (const [y, x0, x1] of [[-35, 14, 16], [-34, 13, 18], [-33, 13, 20], [-32, 14, 21], [-31, 15, 22], [-30, 17, 23], [-29, 18, 23], [-28, 19, 22]]) R(x0, y + hb, x1 - x0 + 1, 1, coat);
+    R(19, -29 + hb, 5, 1, dark); R(19, -28 + hb, 4, 1, dark); // museau
+    R(15, -31 + hb, 3, 1, dark); // ganache
+    R(14, -37 + hb, 1, 2, coat); R(16, -37 + hb, 2, 2, coat); // oreilles
+    R(12, -35 + hb, 2, 2, mane); R(13, -36 + hb, 1, 1, mane); // toupet
+    R(17, -33 + hb, 1, 1, '#1a0f0a'); R(22, -30 + hb, 1, 1, '#1a0f0a');
     leg(R, -9, -13 + b, L[1][0], L[1][1], coat);
     leg(R, 10, -13 + b, L[3][0], L[3][1], coat);
     if (rider) drawRider(R, rider, frame, b);
@@ -143,6 +202,9 @@ export function horseSprite(coat, mane, frame, rider) {
 }
 
 // ------------------------------------------------------------ bêtes
+// Point d'attache du nœud coulant (encolure), noté par chaque dessin de bête image par image (suit ses rebonds)
+let tieAt = [0, 0];
+const tieTo = (x, y) => { tieAt = [x, y]; };
 // Outils de dessin : ellipse pleine, membre épais, patte articulée qui suit un cycle de foulée.
 function blob(R, cx, cy, rx, ry, col) {
   for (let dy = -ry; dy <= ry; dy++) {
@@ -206,6 +268,7 @@ function drawCow(R, p, c) {
   if (c.gold) R(18, -13 + b + hb, 2, 1, '#c8c0b8');
   stride(R, -10, hy, G[1], 4, 3, 2, c.leg, '#2a1a10');
   stride(R, 10, hy, G[3], 4, 3, 2, c.leg, '#2a1a10', true);
+  tieTo(11, -16 + b + hb);
 }
 
 const PIGS = [
@@ -233,6 +296,7 @@ function drawPig(R, p, c) {
   R(7, -13 + b, 2, 2, dk); R(9, -12 + b - (Math.sin(p) > 0 ? 1 : 0), 1, 1, dk); // oreille qui ballotte
   stride(R, -6, hy, G[1], 3, 2, 2, c.body, '#5a3a30');
   stride(R, 6, hy, G[3], 3, 2, 2, c.body, '#5a3a30', true);
+  tieTo(7, -9 + b);
 }
 
 const SHEEP = [
@@ -255,6 +319,7 @@ function drawSheep(R, p, c) {
   R(7, -13 + b + hb, 2, 1, c.face); R(12, -13 + b + hb, 1, 1, c.wool === '#4a4240' ? '#c8c0b4' : '#f4ecd8');
   stride(R, -6, hy, G[1], 2, 3, 1, c.face, '#1a1414');
   stride(R, 6, hy, G[3], 2, 3, 1, c.face, '#1a1414', true);
+  tieTo(8, -12 + b + hb);
 }
 
 const GOATS = [
@@ -281,6 +346,7 @@ function drawGoat(R, p, c) {
   R(12, -17 + b, 1, 2, dk); // barbiche
   stride(R, -6, hy, G[1], 4, 4, 1, c.body, '#2a1a10');
   stride(R, 6, hy, G[3], 4, 4, 1, c.body, '#2a1a10', true);
+  tieTo(8, -17 + b);
 }
 
 const RABBITS = ['#a07850', '#8a8478', '#c8a878', '#6a5040'];
@@ -299,6 +365,7 @@ function drawRabbit(R, f, col) {
   R(5, -9 + y, 1, 1, OUT); R(6, -7 + y, 1, 1, '#e8a8a0');
   limb(R, 3, -10 + y, 0, -15 + y, 2, col); R(1, -14 + y, 1, 3, '#e8b0a8');
   limb(R, 4, -10 + y, 3, -15 + y, 1, dk);
+  tieTo(2, -6 + y);
 }
 
 const HENS = [
@@ -322,6 +389,7 @@ function drawChicken(R, f, c) {
   blob(R, 4, -11 + b, 2, 2, c.body);
   R(3, -14 + b, 3, 1, '#e8604c'); R(4, -15 + b, 1, 1, '#e8604c');
   R(6, -11 + b, 2, 1, '#e0b040'); R(5, -9 + b, 1, 2, '#e8604c'); R(5, -12 + b, 1, 1, OUT);
+  tieTo(3, -9 + b);
 }
 
 function drawSkunk(R, f, v) {
@@ -341,6 +409,7 @@ function drawSkunk(R, f, v) {
   R(5, -8 + b, 3, 1, w); R(9, -4 + b, 1, 1, '#e8a8a0'); R(7, -6 + b, 1, 1, w);
   stride(R, -5, -3 + b, G[1], 1, 1, 1, k);
   stride(R, 5, -3 + b, G[3], 1, 1, 1, k);
+  tieTo(4, -6 + b);
 }
 
 // Bison de la stampede : bosse laineuse, tête basse et barbue, petites cornes
@@ -367,6 +436,7 @@ function drawBison(R, p, col) {
   R(12, -7 + b + hb, 3, 2, wool); // barbe
   stride(R, -10, hy, G[1], 5, 3, 2, col, '#1a0f0a');
   stride(R, 9, hy, G[3], 5, 3, 2, wool, '#1a0f0a', true);
+  tieTo(10, -12 + b + hb);
 }
 
 // nb d'images, ms par image, largeur de l'ombre
@@ -377,24 +447,45 @@ const ANIM = {
   chicken: { n: 4, ms: 60, sh: 8 }, skunk: { n: 4, ms: 90, sh: 12 }, mustang: { n: 4, ms: 80, sh: 24 },
 };
 
-function animalSprite(kind, v, f) {
+// image retournée (bête qui court vers la gauche), origine recalée sur la même colonne
+const mirror = (spr) => {
+  const c = S.makeCanvas(spr.width, spr.height);
+  const x = c.getContext('2d');
+  x.scale(-1, 1);
+  x.drawImage(spr, -spr.width, 0);
+  c.ox = spr.width - 1 - spr.ox;
+  c.oy = spr.oy;
+  if (spr.tie) c.tie = [-spr.tie[0], spr.tie[1]];
+  return c;
+};
+
+// back : la bête court vers la gauche (troupeau de la stampede, qui fonce plus vite que le sol ne défile)
+function animalSprite(kind, v, f, back = false) {
+  if (back) return cached(`m${kind}|${v}|${f}`, () => mirror(animalSprite(kind, v, f)));
   if (kind === 'mustang') { const [c, m] = MUSTANGS[v % 4]; return horseSprite(c, m, f, null); }
   if (kind === 'outlaw') return horseSprite('#2a2420', '#0e0a08', f, OUTLAW_RIDER);
-  return cached(`a${kind}|${v}|${f}`, () => sprite(50, 38, 22, 36, (R) => {
-    const p = (f / ANIM[kind].n) * TAU;
-    switch (kind) {
-      case 'cow': drawCow(R, p, COWS[v % 4]); break;
-      case 'goldbull': drawCow(R, p, GOLD); break;
-      case 'pig': drawPig(R, p, PIGS[v % 4]); break;
-      case 'sheep': drawSheep(R, p, SHEEP[v % 4]); break;
-      case 'goat': drawGoat(R, p, GOATS[v % 4]); break;
-      case 'rabbit': drawRabbit(R, f, RABBITS[v % 4]); break;
-      case 'chicken': drawChicken(R, f, HENS[v % 4]); break;
-      case 'skunk': drawSkunk(R, f, v); break;
-      case 'bison': drawBison(R, p, BISONS[v % 4]); break;
-    }
-  }));
+  return cached(`a${kind}|${v}|${f}`, () => {
+    const c = sprite(50, 38, 22, 36, (R) => {
+      const p = (f / ANIM[kind].n) * TAU;
+      switch (kind) {
+        case 'cow': drawCow(R, p, COWS[v % 4]); break;
+        case 'goldbull': drawCow(R, p, GOLD); break;
+        case 'pig': drawPig(R, p, PIGS[v % 4]); break;
+        case 'sheep': drawSheep(R, p, SHEEP[v % 4]); break;
+        case 'goat': drawGoat(R, p, GOATS[v % 4]); break;
+        case 'rabbit': drawRabbit(R, f, RABBITS[v % 4]); break;
+        case 'chicken': drawChicken(R, f, HENS[v % 4]); break;
+        case 'skunk': drawSkunk(R, f, v); break;
+        case 'bison': drawBison(R, p, BISONS[v % 4]); break;
+      }
+    });
+    c.tie = tieAt;
+    return c;
+  });
 }
+// encolure d'une bête sur son image (les chevaux, partagés avec d'autres jeux, n'en portent pas : calculée ici,
+// l'image 2 du galop monte d'un pixel)
+const tiePoint = (spr, f) => spr.tie || [11, f === 2 ? -27 : -26];
 
 // ------------------------------------------------------------ obstacles (font trébucher le cheval)
 const OBSTACLE_DRAW = {
@@ -416,6 +507,24 @@ const OBSTACLE_DRAW = {
   fence(R) { for (const x of [-11, 0, 10]) R(x, -12, 2, 12, '#7a5a3a'); R(-11, -10, 23, 2, '#9a7a52'); R(-11, -5, 23, 2, '#9a7a52'); },
 };
 const obstacleSprite = (kind) => cached(`o${kind}`, () => sprite(30, 28, 15, 27, OBSTACLE_DRAW[kind] || OBSTACLE_DRAW.rock));
+
+// Nœud coulant : ellipse de corde pleine (assez de points pour ne laisser aucun trou), ombrée dessous, faite une fois
+const loopSprite = (rx, ry, gold) => cached(`l${rx}|${ry}|${gold ? 1 : 0}`, () => {
+  const c = S.makeCanvas(rx * 2 + 1, ry * 2 + 2);
+  const x = c.getContext('2d');
+  const n = Math.max(24, (rx + ry) * 8);
+  for (const [col, dy] of [[gold ? GOLD_ROPE_D : ROPE_D, 1], [gold ? GOLD_ROPE : ROPE, 0]]) {
+    x.fillStyle = col;
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * TAU;
+      x.fillRect(rx + rd(Math.cos(a) * rx), ry + dy + rd(Math.sin(a) * ry), 1, 1);
+    }
+  }
+  return c;
+});
+// poussière des sabots : quelques opacités toutes faites plutôt qu'une chaîne rgba par grain et par image
+const DUST = Array.from({ length: 6 }, (_, k) => `rgba(236,220,170,${((k + 1) / 12).toFixed(3)})`);
+const SMOKE = Array.from({ length: 6 }, (_, k) => `rgba(230,226,220,${((k + 1) / 10).toFixed(2)})`);
 
 // ------------------------------------------------------------ décor des régions traversées
 const BIOMES = {
@@ -653,6 +762,14 @@ export class LassoScene extends MiniScene {
     this.riders = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `${i}:${JSON.stringify(p.character || {})}`));
     forgetRiders(this.riders);
     this.buildDecor(seed);
+    // mode histoire : le ranch McCoy ou le désert de Red Rock (routesdeco.js), chargés pendant la cinématique
+    this.sd = null;
+    const deco = this.hooks.story?.deco;
+    if (deco?.set) {
+      const world = this.world;
+      import('./routesdeco.js').then((m) => m.lassoDeco(deco, this.env)).then((d) => { if (this.world === world) this.sd = d; })
+        .catch((e) => console.warn('décor de l’épisode', e));
+    }
   }
 
   // Décor qui défile : même graine pour toute la table, donc même paysage pour tout le monde.
@@ -991,7 +1108,8 @@ export class LassoScene extends MiniScene {
       ctx.drawImage(img, img.width - off, y);
       ctx.globalAlpha = 1;
     };
-    for (const layer of ['far', 'mid']) {
+    if (this.sd?.far) this.sd.far(ctx, tt / MODES.lasso.duration); // les buttes et la ville de Red Rock
+    else for (const layer of ['far', 'mid']) {
       const sp = layer === 'far' ? 0.005 : 0.016;
       if (prev && k < 1) strip(biomeLayers(prev.id)[layer], sp, HORIZON - 60, 1);
       strip(biomeLayers(cur.id)[layer], sp, HORIZON - 60, k);
@@ -1013,7 +1131,7 @@ export class LassoScene extends MiniScene {
     ctx.fillStyle = '#e0b040'; ctx.fillRect(lx + 14, y - 5, 1, 1);
     for (let i = 0; i < 6; i++) {
       const age = ((el / 140 + i) % 6) / 6;
-      S.disc(ctx, lx + 11 - age * 26, y - 12 - age * 9, Math.round(1 + age * 3), `rgba(230,226,220,${0.6 * (1 - age)})`);
+      S.disc(ctx, lx + 11 - age * 26, y - 12 - age * 9, Math.round(1 + age * 3), SMOKE[Math.min(5, Math.floor((1 - age) * 6))]);
     }
   }
 
@@ -1055,6 +1173,7 @@ export class LassoScene extends MiniScene {
 
   drawProps(ctx, tt) {
     const now = this.now;
+    this.sd?.props?.(ctx, tt, groundSpeed); // l'arche, la grange et les enclos du ranch McCoy
     for (const d of this.deco.props) {
       const x = this.decoX(d, tt);
       if (x < -30 || x > W + 30) continue;
@@ -1145,7 +1264,7 @@ export class LassoScene extends MiniScene {
     }
     items.length = n;
     items.sort(byY);
-    for (const p of this.parts) S.disc(ctx, p.x, p.y, Math.round(p.r), `rgba(236,220,170,${0.5 * (1 - p.t / p.max)})`);
+    for (const p of this.parts) S.disc(ctx, p.x, p.y, Math.round(p.r), DUST[Math.min(5, Math.floor((1 - p.t / p.max) * 6))]);
     for (const it of items) {
       if (it.kind === 0) this.drawAt(ctx, obstacleSprite(it.ref.kind), it.x, it.ref.y);
       else if (it.kind === 1) this.drawAnimal(ctx, it.ref, it.p, now);
@@ -1166,13 +1285,13 @@ export class LassoScene extends MiniScene {
       if (!c || t - c.at > PULL) continue;
       const h = this.horse(c.by);
       const p = this.animalDraw(a, t);
-      if (h && p) this.rope(out, lassoHand(h.x, h.y), { x: p.x, y: p.y - a.r }, 0);
+      if (h && p) this.tie(out, this.hand(c.by, h, now, t), a, p, now);
     }
     const th = this.my.throw;
     if (th && th.phase === 'pull' && !this.caught.has(th.id)) {
       const a = this.world.animals[th.id];
       const p = this.animalDraw(a, t);
-      if (p) this.rope(out, lassoHand(this.my.x, this.my.y), { x: p.x, y: p.y - a.r }, 0, th.bet);
+      if (p) this.tie(out, this.hand(this.me, this.my, now, t), a, p, now, th.bet);
     }
 
     this.drawTwists(out, t, now);
@@ -1240,12 +1359,18 @@ export class LassoScene extends MiniScene {
     ctx.globalAlpha = 1;
   }
 
+  // image d'une bête : attrapée, elle se débat (pattes qui moulinent) ; le troupeau fonce
+  animalFrame(a, tied, now) {
+    const A = ANIM[a.kind] || ANIM.cow;
+    return Math.floor((now * (tied ? 2.4 : a.herd ? 1.6 : 1)) / A.ms + a.id * 1.7) % A.n;
+  }
+
   drawAnimal(ctx, a, p, now) {
     const A = ANIM[a.kind] || ANIM.cow;
     const tied = p.tied != null;
-    // attrapée : elle se débat (pattes qui moulinent, secousses)
-    const f = Math.floor((now * (tied ? 2.4 : a.herd ? 1.6 : 1)) / A.ms + a.id * 1.7) % A.n;
-    const spr = animalSprite(a.kind, a.v ?? a.id % 4, f);
+    // attrapée : secousses en plus
+    const f = this.animalFrame(a, tied, now);
+    const spr = animalSprite(a.kind, a.v ?? a.id % 4, f, !!a.herd);
     const x = p.x + (tied ? Math.round(Math.sin(now / 22)) : 0);
     const blink = p.fade > 0.7 && Math.floor(now / 60) % 2;
     if (!blink) this.drawAt(ctx, spr, x, p.y, 1, A.sh);
@@ -1291,10 +1416,20 @@ export class LassoScene extends MiniScene {
     }
   }
 
+  // image du galop d'un cheval (figée en suspension quand il trébuche)
+  horseFrame(i, now, t) { return i === this.me && t < this.my.stumbleUntil ? 2 : Math.floor(now / 85 + i) % 4; }
+
+  // main du cavalier telle que dessinée : suit le rebond du cheval (image 2 : tout le sprite monte d'un pixel)
+  hand(i, h, now, t) {
+    const p = lassoHand(Math.round(h.x), Math.round(h.y));
+    if (this.horseFrame(i, now, t) === 2) p.y--;
+    return p;
+  }
+
   drawHorse(ctx, i, h, now, t) {
     const [coat, mane] = COATS[i % COATS.length];
     const stumble = i === this.me && t < this.my.stumbleUntil;
-    const f = stumble ? 2 : Math.floor(now / 85 + i) % 4;
+    const f = this.horseFrame(i, now, t);
     const spr = horseSprite(coat, mane, f, this.riders[i]);
     const flash = stumble && Math.floor(now / 80) % 2;
     this.drawAt(ctx, spr, h.x, h.y, flash ? 0.5 : 1);
@@ -1306,25 +1441,37 @@ export class LassoScene extends MiniScene {
     }
   }
 
+  // corde d'un point à un autre (creusée de sag au milieu) : toute l'ombre d'abord, puis le brin clair par-dessus
   rope(ctx, a, b, sag, gold = false) {
     const n = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y)));
-    for (let k = 0; k <= n; k++) {
-      const u = k / n;
-      const x = a.x + (b.x - a.x) * u, y = a.y + (b.y - a.y) * u + Math.sin(u * Math.PI) * sag;
-      ctx.fillStyle = gold ? GOLD_ROPE_D : ROPE_D; ctx.fillRect(Math.round(x), Math.round(y) + 1, 1, 1);
-      ctx.fillStyle = gold ? GOLD_ROPE : ROPE; ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+    for (let pass = 0; pass < 2; pass++) {
+      ctx.fillStyle = pass ? (gold ? GOLD_ROPE : ROPE) : gold ? GOLD_ROPE_D : ROPE_D;
+      for (let k = 0; k <= n; k++) {
+        const u = k / n;
+        const x = a.x + (b.x - a.x) * u, y = a.y + (b.y - a.y) * u + Math.sin(u * Math.PI) * sag;
+        ctx.fillRect(rd(x), rd(y) + 1 - pass, 1, 1);
+      }
     }
   }
 
-  loop(ctx, x, y, rx, ry, step = 1, phase = 0, gold = false) {
-    ring(ctx, x, y + 1, rx, ry, gold ? GOLD_ROPE_D : ROPE_D, step, phase);
-    ring(ctx, x, y, rx, ry, gold ? GOLD_ROPE : ROPE, step, phase);
+  loop(ctx, x, y, rx, ry, gold = false) {
+    ctx.drawImage(loopSprite(rx, ry, gold), rd(x) - rx, rd(y) - ry);
+  }
+
+  // bête prise : corde tendue jusqu'au nœud coulant serré autour de son encolure (suit ses secousses et ses bonds)
+  tie(ctx, hand, a, p, now, gold = false) {
+    const f = this.animalFrame(a, true, now);
+    const [dx, dy] = tiePoint(animalSprite(a.kind, a.v ?? a.id % 4, f, !!a.herd), f);
+    const x = rd(p.x) + rd(Math.sin(now / 22)) + dx, y = rd(p.y) + dy;
+    this.rope(ctx, hand, { x, y }, 0, gold);
+    this.loop(ctx, x, y, 2, a.r > 6 ? 3 : 2, gold);
   }
 
   drawLasso(ctx, i, h, t, now) {
-    const hand = lassoHand(h.x, h.y);
+    const hand = this.hand(i, h, now, t);
     const th = i === this.me ? this.my.throw : h.throw;
-    const busy = this.state?.players[i] && [...this.caught.values()].some((c) => c.by === i && t - c.at < PULL);
+    let busy = false;
+    for (const c of this.caught.values()) if (c.by === i && t - c.at < PULL) { busy = true; break; }
     const big = this.giant(i) ? 1.4 : 1; // lasso géant du dernier
     if (th && th.phase !== 'pull') {
       let k = Math.min(1, (t - th.t0) / th.fly);
@@ -1332,17 +1479,17 @@ export class LassoScene extends MiniScene {
       else if (i !== this.me && t > th.t0 + th.fly) k = Math.max(0, 1 - (t - th.t0 - th.fly) / 260);
       const x = hand.x + (th.tx - hand.x) * k, y = hand.y + (th.ty - hand.y) * k;
       this.rope(ctx, hand, { x, y }, (1 - k) * 6 + 2, th.bet);
-      this.loop(ctx, x, y, Math.round(6 * big), Math.round(3 * big), 1, 0, th.bet);
+      this.loop(ctx, x, y, rd(6 * big), rd(3 * big), th.bet);
       return;
     }
     if (th || busy) return;
     if (i === this.me && (t < this.my.stumbleUntil || t < this.my.stinkUntil)) return;
-    // le lasso tourne au-dessus de la tête (doré quand le pari est armé)
+    // le lasso tourne au-dessus de la tête (doré quand le pari est armé) : boucle pleine, la corde suit son tour
     const gold = i === this.me && this.my.bet;
     const a = now / 90;
-    const rx = Math.round(9 * big), cx = hand.x - 2, cy = hand.y - 6;
+    const rx = rd(9 * big), cx = hand.x - 2, cy = hand.y - 6;
+    this.loop(ctx, cx, cy, rx, 3, gold);
     this.rope(ctx, hand, { x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * 3 }, 0, gold);
-    this.loop(ctx, cx, cy, rx, 3, 2, now / 60, gold);
   }
 
   drawCrosshair(ctx, t) {

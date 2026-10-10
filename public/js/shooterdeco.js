@@ -22,6 +22,24 @@ const SHINGLE = {
   bank: ['#2a4a30', '#e0b040'], undertaker: ['#2a2622', '#c8c0b8'], theater: ['#6a2a5a', '#f8d070'], stable: ['#6a4a2a', '#d8b048'],
 };
 
+// éléments dessinés devant les bandits : tonneaux percés, lustres, pots de fleurs posés devant le bas des fenêtres,
+// réverbères du quai (le quai est devant le train)
+const inFront = (it) => it.kind === 'chandelier' || it.kind === 'leak' || it.kind === 'pot' || !!it.post;
+
+// enseigne suspendue (22×16) : ses deux chaînes, ou une seule quand elle ne tient plus que par un coin
+const shingles = new Map();
+function shingleSprite(cols, one) {
+  const key = cols.join() + one;
+  let c = shingles.get(key);
+  if (c) return c;
+  c = S.makeCanvas(22, 16);
+  const { R } = painter(c.getContext('2d'));
+  R(3, 0, 1, 5, '#3a3436'); if (!one) R(18, 0, 1, 5, '#3a3436');
+  R(0, 4, 22, 12, OUT); R(1, 5, 20, 10, cols[0]); R(7, 8, 8, 4, cols[1]);
+  shingles.set(key, c);
+  return c;
+}
+
 export class Deco {
   constructor(world, seed) {
     this.items = []; // destructibles
@@ -41,10 +59,19 @@ export class Deco {
     for (const b of L.buildings) {
       const f = facade(b);
       for (const wn of f.windows) if (!b.bars) this.add({ sec: 'street', kind: 'glass', x: wn.x, y: wn.y, w: wn.w, h: wn.h, seed: R() });
-      // pots de fleurs sur les rebords de l'étage
-      for (const wn of f.windows) if (wn.up && R() < 0.35) this.add({ sec: 'street', kind: 'pot', x: wn.x + wn.w / 2 - 3, y: wn.y + wn.h + 1, w: 7, h: 7, col: ['#e05878', '#f8d040', '#b070c0'][Math.floor(R() * 3)] });
-      // lanterne à côté de la porte
-      if (b.kind !== 'saloon' && R() < 0.55) this.add({ sec: 'street', kind: 'lantern', x: f.door.x + f.door.w + 4, y: f.door.y - 6, w: 7, h: 11, ground: GROUND });
+      // pots de fleurs posés sur les rebords de l'étage (le pot repose sur l'appui, devant le bas de la vitre)
+      for (const wn of f.windows) if (wn.up && R() < 0.35) this.add({ sec: 'street', kind: 'pot', x: wn.x + wn.w / 2 - 3, y: wn.y + wn.h - 6, w: 7, h: 7, col: ['#e05878', '#f8d040', '#b070c0'][Math.floor(R() * 3)] });
+      // lanterne à côté de la porte ; sous un bandeau d'enseigne, à gauche de la plaque (même calcul que signRect
+      // dans shooter.js) pour ne pas cacher le nom du commerce
+      if (b.kind !== 'saloon' && R() < 0.55) {
+        let lx = f.door.x + f.door.w + 4;
+        if (b.sign && f.up > 0) {
+          const sw = Math.min(b.w - 16, b.sign.length * 7 + 12), sx = Math.round(b.x + b.w / 2 - sw / 2);
+          if (lx + 8 > sx && lx - 4 < sx + sw) lx = sx - 10;
+        }
+        // au-dessus de l'auvent (y 109-116, au premier plan) quand il y en a un : sinon il la coupe à moitié
+        if (lx >= b.x + 4) this.add({ sec: 'street', kind: 'lantern', x: lx, y: f.awning ? 98 : f.door.y - 6, w: 7, h: 11, ground: GROUND });
+      }
       // enseigne suspendue à une potence, au coin du bâtiment
       if (SHINGLE[b.kind] && R() < 0.75) this.add({ sec: 'street', kind: 'shingle', x: b.x + b.w - 26, y: 99, w: 22, h: 18, cols: SHINGLE[b.kind], ground: GROUND });
       // oiseaux sur le toit
@@ -99,6 +126,9 @@ export class Deco {
       const perch = h.kind === 'tree' ? [[h.x + 30, 80], [h.x - 24, 76], [h.x + 6, 57]] : h.kind === 'gate' ? [[h.x + 30, h.sign.y - 3]] : h.top != null && R() < 0.6 ? [[h.x + 10 + R() * (h.w - 20), (h.roof ?? h.top) - 1]] : [];
       for (const [x, y] of perch) this.critters.push({ sec: 'edge', kind: 'bird', x, y, ph: R() * 9 });
     }
+    // abords peints avec un décor du mode histoire : vitres relevées sur le décor, corbeaux sur les toits et les croix
+    for (const s of E.spots) if (s.glass) this.add({ sec: 'edge', kind: 'glass', x: s.x, y: s.y, w: s.w, h: s.h, seed: R() });
+    for (const [x, y] of E.perch) if (R() < 0.7) this.critters.push({ sec: 'edge', kind: 'bird', x, y, ph: R() * 9 });
     for (const c of E.covers) {
       const [w, h] = EDGE_COVER[c.kind];
       if (c.kind === 'barrels' || c.kind === 'trough') this.add({ sec: 'edge', kind: 'leak', x: c.x, y: PROP_BASE - h, w, h: c.kind === 'trough' ? h - 4 : h, holes: [] });
@@ -284,18 +314,19 @@ export class Deco {
     }
     for (const it of this.items) {
       if (it.sec !== sec || it.x - cx < -40 || it.x - cx > W + 40) continue;
-      if (it.kind === 'chandelier' || it.kind === 'leak') continue; // dessinés après (devant les bandits)
+      if (inFront(it)) continue; // dessinés après (devant les bandits)
       this.drawItem(ctx, it, cx, t, now, R, box);
     }
     for (const c of this.critters) if (c.sec === sec && (c.kind === 'bird' || c.kind === 'bat' || c.kind === 'cow' || (c.kind === 'cat' && c.perch))) this.drawCritter(ctx, c, cx, t, now, R);
   }
 
-  // Devant : tonneaux percés, lustres, poules, chien, chat, pianola, fumée de cigare, débris
+  // Devant : tonneaux percés, pots de fleurs (devant le bas des fenêtres), lustres, poules, chien, chat, pianola,
+  // fumée de cigare, débris
   drawFront(ctx, sec, cx, t, now) {
     const { R, box } = painter(ctx);
     for (const it of this.items) {
       if (it.sec !== sec || it.x - cx < -40 || it.x - cx > W + 40) continue;
-      if (it.kind === 'chandelier' || it.kind === 'leak') this.drawItem(ctx, it, cx, t, now, R, box);
+      if (inFront(it)) this.drawItem(ctx, it, cx, t, now, R, box);
     }
     for (const c of this.critters) if (c.sec === sec && c.kind !== 'bird' && c.kind !== 'bat' && c.kind !== 'cow' && !(c.kind === 'cat' && c.perch)) this.drawCritter(ctx, c, cx, t, now, R);
     for (const fxt of this.fixtures) {
@@ -383,15 +414,11 @@ export class Deco {
         // balancement : léger au repos, fort après un impact ; à 2 impacts, il ne tient plus que par une chaîne
         const amp = 0.06 + 0.5 * Math.max(0, 1 - (t - it.at) / 2500);
         const a = Math.sin(now / 420 + it.id) * amp + (it.hits >= 2 ? 0.75 : 0);
+        // l'enseigne est un sprite tourné d'un bloc (pixels nets) plutôt que des rectangles tournés (bords lissés)
         ctx.save();
         ctx.translate(rd(x + (it.hits >= 2 ? 2 : 10)), rd(y + 1));
         ctx.rotate(a);
-        const ox = it.hits >= 2 ? -2 : -10;
-        ctx.fillStyle = '#3a3436';
-        ctx.fillRect(ox + 2, 0, 1, 5); if (it.hits < 2) ctx.fillRect(ox + 17, 0, 1, 5);
-        ctx.fillStyle = OUT; ctx.fillRect(ox - 1, 4, 22, 12);
-        ctx.fillStyle = it.cols[0]; ctx.fillRect(ox, 5, 20, 10);
-        ctx.fillStyle = it.cols[1]; ctx.fillRect(ox + 6, 8, 8, 4);
+        ctx.drawImage(shingleSprite(it.cols, it.hits >= 2), it.hits >= 2 ? -3 : -11, 0);
         ctx.restore();
         break;
       }
@@ -427,6 +454,8 @@ export class Deco {
           const hx = x + it.w / 2 + (it.id % 3) * 10 - 10;
           for (let k = 0; k < 6; k++) { const a = k * 1.05; for (let r = 1; r < 9 + it.hits * 4; r++) ctx.fillRect(rd(hx + Math.cos(a) * r * 1.6), rd(y + 7 + Math.sin(a) * r * 0.6), 1, 1); }
         }
+        // la tablette du haut de l'arrière-bar passe devant le miroir : les bouteilles y sont posées
+        R(x - 1, SAL.shelves[0], it.w + 2, 1, '#a8703c'); R(x - 1, SAL.shelves[0] + 1, it.w + 2, 2, '#6a4428'); R(x - 1, SAL.shelves[0] + 3, it.w + 2, 1, OUT);
         break;
       }
       case 'chandelier': {
@@ -493,7 +522,7 @@ export class Deco {
         // se promène et picore ; effrayée, elle détale en battant des ailes
         let x = (c.x0 + Math.sin(now / 3000 + c.ph) * 26);
         if (fl >= 0) x = c.flee.x0 + c.flee.dir * Math.min(fl, 1400) * 0.09;
-        if (fl > 6000) { c.x0 = x; c.flee = null; }
+        if (fl > 6000) { c.x0 = x - Math.sin(now / 3000 + c.ph) * 26; c.flee = null; } // elle repart de là où elle est (sans sauter)
         c.x = x;
         x -= cx;
         if (x < -10 || x > W + 10) return;
@@ -504,7 +533,8 @@ export class Deco {
         R(x - 3, y - 5, 6, 4, c.col); R(dir > 0 ? x - 5 : x + 3, y - 7, 2, 3, c.col);
         R(hx, y - (peck ? 3 : 7), 2, 3, c.col); R(hx + (dir > 0 ? 1 : 0), y - (peck ? 4 : 8), 1, 1, '#e8604c');
         R(dir > 0 ? hx + 2 : hx - 1, y - (peck ? 2 : 6), 1, 1, '#e0b040');
-        const st = Math.floor(now / (fl >= 0 ? 60 : 200)) % 2;
+        // pattes rapides pendant la fuite ; une fois à l'abri, elle reste plantée là (sans piétiner sur place)
+        const st = fl >= 1400 ? 0 : Math.floor(now / (fl >= 0 ? 60 : 200)) % 2;
         R(x - 1 + st, y - 1, 1, 1, '#e0b040'); R(x + 1 - st, y - 1, 1, 1, '#e0b040');
         if (fl >= 0 && fl < 1400 && st) R(x - 2, y - 7, 4, 1, c.col);
         break;
@@ -513,13 +543,14 @@ export class Deco {
         // broute en avançant à peine ; effrayée, elle trotte plus loin puis se calme
         let x = c.x0 + Math.sin(now / 5000 + c.ph) * 10;
         if (fl >= 0) x = c.flee.x0 + c.flee.dir * Math.min(fl, 1800) * 0.05;
-        if (fl > 7000) { c.x0 = x; c.flee = null; }
+        if (fl > 7000) { c.x0 = x - Math.sin(now / 5000 + c.ph) * 10; c.flee = null; }
         c.x = x;
         x -= cx;
         if (x < -20 || x > W + 20) return;
         const y = c.y, dir = fl >= 0 && fl < 1800 ? c.flee.dir : Math.cos(now / 5000 + c.ph) > 0 ? 1 : -1;
         const graze = fl < 0 && Math.sin(now / 1300 + c.ph * 2) > 0;
-        const st = fl >= 0 && fl < 1800 ? Math.floor(fl / 120) % 2 : 0;
+        // pas de trot quand elle s'enfuit ; au pas (lent) quand elle avance en broutant, plutôt que de glisser
+        const st = fl >= 0 && fl < 1800 ? Math.floor(fl / 120) % 2 : fl < 0 && Math.abs(Math.cos(now / 5000 + c.ph)) > 0.35 ? Math.floor(now / 420 + c.ph) % 2 : 0;
         R(x - 10, y - 12, 20, 8, OUT); R(x - 9, y - 11, 18, 6, '#f4ecd8');
         if (c.spots) { R(x - 6, y - 11, 5, 4, '#3a3232'); R(x + 3, y - 9, 4, 3, '#3a3232'); } else R(x - 9, y - 11, 18, 6, '#a86a3a');
         for (const lx of [-8, -4, 4, 7]) R(x + lx + (st && lx > 0 ? 1 : 0), y - 5, 2, 5, '#3a3232');

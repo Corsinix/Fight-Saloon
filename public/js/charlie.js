@@ -7,7 +7,7 @@ import { canvasText } from './scene.js';
 import { SKIN, HAIR_COLORS, CLOTH_COLORS } from './data.js';
 import { MiniScene, ring, pixelSprite } from './miniscene.js';
 import { desertOpts } from './env.js';
-import { horseSprite } from './lasso.js';
+import { horseSprite, STAND } from './lasso.js';
 import { W, H, CHARLIE, TOWN, TOWN_PROPS, balconyY, charlieWorld, npcPos, PANTS } from './worlds.js';
 
 const WW = CHARLIE.worldW, BOARD = CHARLIE.board;
@@ -20,6 +20,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // Une planche par passant plutôt qu'un canvas par pose, et un contour tracé par le GPU (sans getImageData) :
 // la foule d'une manche se prépare en quelques millisecondes, étalées sur l'annonce de la manche.
 const FW = 16, FH = 30, FOX = 8, FOY = 28, POSES = 5;
+const STEP = 3; // px parcourus par pose de marche (4 poses = 2 pas de 6 px)
 let sheets = new Map();
 // on oublie la foule précédente : ses planches sont libérées tout de suite (2 canvas par passant)
 function freeSheets() {
@@ -73,6 +74,10 @@ function npcFrame(look, key, frame, dir) {
     : { img: s.right, sx: p * FW, w: FW, h: FH, ox: FOX, oy: FOY };
 }
 
+// cycle de marche (x du pied loin / près, x du bras) : pas en avant, passage, pas en arrière, passage
+// (avant : un seul pas par cycle, l'autre jambe se fondait dans la première et boitait)
+const LEG_FAR = [-3, -2, 1, -2], LEG_NEAR = [1, 0, -3, 0], ARM = [-1, 0, 1, 0];
+
 // frame : -1 = immobile, 0..3 = pas de marche
 function drawNpc(R, l, frame) {
   const legH = l.kid ? 3 : 5, bodyH = l.kid ? 5 : 7;
@@ -82,15 +87,15 @@ function drawNpc(R, l, frame) {
   const tc2 = CLOTH_COLORS[l.topC2] || CLOTH_COLORS[5];
   const hc = CLOTH_COLORS[l.hatC] || CLOTH_COLORS[1], band = S.shade(hc, -0.35);
   const pants = PANTS[l.pants] || PANTS[1], shoe = '#2a1a10';
-  const sw = frame < 0 ? 0 : [0, 1, 0, -1][frame];
+  const far = frame < 0 ? -2 : LEG_FAR[frame], near = frame < 0 ? 0 : LEG_NEAR[frame];
   const top = -legH - bodyH, hy = top - 5;
   // jambes (ou jupe)
   if (l.top === 'dress') {
     R(-3, -legH - 1, 6, legH, tc); R(-4, -3, 8, 2, tc); R(-4, -2, 8, 1, S.shade(tc, -0.25));
-    R(-2 + sw, -1, 2, 1, shoe); R(1 - sw, -1, 2, 1, shoe);
+    R(far, -1, 2, 1, shoe); R(near, -1, 2, 1, shoe);
   } else {
-    R(-2 - sw, -legH, 2, legH, S.shade(pants, -0.15)); R(sw, -legH, 2, legH, pants);
-    R(-2 - sw, -1, 3, 1, shoe); R(sw, -1, 3, 1, shoe);
+    R(far, -legH, 2, legH, S.shade(pants, -0.15)); R(far, -1, 3, 1, shoe);
+    R(near, -legH, 2, legH, pants); R(near, -1, 3, 1, shoe);
   }
   // buste
   switch (l.top) {
@@ -100,8 +105,8 @@ function drawNpc(R, l, frame) {
     case 'duster': R(-4, top + 1, 2, bodyH + legH - 3, S.shade(tc, -0.3)); R(-3, top, 6, bodyH, tc); break;
     default: R(-3, top, 6, bodyH, tc);
   }
-  // bras qui balance
-  const arm = frame < 0 ? 0 : [0, 1, 0, -1][frame];
+  // bras qui balance, à contretemps de la jambe du même côté
+  const arm = frame < 0 ? 0 : ARM[frame];
   R(arm, top + 1, 2, bodyH - 3, l.top === 'poncho' ? tc : S.shade(tc, -0.12));
   R(arm, top + bodyH - 2, 2, 1, skin);
   // tête
@@ -150,7 +155,8 @@ const PROP_DRAW = {
     R(-22, -14, 44, 14, '#8a5a34'); R(-22, -14, 44, 2, '#a8703c'); R(-20, -8, 40, 1, '#6a4024');
     for (let x = -18; x < 18; x += 4) { R(x, -17, 3, 3, alt ? '#e0b040' : '#c86a2a'); R(x + 1, -18, 1, 1, '#4a7a3a'); }
     R(-22, -34, 2, 20, '#5a3a20'); R(20, -34, 2, 20, '#5a3a20');
-    for (let x = -26; x < 26; x += 6) { R(x, -38, 6, 5, (x / 6) % 2 ? a : '#ece2c8'); R(x, -33, 6, 1, (x / 6) % 2 ? S.shade(a, -0.3) : '#c8bca0'); }
+    // auvent rayé (k pair : toile écrue) ; (x / 6) % 2 n'est jamais nul pour x = -26, -20… : l'auvent était uni
+    for (let k = 0, x = -26; x < 26; k++, x += 6) { R(x, -38, 6, 5, k % 2 ? a : '#ece2c8'); R(x, -33, 6, 1, k % 2 ? S.shade(a, -0.3) : '#c8bca0'); }
   },
   barrels(R) {
     for (const bx of [-11, 1]) {
@@ -181,16 +187,18 @@ const PROP_DRAW = {
 };
 
 const propCache = new Map();
-// la moitié est de la ville a ses variantes (cheval noir tourné vers la gauche, étal bleu)
-const eastSide = (p) => p.x > WW / 2;
+// le second objet d'un même genre a sa variante (cheval noir tourné vers la gauche, étal bleu) ;
+// (avant : « moitié est de la ville », mais les deux chevaux, en x = 386 et 724, y étaient tous deux)
+const altProp = (i) => TOWN_PROPS.findIndex((q) => q.kind === TOWN_PROPS[i].kind) !== i;
 function propSprite(p, idx) {
   let c = propCache.get(idx);
   if (c) return c;
   if (p.kind === 'horse') {
-    const [coat, mane] = eastSide(p) ? ['#3a2c26', '#120c08'] : ['#8a4a24', '#2e1a10'];
-    c = horseSprite(coat, mane, 1, null);
+    const [coat, mane] = altProp(idx) ? ['#3a2c26', '#120c08'] : ['#8a4a24', '#2e1a10'];
+    c = horseSprite(coat, mane, STAND, null); // attaché, au repos
   } else {
-    c = pixelSprite(100, 64, 50, 60, (R, ctx) => PROP_DRAW[p.kind](R, ctx, 50, 60, eastSide(p)));
+    // 104 px : le timon du chariot (jusqu'à x = +49) garde son contour au bord droit
+    c = pixelSprite(104, 64, 52, 60, (R, ctx) => PROP_DRAW[p.kind](R, ctx, 52, 60, altProp(idx)));
   }
   propCache.set(idx, c);
   return c;
@@ -203,8 +211,8 @@ function paint(ctx) {
   return { R, box };
 }
 
-function signRect(b) {
-  const w = Math.min(b.w - 10, b.sign.length * 7 + 10);
+function signRect(b, text = b.sign) {
+  const w = Math.min(b.w - 10, text.length * 7 + 10);
   return { x: Math.round(b.x + b.w / 2 - w / 2), y: BOARD - b.h + 4, w, h: 10 };
 }
 
@@ -227,9 +235,60 @@ function skyFor(env) {
   return c;
 }
 
-let TOWN_IMG = null;
-function town() {
-  if (TOWN_IMG) return TOWN_IMG;
+// ------------------------------------------------------------ la foire (mode histoire : deco.fair)
+// Chapiteaux rayés derrière les toits, guirlandes de fanions le long des corniches, grande banderole tendue entre
+// deux mâts sur les toits du bazar et du shérif (son texte est écrit à chaque image, voir render). Tout est dans le
+// fond, derrière les passants : rien ne change pour la chasse.
+const FLAGS = ['#c0392b', '#f4ecd8', '#3a6ec0', '#e0b040'];
+export const FAIR_BANNER = { x: 470, y: 8, w: 146, h: 13 };
+const FAIR_SIGNS = { SALOON: 'BUCKSHOT SALOON' }; // les enseignes de Dusty Gulch
+function tent(R, cx, peak, hw, eave, a, b) {
+  for (let y = peak; y < 100; y++) {
+    const half = y < eave ? Math.round((hw * (y - peak)) / (eave - peak)) : hw;
+    R(cx - half - 1, y, half * 2 + 3, 1, OUT);
+    for (let x = -half; x <= half; x++) {
+      const k = Math.floor(((x + hw) * 8) / (hw * 2 + 1)); // 8 laizes de toile, du sommet au bord
+      R(cx + x, y, 1, 1, y >= eave ? (k % 2 ? '#d8ccb0' : '#b8ac90') : k % 2 ? a : b);
+    }
+    if (y === eave) for (let x = -hw; x <= hw; x += 4) R(cx + x, y, 3, 2, a); // lambrequin festonné
+  }
+  R(cx, peak - 9, 1, 9, '#4a3a2a'); R(cx + 1, peak - 9, 5, 3, FLAGS[(cx >> 3) % 4]); R(cx + 1, peak - 7, 3, 1, OUT);
+}
+function garland(R, x0, y0, x1, y1, sag, seed) {
+  const n = Math.max(2, Math.round((x1 - x0) / 2));
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, x = Math.round(x0 + (x1 - x0) * u), y = Math.round(y0 + (y1 - y0) * u + sag * 4 * u * (1 - u));
+    R(x, y, 2, 1, '#3a2a1e');
+    if (i % 3 === 1 && i < n - 1) { const c = FLAGS[(i / 3 + seed) % 4 | 0]; R(x - 1, y + 1, 5, 2, c); R(x, y + 3, 3, 1, c); R(x + 1, y + 4, 1, 1, c); R(x - 1, y + 1, 5, 1, S.shade(c, -0.25)); }
+  }
+}
+function fairBack(R) {
+  tent(R, 46, 18, 34, 34, '#c0392b', '#f4ecd8'); // derrière l'écurie
+  tent(R, 672, 28, 26, 40, '#3a6ec0', '#f4ecd8'); // derrière le barbier
+  tent(R, 150, 12, 18, 24, '#e0b040', '#c0392b'); // derrière la banque
+}
+function fairFront(R, box) {
+  // sur chaque toit (sauf sous la banderole), deux hampes et une guirlande au-dessus de la corniche
+  const B0 = FAIR_BANNER;
+  for (const b of TOWN) {
+    if (b.x < B0.x + B0.w && b.x + b.w > B0.x) continue;
+    const top = BOARD - b.h;
+    for (const px of [b.x + 2, b.x + b.w - 4]) box(px, top - 12, 1, 8, '#6a4a2a');
+    garland(R, b.x + 3, top - 12, b.x + b.w - 4, top - 12, 4, b.x);
+  }
+  // la banderole : deux mâts, les cordes, la toile
+  const B = FAIR_BANNER;
+  for (const [mx, roof] of [[B.x - 6, 36], [B.x + B.w + 4, 30]]) box(mx, B.y - 4, 2, roof - B.y + 4, '#6a4a2a'); // plantés sur les toits
+  R(B.x - 4, B.y + 1, 4, 1, '#3a2a1e'); R(B.x + B.w, B.y + 1, 4, 1, '#3a2a1e');
+  box(B.x, B.y, B.w, B.h, '#f4ecd8');
+  R(B.x, B.y, B.w, 2, '#c0392b'); R(B.x, B.y + B.h - 2, B.w, 2, '#c0392b');
+  for (let x = B.x + 1; x < B.x + B.w; x += 4) R(x, B.y + B.h, 2, 2, '#c0392b');
+}
+
+const TOWN_IMGS = {}; // la ville, et la même un jour de foire
+function town(fair = false) {
+  const key = fair ? 'fair' : 'plain';
+  if (TOWN_IMGS[key]) return TOWN_IMGS[key];
   const bg = S.makeCanvas(WW, H);
   const ctx = bg.getContext('2d');
   const lights = []; // fenêtres éclairées la nuit
@@ -240,6 +299,7 @@ function town() {
   ['#c89058', '#c48c58', '#c08850', '#c48c58', '#ca945e'].forEach((c, i) => R(0, BOARD + i * 24, WW, 25, c));
   for (let i = 0; i < 2600; i++) R(rnd() * WW, BOARD + 12 + rnd() * 104, rnd() < 0.2 ? 2 : 1, 1, rnd() < 0.5 ? '#e0a870' : '#9a6a3a');
   for (const y of [150, 172, 196]) for (let x = 0; x < WW; x += 3) R(x, y + (x % 7 === 0 ? 1 : 0), 2, 1, '#a87040');
+  if (fair) fairBack(R);
   // façades
   TOWN.forEach((b, bi) => {
     const top = BOARD - b.h, x = b.x, w = b.w;
@@ -247,7 +307,7 @@ function town() {
     box(x, top, w, b.h, col);
     for (let px = x + 3; px < x + w; px += 5) R(px, top + 1, 1, b.h - 1, dk);
     R(x - 2, top - 3, w + 4, 4, dk); R(x - 2, top - 3, w + 4, 1, lt); R(x - 3, top - 4, w + 6, 1, OUT);
-    const sr = signRect(b);
+    const sr = signRect(b, (fair && FAIR_SIGNS[b.sign]) || b.sign);
     box(sr.x, sr.y, sr.w, sr.h, '#e8d4a0');
     const upY = b.balcony ? top + 18 : top + 18, upH = b.balcony ? 20 : 12, upW = b.balcony ? 12 : 11;
     const nUp = Math.max(1, Math.floor(w / (b.balcony ? 30 : 32)));
@@ -274,6 +334,7 @@ function town() {
   R(0, BOARD, WW, 12, '#8a5a34'); R(0, BOARD, WW, 1, '#a8703c');
   for (let x = 0; x < WW; x += 8) R(x, BOARD, 1, 12, '#5a3418');
   R(0, BOARD + 12, WW, 2, '#5a3418');
+  if (fair) fairFront(R, box);
   // rambardes des balcons, devant les passants qui s'y promènent
   const front = S.makeCanvas(WW, H);
   const F = paint(front.getContext('2d'));
@@ -283,8 +344,8 @@ function town() {
     F.box(b.x - 2, by - 9, b.w + 4, 2, '#8a5a34');
     for (let x = b.x; x < b.x + b.w; x += 5) F.R(x, by - 7, 2, 7, '#7a4a28');
   }
-  TOWN_IMG = { bg, front, lights };
-  return TOWN_IMG;
+  TOWN_IMGS[key] = { bg, front, lights };
+  return TOWN_IMGS[key];
 }
 
 // ------------------------------------------------------------ scène
@@ -329,6 +390,9 @@ export class CharlieScene extends MiniScene {
 
   setup(seed) {
     this.seed = seed;
+    // mode histoire : la ville un jour de foire (story/decos : { fair: 'TEXTE DE LA BANDEROLE' })
+    const deco = this.hooks.story?.deco;
+    this.fair = deco?.fair ? String(deco.fair) : null;
     this.cur = null;
     this.world = null;
     this.finds = 0;
@@ -421,14 +485,17 @@ export class CharlieScene extends MiniScene {
     const items = TOWN_PROPS.map((p, i) => this.propItem(p, i));
     for (const n of this.world.npcs) {
       const p = npcPos(n, rt);
-      items.push({ y: p.y, x: Math.round(p.x), npc: n, ...npcFrame(n.look, n.key, p.walk ? p.f : -1, p.dir) });
+      // pose tirée de la distance parcourue (une toutes les STEP px) et non du temps : les lents ne patinent
+      // plus sur place, les rapides ne glissent plus
+      const f = p.walk ? Math.floor(p.x / STEP) & 3 : -1;
+      items.push({ y: p.y, x: Math.round(p.x), npc: n, ...npcFrame(n.look, n.key, f, p.dir) });
     }
     return items.sort((a, b) => a.y - b.y);
   }
 
   propItem(p, i) {
     const spr = propSprite(p, i);
-    const img = p.kind === 'horse' && eastSide(p) ? this.flipped(spr) : spr;
+    const img = p.kind === 'horse' && altProp(i) ? this.flipped(spr) : spr;
     return { y: p.y, x: p.x, img, sx: 0, w: img.width, h: img.height, ox: img.ox, oy: img.oy };
   }
 
@@ -507,7 +574,7 @@ export class CharlieScene extends MiniScene {
     }
     if (v) { this.camTo = null; this.cam += v * dt * 0.28; }
     if (this.camTo != null) {
-      this.cam += (this.camTo - this.cam) * Math.min(1, dt * 0.006);
+      this.cam += (this.camTo - this.cam) * (1 - Math.exp(-dt * 0.006)); // même glissé à 30 ou 144 images/s
       if (Math.abs(this.camTo - this.cam) < 0.5) { this.cam = this.camTo; this.camTo = null; }
     }
     this.cam = clamp(this.cam, 0, WW - W);
@@ -515,7 +582,8 @@ export class CharlieScene extends MiniScene {
 
   // ---------------------------------------------------------- rendu
   render(out) {
-    const T = town();
+    const fair = this.fair;
+    const T = town(fair);
     const cx = Math.round(this.cam);
     const amb = this.amb, now = this.now;
     out.drawImage(skyFor(amb.env), -cx, 0);
@@ -524,10 +592,13 @@ export class CharlieScene extends MiniScene {
     const ctx = amb.begin(out, amb.env.tint && S.mix(amb.env.tint, '#ffffff', 0.4));
     ctx.drawImage(T.bg, -cx, 0);
     for (const b of TOWN) {
-      const sr = signRect(b);
+      const sign = (fair && FAIR_SIGNS[b.sign]) || b.sign;
+      const sr = signRect(b, sign);
       if (sr.x + sr.w < cx || sr.x > cx + W) continue;
-      canvasText(ctx, b.sign, sr.x + sr.w / 2 - cx, sr.y + 1, { size: 8, color: '#3a2214', shadow: '#c8b07c' });
+      canvasText(ctx, sign, sr.x + sr.w / 2 - cx, sr.y + 1, { size: 8, color: '#3a2214', shadow: '#c8b07c' });
     }
+    const B = FAIR_BANNER;
+    if (fair && B.x + B.w > cx && B.x < cx + W) canvasText(ctx, fair, B.x + B.w / 2 - cx, B.y + 3, { size: 8, color: '#9a2a1c', shadow: '' });
     const c = this.cur, t = this.t;
     const crowd = c && this.world && (t >= c.at || c.result);
     if (crowd) {

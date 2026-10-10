@@ -117,6 +117,36 @@ function baseMap(w) {
   return c;
 }
 
+// Le radar au pixel près, sans arc ni clip (qui crénèlent les bords) : un test de distance entier sur le centre
+// de chaque pixel. Le carré de travail fait RADAR.w de côté, son centre tombe entre quatre pixels.
+// q = (2·distance)² au centre du pixel (px, py), autour du point (c, c)
+const dist4 = (px, py, c) => (2 * px + 1 - 2 * c) ** 2 + (2 * py + 1 - 2 * c) ** 2;
+let radarMask = null, radarFrame = null, radarWork = null;
+// le disque plein (masque du contenu) : rayon RADAR.r
+function maskOf() {
+  if (radarMask) return radarMask;
+  const { w, r } = RADAR, h = w / 2;
+  radarMask = makeCanvas(w, w);
+  const g = radarMask.getContext('2d');
+  g.fillStyle = '#000';
+  for (let y = 0; y < w; y++) for (let x = 0; x < w; x++) if (dist4(x, y, h) <= 4 * r * r) g.fillRect(x, y, 1, 1);
+  return radarMask;
+}
+// l'anneau : un liseré doré d'un pixel (r .. r+1) cerné de sombre (r+1 .. r+2) ; il déborde de 2 px autour du carré
+function frameOf() {
+  if (radarFrame) return radarFrame;
+  const { w, r } = RADAR, s = w + 4, h = s / 2;
+  radarFrame = makeCanvas(s, s);
+  const g = radarFrame.getContext('2d');
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+    const q = dist4(x, y, h);
+    if (q <= 4 * r * r || q > 4 * (r + 2) ** 2) continue;
+    g.fillStyle = q <= 4 * (r + 1) ** 2 ? '#b8803a' : '#2a170c';
+    g.fillRect(x, y, 1, 1);
+  }
+  return radarFrame;
+}
+
 export class FpsMap {
   constructor(world) {
     this.w = world;
@@ -131,30 +161,24 @@ export class FpsMap {
 
   // Radar rond, nord en haut, copié pixel pour pixel autour du joueur.
   drawRadar(ctx, me, marks, now) {
-    const { x: rx, y: ry, w: rw, r } = RADAR;
+    const { x: rx, y: ry, w: rw } = RADAR;
     const cx = rx + rw / 2, cy = ry + rw / 2;
     const ox = Math.round(me.x * K) - cx, oy = Math.round(me.y * K) - cy; // décalage carte -> écran
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.fillStyle = '#1a0f0a';
-    ctx.fill();
-    ctx.clip();
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(this.base, ox + rx, oy + ry, rw, rw, rx, ry, rw, rw);
-    for (const m of marks) this.mark(ctx, m.x * K - ox, m.y * K - oy, m, now);
-    this.arrow(ctx, cx, cy, me.a);
-    ctx.restore();
-    // l'anneau, et le N en haut
-    ctx.save();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#2a170c';
-    ctx.beginPath(); ctx.arc(cx, cy, r + 1, 0, Math.PI * 2); ctx.stroke();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = '#b8803a';
-    ctx.beginPath(); ctx.arc(cx, cy, r + 0.5, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
+    // le contenu est dessiné dans un petit carré de travail, puis découpé par le disque (destination-in)
+    const wk = radarWork || (radarWork = makeCanvas(rw, rw));
+    const g = wk.getContext('2d');
+    g.globalCompositeOperation = 'source-over';
+    g.fillStyle = '#1a0f0a';
+    g.fillRect(0, 0, rw, rw);
+    g.drawImage(this.base, ox + rx, oy + ry, rw, rw, 0, 0, rw, rw);
+    for (const m of marks) this.mark(g, m.x * K - ox - rx, m.y * K - oy - ry, m, now);
+    this.arrow(g, cx - rx, cy - ry, me.a);
+    g.globalCompositeOperation = 'destination-in';
+    g.drawImage(maskOf(), 0, 0);
+    g.globalCompositeOperation = 'source-over';
+    ctx.drawImage(wk, rx, ry);
+    // l'anneau (dessiné une fois), et le N en haut
+    ctx.drawImage(frameOf(), cx - rw / 2 - 2, cy - rw / 2 - 2);
     ctx.fillStyle = '#2a170c';
     ctx.fillRect(cx - 4, ry - 3, 9, 8);
     canvasText(ctx, 'N', cx + 0.5, ry - 3, { color: '#f8d070' });
@@ -195,19 +219,23 @@ export class FpsMap {
   arrow(ctx, x, y, a, big = false) {
     const L = big ? 6 : 5, B = big ? 3 : 2.5;
     const dx = Math.cos(a), dy = Math.sin(a);
-    const P = [[x + dx * L, y + dy * L], [x - dx * B - dy * B, y - dy * B + dx * B], [x - dx * B + dy * B, y - dy * B - dx * B]];
-    const inside = (px, py) => {
-      const s1 = (P[1][0] - P[0][0]) * (py - P[0][1]) - (P[1][1] - P[0][1]) * (px - P[0][0]);
-      const s2 = (P[2][0] - P[1][0]) * (py - P[1][1]) - (P[2][1] - P[1][1]) * (px - P[1][0]);
-      const s3 = (P[0][0] - P[2][0]) * (py - P[2][1]) - (P[0][1] - P[2][1]) * (px - P[2][0]);
-      return (s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0);
-    };
-    const pts = [];
-    for (let py = Math.floor(y) - 6; py <= Math.floor(y) + 6; py++) for (let px = Math.floor(x) - 6; px <= Math.floor(x) + 6; px++) if (inside(px + 0.5, py + 0.5)) pts.push([px, py]);
-    ctx.fillStyle = '#1a0f0a';
-    for (const [px, py] of pts) ctx.fillRect(px - 1, py - 1, 3, 3);
-    ctx.fillStyle = '#fdf6e0';
-    for (const [px, py] of pts) ctx.fillRect(px, py, 1, 1);
+    // les trois sommets, en variables (pas de tableau à chaque image)
+    const x0 = x + dx * L, y0 = y + dy * L;
+    const x1 = x - dx * B - dy * B, y1 = y - dy * B + dx * B;
+    const x2 = x - dx * B + dy * B, y2 = y - dy * B - dx * B;
+    const fx = Math.floor(x), fy = Math.floor(y);
+    // deux passes sur les pixels dont le centre est dans le triangle : le contour sombre, puis le blanc
+    for (let pass = 0; pass < 2; pass++) {
+      ctx.fillStyle = pass ? '#fdf6e0' : '#1a0f0a';
+      for (let py = fy - 6; py <= fy + 6; py++) for (let px = fx - 6; px <= fx + 6; px++) {
+        const qx = px + 0.5, qy = py + 0.5;
+        const s1 = (x1 - x0) * (qy - y0) - (y1 - y0) * (qx - x0);
+        const s2 = (x2 - x1) * (qy - y1) - (y2 - y1) * (qx - x1);
+        const s3 = (x0 - x2) * (qy - y2) - (y0 - y2) * (qx - x2);
+        if (!((s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0))) continue;
+        if (pass) ctx.fillRect(px, py, 1, 1); else ctx.fillRect(px - 1, py - 1, 3, 3);
+      }
+    }
     ctx.fillStyle = '#f0705a'; // la pointe
     ctx.fillRect(Math.round(x + dx * (L - 1)) , Math.round(y + dy * (L - 1)), 1, 1);
   }

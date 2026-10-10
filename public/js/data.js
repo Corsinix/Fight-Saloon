@@ -17,6 +17,7 @@ export const CHAR_PARTS = [
     ['none', 'Aucun'], ['cowboy', 'Stetson'], ['sombrero', 'Sombrero'], ['bowler', 'Melon'],
     ['tophat', 'Haut-de-forme'], ['gambler', 'Plat de joueur'], ['bandana', 'Bandana'], ['coonskin', 'Toque de trappeur'],
     ['feather', 'Stetson à plume'], ['straw', 'Chapeau de paille'], ['cavalry', 'Chapeau de cavalerie'], ['kepi', 'Képi'],
+    ['horns', 'Cornes de bison'],
   ] },
   { key: 'hair', label: 'Cheveux', options: [
     ['bald', 'Chauve'], ['short', 'Courts'], ['long', 'Longs'], ['ponytail', 'Queue de cheval'],
@@ -47,7 +48,7 @@ export const CHAR_PARTS = [
   { key: 'outfit', label: 'Tenue', options: [
     ['shirt', 'Chemise'], ['vest', 'Gilet'], ['poncho', 'Poncho'], ['duster', 'Cache-poussière'], ['sheriff', 'Étoile de shérif'],
     ['plaid', 'Chemise à carreaux'], ['suit', 'Costume'], ['overalls', 'Salopette'], ['fringe', 'Veste à franges'],
-    ['bandolier', 'Cartouchière'],
+    ['bandolier', 'Cartouchière'], ['fur', 'Peau de bête'],
   ] },
   { key: 'extra', label: 'Détail', options: [
     ['none', 'Aucun'], ['scarf', 'Foulard'], ['bolo', 'Cravate-ficelle'], ['earring', "Boucle d'oreille"],

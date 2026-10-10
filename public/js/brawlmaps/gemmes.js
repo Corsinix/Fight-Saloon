@@ -288,4 +288,32 @@ export default [
       '.......*..#......',
     ],
   },
+  // ---- mode histoire (story : jamais tirée au hasard ; épisode « salines-gemmes ») : le trésor de guerre d'El Diablo
+  // dans les Salines, sel blanc, mares de saumure, chariots du trésor (marks : brawlart.js markSprite)
+  {
+    id: 'salines-tresor', env: 'salines', name: 'LE TRÉSOR DU DIABLE', story: true,
+    marks: [{ k: 'wagon', x: 7, y: 3, w: 3, h: 1 }, { k: 'wagon', x: 23, y: 15, w: 3, h: 1, flip: true },
+      { k: 'wagon', x: 5, y: 10, w: 3, h: 1 }, { k: 'wagon', x: 25, y: 8, w: 3, h: 1, flip: true }],
+    rows: [
+      '.........##......',
+      '..*......#....**.',
+      '.**...........**.',
+      '...S...###.......',
+      '.........x.......',
+      '..##.......~~~...',
+      '..#..**....~~~...',
+      '.....**..........',
+      '..,,,,,,,,,.##...',
+      '.S,..........#...',
+      '..,..###.........',
+      '..,......,,,.....',
+      '..#..........###.',
+      '..##.**..........',
+      '.....**..~~~.....',
+      '..S......~~~.....',
+      '.**.......x......',
+      '..*......##..**..',
+      '.........#...**..',
+    ],
+  },
 ];

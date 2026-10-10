@@ -5,6 +5,7 @@
 import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
+import { textW } from './uikit.js';
 import { SKIN, HAIR_COLORS, CLOTH_COLORS, hatColorOf, beardHasMustache } from './data.js';
 import { MiniScene, ring, pixelSprite } from './miniscene.js';
 import { skyDeco } from './env.js';
@@ -20,6 +21,7 @@ const GATE_L = FORT.gateX - FORT.gateW / 2, GATE_R = FORT.gateX + FORT.gateW / 2
 const GATE_TOP = FORT.wallY - 34;
 const OUT = S.OUT;
 const MAX_PARTS = 280;
+const BAR_X = Math.round(FORT.gateX - 4 - FORT.gateHp * 2); // jauge de la porte (HUD), sous le drapeau : segments de 4 px
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 // trous dans la porte, un par planche arrachée
@@ -67,17 +69,19 @@ function gunman(r, back, pose, f = 0) {
       R(10, -2, 6, 2, r.hatC); // chapeau tombé
       return;
     }
-    const s = pose === 'crouch' ? 5 : 0;
-    if (s) {
+    // s : décalage du haut du corps (baissé : +5 ; en marche, il monte d'1 px quand une jambe passe)
+    const s = pose === 'crouch' ? 5 : pose === 'walk' && f % 2 ? -1 : 0;
+    if (s > 0) {
       R(-5, -5, 4, 3, pants); R(1, -5, 4, 3, pants); R(-5, -2, 4, 2, boot); R(1, -2, 4, 2, boot);
     } else {
-      const lu = pose === 'walk' && f === 1 ? 1 : 0, ru = pose === 'walk' && f === 3 ? 1 : 0;
-      R(-4, -10, 3, 7 - lu, pants); R(-4, -3 - lu, 3, 3, boot);
-      R(1, -10, 3, 7 - ru, pants); R(1, -3 - ru, 3, 3, boot);
+      // la jambe qui passe décolle sa botte de 2 px, l'autre reste plantée (et s'allonge quand le buste monte)
+      const lu = pose === 'walk' && f === 1 ? 2 : 0, ru = pose === 'walk' && f === 3 ? 2 : 0;
+      R(-4, -10 + s, 3, 7 - s - lu, pants); R(-4, -3 - lu, 3, 3, boot);
+      R(1, -10 + s, 3, 7 - s - ru, pants); R(1, -3 - ru, 3, 3, boot);
     }
     R(-5, -18 + s, 10, 7, cloth);
     R(-5, -11 + s, 10, 1, boot);
-    if (back) R(-5, -18 + s, 1, 7, dark);
+    if (back) R(4, -18 + s, 1, 7, dark); // ombre à droite : la lumière vient d'en haut à gauche
     else R(-1, -11 + s, 2, 1, '#e0b040');
     // bras
     const swing = pose === 'walk' ? [0, 1, 0, -1][f] : 0;
@@ -88,7 +92,7 @@ function gunman(r, back, pose, f = 0) {
       R(-6, -17 + s, 3, 3, cloth); R(3, -17 + s, 3, 3, cloth); R(-3, -15 + s, 6, 2, skin); R(-1, -16 + s, 2, 3, iron);
     } else if (pose === 'throw') {
       R(5, -18 + s, 2, 6, cloth); R(5, -12 + s, 2, 2, skin);
-      R(-7, -25 + s, 2, 7, cloth); R(-7, -27 + s, 2, 2, skin); R(-7, -31 + s, 2, 4, '#c83828');
+      R(-7, -25 + s, 2, 7, cloth); R(-7, -27 + s, 2, 2, skin); // main vide : la dynamite est déjà en vol (drawDyn)
     } else {
       R(-7, -18 + s + swing, 2, 6, cloth); R(-7, -12 + s + swing, 2, 2, skin);
       R(5, -18 + s - swing, 2, 6, cloth); R(5, -12 + s - swing, 2, 2, skin); R(6, -10 + s - swing, 1, 2, iron);
@@ -153,7 +157,11 @@ const COVER_DRAW = {
     R(-21, -16, 40, 8, w); R(-21, -16, 40, 1, '#a87040'); R(-21, -9, 40, 1, d);
     for (const x of [-12, 0, 12]) R(x, -15, 1, 6, d);
     R(-19, -22, 34, 6, '#e8dcc0'); R(-17, -23, 30, 1, '#e8dcc0'); R(-19, -17, 34, 1, '#c8b898'); R(-4, -22, 5, 3, '#c8b898'); // bâche
-    for (const x of [-15, 11]) { R(x - 5, -8, 10, 8, d); R(x - 4, -7, 8, 6, '#c8a070'); R(x - 4, -4, 8, 1, d); R(x, -7, 1, 6, d); R(x - 1, -5, 2, 2, d); }
+    for (const x of [-15, 11]) { // roues : jante arrondie, quatre rayons, moyeu
+      R(x - 3, -8, 6, 8, d); R(x - 4, -7, 8, 6, d);
+      R(x - 2, -7, 4, 6, '#c8a070'); R(x - 3, -6, 6, 4, '#c8a070');
+      R(x - 1, -7, 2, 6, d); R(x - 3, -5, 6, 2, d); R(x - 1, -5, 2, 2, '#8a5a30');
+    }
     R(19, -12, 6, 1, d);
   },
 };
@@ -165,7 +173,7 @@ const coverSprite = (kind) => cached(`c${kind}`, () => {
 const rubbleSprite = (kind) => cached(`r${kind}`, () => {
   const [w] = COVERS[kind];
   const col = kind === 'hay' ? '#c8a848' : kind === 'cactus' ? '#3e6a30' : '#7a5030';
-  return pixelSprite(w + 8, 10, Math.ceil(w / 2) + 4, 7, (R) => {
+  return pixelSprite(w + 12, 10, Math.ceil(w / 2) + 6, 7, (R) => { // assez large pour que le contour ne soit pas rogné
     for (let k = 0; k < Math.round(w / 4); k++) {
       const x = Math.round(-w / 2 + ((k * 37) % w)), y = -2 - ((k * 3) % 3);
       R(x, y, 3 + (k % 3), 1, k % 2 ? col : S.shade(col, -0.3));
@@ -178,9 +186,19 @@ const rubbleSprite = (kind) => cached(`r${kind}`, () => {
 const BONUS_DRAW = {
   keg(R) { R(-4, -5, 8, 10, '#6a4020'); R(-4, -3, 8, 1, '#2a2622'); R(-4, 2, 8, 1, '#2a2622'); R(-2, -1, 4, 2, '#f0d050'); R(-1, -7, 1, 2, '#f0f0d0'); },
   whisky(R) { R(-3, -2, 6, 7, '#c87828'); R(-3, 0, 6, 2, '#f4e4b8'); R(-1, -6, 2, 4, '#7a4a20'); R(-1, -7, 2, 1, '#2a1a10'); R(-2, -1, 1, 5, '#e8a050'); },
-  rifle(R) { R(-6, -1, 12, 2, '#4a4440'); R(-6, 1, 4, 3, '#8a5a30'); R(2, -1, 5, 1, '#8a8478'); R(-2, 1, 2, 2, '#4a4440'); },
+  // carabine couchée : crosse, boîte de culasse et levier, long canon (elle ressemblait à un revolver)
+  rifle(R) {
+    R(-8, -1, 5, 3, '#8a5a30'); R(-8, 2, 2, 1, '#8a5a30'); R(-8, -1, 5, 1, '#a87040');
+    R(-3, -1, 4, 2, '#4a4440'); R(-2, 1, 3, 1, '#4a4440'); R(-1, 2, 1, 1, '#4a4440');
+    R(1, -1, 7, 1, '#8a8478'); R(1, 0, 4, 1, '#8a5a30');
+  },
   star(R) { R(-1, -5, 2, 10, '#f0c040'); R(-5, -1, 10, 2, '#f0c040'); R(-3, -3, 6, 6, '#f0c040'); R(-1, -1, 2, 2, '#fff6c0'); },
-  spurs(R) { R(-4, -1, 6, 2, '#a8a49c'); R(2, -3, 1, 6, '#d8d4cc'); R(1, -2, 3, 4, '#d8d4cc'); R(2, -1, 1, 2, '#6a6458'); },
+  // éperon de profil : arceau du talon, tige, molette étoilée
+  spurs(R) {
+    R(-6, -3, 2, 5, '#a8a49c'); R(-4, 1, 5, 2, '#a8a49c'); R(-6, -3, 1, 4, '#d8d4cc');
+    R(1, 0, 2, 1, '#a8a49c');
+    R(4, -3, 1, 7, '#d8d4cc'); R(2, 0, 5, 1, '#d8d4cc'); R(3, -1, 3, 3, '#d8d4cc'); R(4, 0, 1, 1, '#6a6458');
+  },
   dynpack(R) { for (const x of [-4, -1, 2]) { R(x, -3, 2, 7, '#c83828'); R(x, -3, 2, 1, '#e86848'); } R(-3, 0, 6, 1, '#6a4020'); R(0, -5, 1, 2, '#f0f0d0'); },
 };
 const bonusIcon = (kind) => cached(`b${kind}`, () => pixelSprite(18, 18, 9, 9, BONUS_DRAW[kind]));
@@ -333,15 +351,29 @@ function drawField(R, M, world) {
 function drawWall(P, M) {
   const adobe = M.fort === 'adobe';
   const plaster = '#d8b888', plasterL = '#ecd0a4', plasterD = '#b8966a';
+  // escaliers qui montent au porche (fortgame.js) : colonnes où la crête est entre les pieux et le parapet
+  const stairs = [];
+  for (let x = 0; x < W; x++) if (wallTop(x) > PARA_TOP && wallTop(x) < STAKE_TOP) stairs.push(x);
   if (adobe) {
     for (const [x0, x1] of [[30, GATE_L - 12], [GATE_R + 12, W - 30]]) {
       P(x0, STAKE_TOP - 1, x1 - x0, FORT.wallY - STAKE_TOP + 1, OUT);
       P(x0, STAKE_TOP, x1 - x0, FORT.wallY - STAKE_TOP, plaster);
       P(x0, STAKE_TOP, x1 - x0, 1, plasterL);
       P(x0, FORT.wallY - 4, x1 - x0, 4, plasterD);
-      for (let x = x0 + 2; x < x1 - 6; x += 12) { P(x - 1, STAKE_TOP - 6, 9, 6, OUT); P(x, STAKE_TOP - 5, 7, 5, plaster); P(x, STAKE_TOP - 5, 7, 1, plasterL); }
+      for (let x = x0 + 2; x < x1 - 6; x += 12) {
+        if (wallTop(x - 1) < STAKE_TOP || wallTop(x + 7) < STAKE_TOP) continue; // pas de créneau sur la rampe
+        P(x - 1, STAKE_TOP - 6, 9, 6, OUT); P(x, STAKE_TOP - 5, 7, 5, plaster); P(x, STAKE_TOP - 5, 7, 1, plasterL);
+      }
       for (let x = x0 + 8; x < x1 - 4; x += 24) P(x, STAKE_TOP + 5, 4, 2, '#6a4020');
       for (let x = x0 + 15; x < x1 - 10; x += 37) { P(x, STAKE_TOP + 9, 1, 4, plasterD); P(x + 1, STAKE_TOP + 12, 3, 1, plasterD); }
+    }
+    // mur de l'escalier : chaperon en pente, liseré clair, ombre portée sous la crête du côté de la porte
+    for (const x of stairs) {
+      const top = wallTop(x), side = x < FORT.gateX ? 1 : -1;
+      P(x, top - 1, 1, 1, OUT);
+      P(x, top, 1, STAKE_TOP + 1 - top, plaster);
+      P(x, top, 1, 1, plasterL);
+      if (wallTop(x + side) < top) P(x, top + 1, 1, 2, plasterD);
     }
   } else {
     for (let x = 30; x < W - 30; x += 6) {
@@ -352,6 +384,13 @@ function drawWall(P, M) {
       P(x, top, 5, h, '#8a5a30'); P(x, top, 1, h, '#a87040'); P(x + 4, top, 1, h, '#5a3818');
       P(x + 1, top - 1, 3, 1, '#8a5a30'); P(x + 2, top - 2, 1, 1, '#a87040');
       P(x + 1, top + 9 + (x % 4), 2, 1, '#6a4020');
+    }
+    // escalier : pieux de plus en plus hauts (taillés en biseau), sous un garde-corps en pente
+    const STAKE_COL = ['#a87040', '#8a5a30', '#8a5a30', '#8a5a30', '#5a3818', '#3a2414'];
+    for (const x of stairs) {
+      const top = wallTop(x);
+      P(x, top, 1, FORT.wallY - top, STAKE_COL[x % 6]);
+      P(x, top - 3, 1, 1, OUT); P(x, top - 2, 1, 1, '#a87040'); P(x, top - 1, 1, 1, '#6a4020'); P(x, top, 1, 1, OUT);
     }
     for (const y of [STAKE_TOP + 6, FORT.wallY - 7]) {
       P(30, y, GATE_L - 42, 2, '#5a3818'); P(GATE_R + 12, y, W - 42 - GATE_R, 2, '#5a3818');
@@ -400,8 +439,55 @@ function drawWall(P, M) {
   for (const x of [GATE_L - 5, GATE_R + 2]) { P(x - 1, GATE_TOP + 4, 5, 7, OUT); P(x, GATE_TOP + 5, 3, 5, '#e0b040'); P(x + 1, GATE_TOP + 6, 1, 3, '#fff6c0'); } // lanternes
 }
 
+// Zone où un défenseur reste visible : tout ce qui est au-dessus de cette ligne. Sur le porche et les escaliers,
+// la crête dessinée (contour du parapet : 1 px au-dessus de wallTop pour l'adobe, 3 px pour les planches et
+// leurs pointes) ; ailleurs, le pied de la palissade (les pieux, dessinés par-dessus, cachent le reste).
+// Tracé en marches d'un pixel (pas d'antialiasing de la découpe), une fois par type de fort.
+const CLIPS = new Map();
+function wallClip(adobe) {
+  let p = CLIPS.get(adobe);
+  if (p) return p;
+  const lip = adobe ? 1 : 3;
+  const line = (x) => (wallTop(x) < STAKE_TOP ? wallTop(x) - lip : FORT.wallY);
+  p = new Path2D();
+  p.moveTo(0, 0);
+  p.lineTo(W, 0);
+  let y = line(W - 1);
+  p.lineTo(W, y);
+  for (let x = W - 1; x > 0; x--) {
+    const ny = line(x - 1);
+    if (ny !== y) { p.lineTo(x, y); p.lineTo(x, ny); y = ny; }
+  }
+  p.lineTo(0, y);
+  p.closePath();
+  CLIPS.set(adobe, p);
+  return p;
+}
+
+// Mode histoire (hooks.story.deco) : le Fort Saint-Jude. Enseigne de bois peinte clouée sur la palissade, à gauche
+// de la porte (le nom, deco.sign, est écrit à chaque image : signText) ; canons qui pointent aux meurtrières des tours
+// (deco.cannons : « il veut les canons du fort »)
+const SIGN = { x: 52, y: 77, w: 104, h: 12 };
+function drawStory(P, deco) {
+  if (deco.sign) {
+    const { x, y, w, h } = SIGN;
+    for (const px of [x + 8, x + w - 10]) { P(px - 1, y - 3, 4, h + 7, OUT); P(px, y - 2, 2, h + 5, '#5a3818'); } // montants
+    P(x - 1, y - 1, w + 2, h + 2, OUT);
+    P(x, y, w, h, '#3a2414'); P(x, y, w, 1, '#6a4428'); P(x, y + h - 1, w, 1, '#24160c');
+    for (let k = 0; k < 4; k++) P(x + 6 + ((k * 29) % (w - 12)), y + 2 + (k % 3) * 3, 7, 1, '#4a2e1a'); // veines du bois
+    for (const [nx, ny] of [[x + 2, y + 2], [x + w - 3, y + 2], [x + 2, y + h - 3], [x + w - 3, y + h - 3]]) P(nx, ny, 1, 1, '#c8b890'); // clous
+    P(x + w - 14, y + h, 6, 3, '#3a2414'); P(x + w - 13, y + h + 3, 3, 1, '#3a2414'); // éclat de bois arraché par une balle
+  }
+  if (deco.cannons) {
+    for (const x0 of [-2, W - 30]) { // la gueule d'un canon dans la meurtrière de chaque tour
+      P(x0 + 13, 44, 6, 3, '#14100c');
+      P(x0 + 14, 44, 4, 3, '#4a4642'); P(x0 + 15, 45, 2, 1, '#14100c'); P(x0 + 14, 44, 4, 1, '#7a7670');
+    }
+  }
+}
+
 const DECORS = new Map();
-function decor(world) {
+function decor(world, deco = null) {
   let D = DECORS.get(world);
   if (D) return D;
   const M = FORT_MAPS[world.map];
@@ -414,6 +500,7 @@ function decor(world) {
   const wall = S.makeCanvas(W, H);
   const w = wall.getContext('2d');
   drawWall((x, y, ww, hh, col) => { w.fillStyle = col; w.fillRect(x, y, ww, hh); }, M);
+  if (deco) drawStory((x, y, ww, hh, col) => { w.fillStyle = col; w.fillRect(x, y, ww, hh); }, deco);
   D = { bg, wall };
   if (DECORS.size > 4) DECORS.clear();
   DECORS.set(world, D);
@@ -475,6 +562,7 @@ export class FortScene extends MiniScene {
     this.pl = this.state.players.map((p) => ({
       x: 0, y: 0, tx: 0, ty: 0, c: 0, hp: p.hp ?? FORT.hp, maxHp: p.maxHp ?? FORT.hp, dead: 0, safe: 0, left: p.left,
       power: null, powerUntil: 0, keg: 0, dynFast: 0, shotAt: -1e9, throwAt: -1e9, hurtAt: -1e9, moving: false,
+      diedAt: -1e9, seenDead: -1e9, // abattu à (chute du défenseur), vu mort pour la dernière fois (réapparition sans glissade)
     }));
     this.my = { ammo: FORT.ammo, reloadUntil: 0, lastShot: -1e9, lastThrow: -1e9, nextDyn: 0, spawnK: 0, wasDead: false, lastEnter: -1e9 };
     this.dyns = new Map();
@@ -484,6 +572,7 @@ export class FortScene extends MiniScene {
     this.wrecked = new Set();
     this.taken = new Set();
     this.pending = new Map(); // caisse -> instant de la demande
+    this.gatePops = new Map(); // lanceur -> son dernier texte de points sur la porte (gatePopup)
     this.gate = FORT.gateHp;
     this.gateDown = 0;
     this.riders = this.state.players.map((p, i) => {
@@ -626,12 +715,14 @@ export class FortScene extends MiniScene {
   }
 
   // Zone touchable d'un joueur (null : à l'abri). La tête : les 8 pixels du haut.
+  // Défenseur : le bas de la zone suit la crête du mur sous le point visé (wall) : sur un escalier, le côté
+  // le plus bas de la pente le découvre davantage, comme à l'image.
   body(i) {
     const q = this.pl[i];
     if (q.c) return null;
     if (fortAttacking(i, this.rh)) return { x0: q.x - 5, x1: q.x + 5, y0: q.y - 27, y1: q.y };
     const f = defFeet(q.x);
-    return { x0: q.x - 6, x1: q.x + 6, y0: f - 31, y1: wallTop(q.x) + 1 };
+    return { x0: q.x - 6, x1: q.x + 6, y0: f - 31, y1: wallTop(q.x) + 1, wall: true };
   }
 
   // L'ennemi visé, s'il n'est pas caché derrière un abri dessiné devant lui
@@ -640,7 +731,7 @@ export class FortScene extends MiniScene {
     for (let i = 0; i < this.n; i++) {
       if (fortTeam(i) === fortTeam(this.me) || this.isDead(i)) continue;
       const b = this.body(i);
-      if (!b || x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) continue;
+      if (!b || x < b.x0 || x > b.x1 || y < b.y0 || y > (b.wall ? wallTop(x) + 1 : b.y1)) continue;
       const d = fortAttacking(i, this.rh) ? this.pl[i].y : FORT.walkY;
       if (d > depth) { depth = d; best = i; head = y < b.y0 + 9; }
     }
@@ -657,7 +748,8 @@ export class FortScene extends MiniScene {
 
   gunPos(i) {
     const q = this.pl[i];
-    return fortAttacking(i, this.rh) ? { x: q.x + 6, y: q.y - 28 } : { x: q.x, y: wallTop(q.x) - 2 };
+    if (!fortAttacking(i, this.rh)) return { x: q.x, y: wallTop(q.x) - 2 };
+    return { x: q.x + 6, y: q.y - 28 + (groundSpeed(this.world, q.x, q.y) < 1 ? 4 : 0) }; // dans l'eau, le tireur est plus bas (drawAttacker)
   }
 
   remoteLive(i, d) {
@@ -698,7 +790,7 @@ export class FortScene extends MiniScene {
           this.wrecked.add(id);
           for (let k = 0; k < 10; k++) this.debris(c.x + (Math.random() - 0.5) * c.w, c.y - c.h / 2, k % 2 ? '#8a5a30' : '#c8a070');
         }
-        if (ev.dmg) this.popup(FORT.gateX, GATE_TOP + 6, `+${ev.pts}`, this.color(ev.by), ev.by === this.me);
+        if (ev.dmg) this.gatePopup(ev.by, ev.pts);
         if (ev.breach) {
           this.popup(W / 2, 108, 'BRÈCHE ! ENTREZ !', '#f8d070', true);
           sfx('good');
@@ -721,6 +813,7 @@ export class FortScene extends MiniScene {
           this.shake = Math.max(this.shake, ev.dyn ? 7 : 4);
         }
         if (ev.kill) {
+          q.diedAt = t;
           this.popup(x, y, ev.by === this.me ? `+${ev.pts}` : 'À TERRE !', this.color(ev.by), ev.by === this.me);
           if (ev.by === this.me) sfx('coin');
           if (!atk) for (let k = 0; k < 6; k++) this.debris(x, wallTop(x) - 6, this.riders[ev.v].hatC);
@@ -771,6 +864,28 @@ export class FortScene extends MiniScene {
   }
 
   // ---------------------------------------------------------- effets
+  // Points d'un lanceur sur la porte : tant que son texte flotte encore, on le cumule (« +60 », « +120 »…)
+  // et on le relance un peu, au lieu d'empiler un « +60 » par bâton (avalanche avec beaucoup de bots).
+  gatePopup(by, pts) {
+    const p = this.gatePops.get(by);
+    if (p && p.t < 750 && this.popups.includes(p)) {
+      const shown = Math.round(p.y - (p.t / 1100) * 18); // hauteur affichée (popY, miniscene.js)
+      p.sum += pts;
+      p.text = `+${p.sum}`; // nouvelle chaîne seulement quand le montant change
+      p.half = Math.ceil(textW(p.text, p.big ? 16 : 8) / 2) + 1;
+      p.x = clamp(FORT.gateX, p.half, W - p.half);
+      // relancé : il rajeunit et redescend de 2 px depuis sa hauteur actuelle, sans monter à plus de 8 px de son départ
+      p.t = 120;
+      p.y = clamp(shown + 2, p.y0 - 8, p.y0) + Math.round((p.t / 1100) * 18);
+      return;
+    }
+    this.popup(FORT.gateX, GATE_TOP + 6, `+${pts}`, this.color(by), by === this.me);
+    const np = this.popups[this.popups.length - 1];
+    np.sum = pts;
+    np.y0 = np.y;
+    this.gatePops.set(by, np);
+  }
+
   tracer(i, x, y, gold = false) {
     const g = this.gunPos(i);
     this.tracers.push({ x0: g.x, y0: g.y, x1: x, y1: y, t: 0, gold });
@@ -855,13 +970,15 @@ export class FortScene extends MiniScene {
     this.pl.forEach((q, i) => {
       if (i === this.me) return;
       const ox = q.x, oy = q.y;
-      if (Math.hypot(q.tx - q.x, q.ty - q.y) > 60) { q.x = q.tx; q.y = q.ty; }
+      if (this.isDead(i)) q.seenDead = t;
+      // de retour au point de départ après une mort : on y saute, sans glisser en marchant depuis le corps
+      if (Math.hypot(q.tx - q.x, q.ty - q.y) > 60 || t - q.seenDead < 500) { q.x = q.tx; q.y = q.ty; }
       else {
         const k = Math.min(1, dt * 0.012);
         q.x += (q.tx - q.x) * k;
         q.y += (q.ty - q.y) * k;
       }
-      q.moving = Math.abs(q.x - ox) + Math.abs(q.y - oy) > 0.04;
+      q.moving = Math.abs(q.x - ox) + Math.abs(q.y - oy) > 0.0025 * dt; // vitesse, pas déplacement par image
       if (q.moving && this.powered(i, 'spurs') && fortAttacking(i, rh) && Math.random() < dt / 40) this.dustAt(q.x, q.y);
     });
     for (const [id, d] of this.dyns) if (t > d.at + 800) this.dyns.delete(id);
@@ -892,7 +1009,8 @@ export class FortScene extends MiniScene {
     out.drawImage(skyFor(amb.env), 0, 0);
     amb.sky(out, now);
     if (!this.world) return;
-    const D = decor(this.world);
+    const deco = this.hooks.story?.deco || null;
+    const D = decor(this.world, deco);
     // tout le reste du décor passe par le calque teinté de l'ambiance
     const ctx = amb.begin(out);
     ctx.drawImage(D.bg, 0, 0);
@@ -900,6 +1018,7 @@ export class FortScene extends MiniScene {
     this.drawFlag(ctx, now);
     for (let i = 0; i < this.n; i++) if (!fortAttacking(i, this.rh)) this.drawDefender(ctx, i, t, now);
     ctx.drawImage(D.wall, 0, 0);
+    if (deco?.sign) canvasText(ctx, deco.sign, SIGN.x + SIGN.w / 2, SIGN.y + 2, { size: 8, color: '#f0dca0', align: 'center' });
     this.drawGate(ctx);
 
     // ombres des dynamites en vol
@@ -927,7 +1046,7 @@ export class FortScene extends MiniScene {
     amb.end(out, now);
     amb.weather(out, now);
     // la nuit : meurtrières des tours et lanternes de la porte allumées
-    if (this.mapInfo.fort === 'adobe') for (const x of [11, W - 17]) amb.window(out, x + 2, 48, 6, 7);
+    if (this.mapInfo.fort === 'adobe') for (const x of [11, W - 17]) amb.window(out, x, 48, 6, 7);
     else for (const x of [11, W - 17]) amb.window(out, x, 44, 6, 3);
     for (const x of [GATE_L - 3, GATE_R + 3]) amb.glow(out, x, GATE_TOP + 8, 16);
 
@@ -1005,10 +1124,21 @@ export class FortScene extends MiniScene {
 
   drawDefender(ctx, i, t, now) {
     const q = this.pl[i];
-    if (q.left || this.isDead(i)) return;
-    const [pose, f] = this.pose(i, t, now);
-    const bob = pose === 'walk' ? (f % 2) : 0;
-    this.drawAt(ctx, gunman(this.riders[i], false, pose === 'walk' ? 'stand' : pose, 0), q.x, this.defY(i) + bob, this.alpha(i, t, now), false);
+    if (q.left) return;
+    // Rogné au mur, colonne par colonne (wallClip) : au ras de la crête sur le porche et les escaliers, au pied
+    // de la palissade ailleurs ; la découpe suit le défenseur sans à-coup quand il monte au parapet.
+    ctx.save();
+    ctx.clip(wallClip(this.mapInfo.fort === 'adobe'));
+    if (this.isDead(i)) {
+      // abattu : il bascule en arrière et disparaît derrière la palissade
+      const k = (t - q.diedAt) / 360;
+      if (k >= 0 && k < 1) this.drawAt(ctx, gunman(this.riders[i], false, 'stand', 0), q.x, this.defY(i) + Math.round(k * k * 30), 1, false);
+    } else {
+      const [pose, f] = this.pose(i, t, now);
+      const bob = pose === 'walk' ? (f % 2) : 0;
+      this.drawAt(ctx, gunman(this.riders[i], false, pose === 'walk' ? 'stand' : pose, 0), q.x, this.defY(i) + bob, this.alpha(i, t, now), false);
+    }
+    ctx.restore();
   }
 
   // halo des bonus actifs (étoile, Winchester, baril)
@@ -1016,7 +1146,7 @@ export class FortScene extends MiniScene {
     const q = this.pl[i];
     if (q.left || this.isDead(i)) return;
     const atk = fortAttacking(i, this.rh);
-    const x = Math.round(q.x), y = atk ? Math.round(q.y) - 14 : defFeet(q.x) - 24;
+    const x = Math.round(q.x), y = atk ? Math.round(q.y) - 14 : this.defY(i) - 24; // baissé, le halo descend avec lui
     if (this.powered(i, 'star')) {
       for (let k = 0; k < 6; k++) {
         const a = now / 180 + (k * Math.PI) / 3;
@@ -1040,14 +1170,19 @@ export class FortScene extends MiniScene {
     for (const g of tags) {
       while (placed.some((p) => Math.abs(p.x - g.x) < 40 && Math.abs(p.y - g.y) < 14)) g.y -= 14;
       g.y = Math.max(2, g.y);
+      // défenseur sur le porche : son étiquette tomberait sur la jauge de la porte (drawHud), qui la masquait ;
+      // on la remonte au-dessus de la jauge, les PV au-dessus du nom
+      const onBar = g.x + 24 > BAR_X - 42 && g.x - 24 < BAR_X + FORT.gateHp * 4 + 2 && g.y < 29 && g.y + 13 > 20;
+      if (onBar) g.y = clamp(g.y, 6, 13);
       placed.push(g);
       const { i, x, y } = g;
       canvasText(ctx, i === this.me ? 'TOI' : this.name(i).slice(0, 9).toUpperCase(), x, y, { size: 8, color: this.color(i) });
       const hp = this.hpOf(i), max = this.pl[i].maxHp;
+      const py = onBar ? y - 5 : y + 9;
       for (let k = 0; k < max; k++) {
         const px = x - max * 2 + k * 4;
-        ctx.fillStyle = OUT; ctx.fillRect(px - 1, y + 9, 5, 4);
-        ctx.fillStyle = k < hp ? (this.safe(i) ? '#f0c040' : '#e8604c') : '#5a4a40'; ctx.fillRect(px, y + 10, 3, 2);
+        ctx.fillStyle = OUT; ctx.fillRect(px - 1, py, 5, 4);
+        ctx.fillStyle = k < hp ? (this.safe(i) ? '#f0c040' : '#e8604c') : '#5a4a40'; ctx.fillRect(px, py + 1, 3, 2);
       }
     }
   }
@@ -1055,6 +1190,10 @@ export class FortScene extends MiniScene {
   drawFlag(ctx, now) {
     const col = TEAM_COLORS[1 - this.rh];
     const x0 = FORT.gateX;
+    // mode histoire (deco.flags : un drapeau par équipe) : le fanion de la cavalerie de Saint-Jude, ou le drapeau noir
+    // d'El Diablo, selon qui défend ; la flamme de la couleur de l'équipe reste sous la pomme du mât
+    const fl = this.hooks.story?.deco?.flags?.[1 - this.rh];
+    if (fl) { this.drawStoryFlag(ctx, now, fl, col); return; }
     ctx.fillStyle = '#5a3818';
     ctx.fillRect(x0, 6, 2, PARA_TOP - 6);
     ctx.fillStyle = '#e0b040';
@@ -1072,6 +1211,41 @@ export class FortScene extends MiniScene {
       if (k === 5 || k === 7) ctx.fillRect(x0 + 2 + k, 12 + dy, 1, 1);
       if (k === 6) ctx.fillRect(x0 + 2 + k, 11 + dy, 1, 3);
     }
+  }
+
+  drawStoryFlag(ctx, now, kind, col) {
+    const x0 = FORT.gateX;
+    const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
+    R(x0, 6, 2, PARA_TOP - 6, '#5a3818'); R(x0, 5, 2, 2, '#e0b040');
+    const diablo = kind === 'diablo', L = diablo ? 22 : 20;
+    for (let k = 0; k < L; k++) {
+      const dy = Math.round(Math.sin(now / 180 - k / 3) * 1.5 * (k / L));
+      // queue d'aronde : les dernières colonnes s'ouvrent en V
+      const cut = diablo ? 0 : Math.max(0, k - (L - 6));
+      const top = 7 + dy, h = 13;
+      const x = x0 + 2 + k;
+      if (diablo) {
+        R(x, top, 1, h, OUT);
+        R(x, top + 1, 1, h - 2, k === 0 || k === L - 1 ? '#9a2a1c' : '#1e1416');
+        R(x, top + 1, 1, 1, '#9a2a1c'); R(x, top + h - 2, 1, 1, '#9a2a1c');
+      } else if (!cut) { // fanion rouge sur blanc
+        R(x, top, 1, h, OUT); R(x, top + 1, 1, 5, '#b8281c'); R(x, top + 6, 1, 6, '#f4ecd8'); R(x, top + 6, 1, 1, '#6a1810');
+      } else { // les deux pointes
+        if (cut < 5) { R(x, top, 1, 7 - cut, OUT); R(x, top + 1, 1, 5 - cut, '#b8281c'); }
+        const b0 = top + 6 + cut;
+        if (b0 < top + h - 1) { R(x, b0 - 1, 1, top + h - b0 + 1, OUT); R(x, b0, 1, top + h - 1 - b0, '#f4ecd8'); }
+      }
+    }
+    const fy = 7 + Math.round(Math.sin(now / 180 - 8 / 3) * 0.6);
+    if (diablo) { // le crâne cornu
+      const bone = '#e8dcc0', sx = x0 + 10;
+      R(sx, fy + 4, 6, 4, bone); R(sx + 1, fy + 8, 4, 1, bone); R(sx - 2, fy + 2, 2, 2, bone); R(sx + 6, fy + 2, 2, 2, bone);
+      R(sx + 1, fy + 5, 1, 1, '#c0392b'); R(sx + 4, fy + 5, 1, 1, '#c0392b');
+    } else { // les étoiles d'or de la cavalerie
+      for (const [sx, sy] of [[6, 2], [10, 1], [14, 2], [8, 4], [12, 4]]) R(x0 + 2 + sx, fy + sy, 1, 1, '#f8d070');
+    }
+    // la flamme de l'équipe qui défend, sous la pomme
+    R(x0 + 2, 21, 7, 3, OUT); R(x0 + 2, 22, 6, 1, col); R(x0 + 8, 22, 2, 1, OUT);
   }
 
   drawGate(ctx) {
@@ -1187,7 +1361,7 @@ export class FortScene extends MiniScene {
       canvasText(ctx, role, x, 13, { align: left ? 'left' : 'right', color: '#fdf6e0' });
     }
     // solidité de la porte, sous le drapeau
-    const segW = 4, bx = Math.round(FORT.gateX - 4 - (FORT.gateHp * segW) / 2);
+    const segW = 4, bx = BAR_X;
     const broken = this.gateBroken();
     R(bx - 2, 22, FORT.gateHp * segW + 3, 6, OUT);
     for (let k = 0; k < FORT.gateHp; k++) R(bx + k * segW, 23, segW - 1, 4, k < this.gate && !broken ? (this.gate <= 3 ? '#f0a050' : '#b8e070') : '#5a4a40');
@@ -1242,11 +1416,7 @@ export class FortScene extends MiniScene {
     const h = fortHalf(t);
     const since = h >= 0 ? t - fortHalfStart(h) : 1e9;
     if (since < 2600 && !this.over) {
-      if (h > 0 && since < 900) {
-        ctx.globalAlpha = 1 - since / 900;
-        canvasText(ctx, this.goText(), W / 2, 90, { size: 24, color: '#f8d070' });
-        ctx.globalAlpha = 1;
-      }
+      if (h > 0) this.drawGo(ctx, since); // nouvelle manche : le même « GO ! » qu'au départ (miniscene.js)
       const sub = this.attacking ? 'FAIS SAUTER LA PORTE À LA DYNAMITE !' : 'ABATS-LES AVANT QU\'ILS N\'ARRIVENT !';
       this.band(ctx, 117, 13);
       canvasText(ctx, sub, W / 2, 120, { color: '#fdf6e0' });

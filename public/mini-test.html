@@ -24,7 +24,8 @@ import { CourseScene } from './js/course.js';
 import { RtsScene } from './js/rts.js';
 import { BagarreScene } from './js/bagarre.js';
 import { BrawlScene } from './js/brawl.js';
-const SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene, bagarre: BagarreScene, melee: BrawlScene };
+import { PisteScene } from './js/piste.js';
+const SCENES = { shooter: ShooterScene, lasso: LassoScene, duel: DuelScene, charlie: CharlieScene, fort: FortScene, wagon: WagonScene, pinte: PinteScene, mine: MineScene, course: CourseScene, rts: RtsScene, bagarre: BagarreScene, melee: BrawlScene, piste: PisteScene };
 window.onerror = (m, s, l, c, e) => { (window.errs ||= []).push(String(e?.stack || m)); };
 const q = new URLSearchParams(location.search);
 const game = SCENES[q.get('game')] ? q.get('game') : 'lasso';
@@ -54,6 +55,8 @@ scene = new SCENES[game](cv, {
   live: (d) => g.onLive?.('me', d),
   onState: showHud,
   onEnd(e) { window.ended = e; showHud(); },
+  // &story={"title":"…","env":"nuit","deco":{…}} : un épisode du mode histoire (titres, ambiance, décor imposés)
+  story: q.has('story') ? JSON.parse(q.get('story')) : null,
 });
 deliver(g.start());
 setInterval(() => { try { deliver(g.tick()); for (const o of g.liveOut.splice(0)) scene.onLive(o.key, o.d); } catch (err) { (window.errs ||= []).push(String(err.stack)); } }, 100);

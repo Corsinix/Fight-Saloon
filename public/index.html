@@ -80,6 +80,7 @@
           <div class="poster" id="menu-poster"></div>
           <div class="panel menu-actions">
             <h2 id="menu-hello">Salut, étranger.</h2>
+            <button class="btn big story-btn" id="btn-story" type="button"><b>Mode histoire</b><small>Le Filon du Diable · seul ou en coop</small></button>
             <h3 class="menu-sec">À plusieurs</h3>
             <div class="multi-row">
               <button class="btn big" id="btn-create">Créer une table</button>
@@ -105,6 +106,20 @@
             <h3>Ton palmarès</h3>
             <div class="stats" id="menu-stats"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- Mode histoire : les sauvegardes (dans ce navigateur) -->
+      <section id="scr-story" class="screen hidden">
+        <div class="story-menu">
+          <div class="panel story-head">
+            <h2>Le Filon du Diable</h2>
+            <p class="story-pitch">1878. Sous la mine du Vieux Joe dort le plus gros filon d’or de l’Ouest. El Diablo le veut. Réunis les trois croix avant lui, rallie des alliés et affronte-le dans son repaire. Seul, ou à plusieurs autour d’une table.</p>
+            <p class="story-meta" id="story-meta"></p>
+            <p class="hint">L’aventure est sauvegardée dans ce navigateur, à chaque étape. À plusieurs, c’est la sauvegarde de l’hôte qui avance.</p>
+            <button class="btn alt" id="btn-story-back" type="button">Retour au menu</button>
+          </div>
+          <div class="story-slots" id="story-slots"></div>
         </div>
       </section>
 
@@ -152,6 +167,8 @@
               </div>
               <div class="solo-dots" id="modes-dots"></div>
               <div class="seg variants hidden" id="variants" role="group" aria-label="Variante du jeu"></div>
+              <!-- format « Histoire » : l'aventure choisie (l'hôte choisit parmi ses sauvegardes) -->
+              <div class="lobby-story hidden" id="lobby-story"></div>
             </div>
             <div class="lobby-buttons">
               <button class="btn alt" id="btn-leave">Quitter la table</button>

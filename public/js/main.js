@@ -20,6 +20,11 @@ let user = null;
 let lobby = null;
 let scene = null; // roulette
 let mini = null; // mini-jeu en cours (fusillade, lasso, duel, Charlie)
+let story = null; // écran du mode histoire (story/scene.js), entre deux épisodes
+let storyView = null; // dernière vue de l'aventure envoyée par l'hôte
+let storyBack = false; // aventure solo : en la quittant, retour à l'écran des sauvegardes
+// Mode histoire : chargé à la demande (écran, sauvegardes, musiques inédites)
+const storyMod = () => import('./story/client.js');
 // Scènes des mini-jeux, chargées à la demande (le démarrage n'attend que l'accueil et la roulette).
 const MINI_SCENES = {
   shooter: () => import('./shooter.js').then((m) => m.ShooterScene),
@@ -36,6 +41,7 @@ const MINI_SCENES = {
   fpsdm: () => import('./fps.js').then((m) => m.FpsDmScene),
   bagarre: () => import('./bagarre.js').then((m) => m.BagarreScene),
   melee: () => import('./brawl.js').then((m) => m.BrawlScene),
+  piste: () => import('./piste.js').then((m) => m.PisteScene),
 };
 const sceneCls = {}; // jeu -> classe de sa scène, une fois chargée
 const sceneLoads = {}; // jeu -> chargement en cours
@@ -450,6 +456,7 @@ const SOLO = {
   course: ['Course', '3 bots'], rts: ['Conquête', '3 bots'], fps: ['Règlement', '3 bots'], fpsdm: ['Mort ou vif', '3 bots'],
   bagarre: ['Bagarre', '5 cogneurs'],
   melee: ['La mêlée', '5 bots'],
+  piste: ['La piste', 'ta bande'],
 };
 // Pages de 2 × 3 jeux, parcourues avec les flèches ; les cases vides annoncent les prochains jeux.
 const SOLO_PAGE = 6;
@@ -547,6 +554,7 @@ net.on('lobby', ({ lobby: l }) => {
   else if (l.inGame) {
     if (screen !== 'game' || !$('gameover').classList.contains('hidden')) enterGame(l.game);
   } else if (screen === 'game') updateGameOver();
+  else if (l.story) { /* aventure en cours : son écran s'ouvre avec le message 'story' */ }
   else if (!l.solo && screen !== 'editor') showLobby(); // chez le tailleur : la table attend qu'on revienne
 });
 
@@ -556,22 +564,165 @@ function closeScenes() {
   pad.detach();
   if (scene) { scene.destroy(); scene = null; }
   if (mini) { mini.destroy(); mini = null; }
+  if (story) { story.destroy(); story = null; }
 }
 
 net.on('left', () => {
   lobby = null;
   curMatch = null;
   watching = false;
+  storyView = null;
   setUrl(null);
   closeScenes();
-  showMenu();
+  if (storyBack) { storyBack = false; showStoryMenu(); } else showMenu();
 });
+
+// ------------------------------------------------------------ mode histoire
+// L'hôte envoie où en est l'aventure (story/host.js) : entre deux épisodes, l'écran de l'histoire remplace le jeu.
+net.on('story', async ({ s }) => {
+  storyView = s;
+  const mod = await storyMod();
+  if (!lobby || storyView !== s) return; // table quittée, ou une vue plus récente est arrivée pendant le chargement
+  // pendant un épisode, le mini-jeu garde l'écran ; sa fin (carton de résultat) ramène à l'histoire
+  if (s.wait?.kind === 'play' && (mini || scene)) return;
+  if (!story) {
+    closeScenes();
+    curMatch = null;
+    watching = false;
+    show('game');
+    $('bottombar').classList.add('hidden');
+    $('gameover').classList.add('hidden');
+    $('watch-bar').classList.add('hidden');
+    $('hud').classList.add('hidden'); // l'histoire dessine son propre bandeau (acte, dollars, alliés)
+    $('hud').innerHTML = '';
+    $('progress-fill').style.width = '0';
+    pad.detach();
+    story = new mod.StoryScene($('game'), {
+      me: myKey(),
+      send: (m) => net.send(m),
+      music: (name) => setMusic(name),
+      players: () => lobby?.players || [],
+      isHost: () => !!lobby && isHostOf(lobby),
+      menu: storyMenu,
+      quit: () => net.send({ t: 'storyQuit' }),
+    });
+  }
+  story.update(s);
+});
+
+// l'hôte a quitté l'aventure : retour à la table
+net.on('storyEnd', () => {
+  storyView = null;
+  closeScenes();
+  if (lobby && !lobby.solo) showLobby();
+});
+
+// Menu de l'aventure (bouton ≡, Échap) : quitter, pour l'hôte la sauvegarde est faite à chaque étape
+async function storyMenu() {
+  if (!lobby) return;
+  const host = isHostOf(lobby);
+  if (lobby.solo) {
+    if (!(await askConfirm({ title: 'Faire une pause ?', text: 'L’aventure est sauvegardée à chaque étape : tu la reprendras où tu en étais.', yes: 'Quitter l’aventure', no: 'Continuer', icon: 'hat' }))) return;
+    storyBack = true;
+    return net.send({ t: 'leaveLobby' });
+  }
+  if (host) {
+    if (!(await askConfirm({ title: 'Quitter l’aventure ?', text: 'Tout le monde revient à la table. L’aventure est sauvegardée dans ton navigateur : tu pourras la reprendre.', yes: 'Retour à la table', no: 'Continuer', icon: 'hat' }))) return;
+    return net.send({ t: 'storyQuit' });
+  }
+  if (await askConfirm({ title: 'Quitter la table ?', text: 'L’aventure continue sans toi. C’est la sauvegarde de l’hôte qui avance.', yes: 'Quitter la table', no: 'Rester', icon: 'close', danger: true })) leaveTable();
+}
+
+// Écran des sauvegardes : 5 emplacements en affiches, de quoi jouer seul ou ouvrir une table
+const fmtPlay = (ms) => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`; };
+async function showStoryMenu() {
+  show('story');
+  setMusic('menu');
+  const mod = await storyMod();
+  if (screen !== 'story') return;
+  renderStorySlots(mod);
+}
+
+function renderStorySlots(mod) {
+  const { SAVE, DATA } = mod;
+  const slots = SAVE.listSlots(DATA);
+  const endings = SAVE.readMeta().endings;
+  const allEnd = Object.keys(DATA.campaign.endings);
+  $('story-meta').innerHTML = `Fins découvertes : <b>${endings.length}/${allEnd.length}</b>${endings.length ? ` — ${endings.map((id) => esc(DATA.campaign.endings[id]?.title || id)).join(', ')}` : ''}`
+    + (SAVE.memoryOnly ? '<br><span class="warn">Ce navigateur refuse le stockage : l’aventure sera perdue en fermant la page.</span>' : '');
+  const card = (s) => {
+    if (s.bad) {
+      return `<div class="slot bad"><div class="slot-head">Sauvegarde abîmée</div><div class="slot-name">${esc(s.name)}</div>
+        <p class="slot-info">${esc(s.why)}</p><div class="slot-acts"><button class="btn alt" data-scopy="${esc(s.id)}">Copier</button>
+        <button class="btn alt danger" data-sdel="${esc(s.id)}">Supprimer</button></div></div>`;
+    }
+    const act = DATA.campaign.acts[s.act];
+    const ending = s.ending ? DATA.campaign.endings[s.ending]?.title : null;
+    const ck = SAVE.loadSlot(s.id).slot?.checkpoints || [];
+    return `<div class="slot"><div class="slot-head">${s.done ? 'Terminée' : act ? esc(`${act.title}`) : 'Aventure'}</div>
+      <div class="slot-name">${esc(s.name)}</div>
+      <p class="slot-info">${s.done ? esc(ending || '') : `${esc(act?.sub || '')}${s.place ? `<br>${esc(s.place)}` : ''}`}</p>
+      <p class="slot-sub">${fmtPlay(s.playMs)} · ${s.allies.length} allié${s.allies.length > 1 ? 's' : ''} · $${s.dollars}</p>
+      <div class="slot-acts">
+        <button class="btn" data-ssolo="${esc(s.id)}">${s.done ? 'Revoir la fin' : 'Jouer seul'}</button>
+        <button class="btn" data-stable="${esc(s.id)}">À plusieurs</button>
+      </div>
+      <div class="slot-acts small">
+        ${ck.length ? `<button class="mini-link" data-schap="${esc(s.id)}">Chapitres (${ck.length})</button>` : ''}
+        <button class="mini-link" data-sren="${esc(s.id)}">Renommer</button>
+        <button class="mini-link danger" data-sdel="${esc(s.id)}">Supprimer</button>
+      </div>
+      <div class="slot-chap hidden" id="chap-${esc(s.id)}">${ck.slice().reverse().map((c) => `<button class="mini-link" data-srew="${esc(s.id)}" data-label="${esc(c.label)}">${esc(c.label.replace(/-/g, ' '))}</button>`).join('')}</div>
+    </div>`;
+  };
+  const empty = `<button class="slot empty" data-snew><span class="slot-plus">+</span><b>Nouvelle aventure</b><small>Choisis le nom de ta bande</small></button>`;
+  $('story-slots').innerHTML = slots.map(card).join('') + (slots.length < SAVE.MAX_SLOTS ? empty : '');
+}
+
+$('btn-story').onclick = () => showStoryMenu();
+$('btn-story').addEventListener('pointerover', () => { storyMod().catch(() => {}); }, { once: true });
+$('btn-story-back').onclick = () => showMenu();
+$('story-slots').onclick = async (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const mod = await storyMod();
+  const d = b.dataset;
+  try {
+    if ('snew' in d) {
+      if (!(await askConfirm({ title: 'Nouvelle aventure', text: 'Le nom de ta bande (il apparaîtra dans l’histoire).', yes: 'En selle !', icon: 'hat', field: { value: `La bande à ${user.username}`, max: 24, line: true } }))) return;
+      const name = $('modal-field').value.trim() || `La bande à ${user.username}`;
+      mod.newSlot(name, [user.username]);
+    } else if (d.ssolo) {
+      storyBack = true;
+      return net.send({ t: 'createStory', slot: d.ssolo });
+    } else if (d.stable) {
+      return net.send({ t: 'createStory', slot: d.stable, table: true });
+    } else if (d.sren) {
+      const cur = mod.SAVE.loadSlot(d.sren).slot;
+      if (!(await askConfirm({ title: 'Renommer la sauvegarde', text: 'Le nom de la bande dans l’histoire ne change pas.', yes: 'Renommer', icon: 'hat', field: { value: cur?.name || '', max: 24, line: true } }))) return;
+      mod.SAVE.renameSlot(d.sren, $('modal-field').value.trim() || cur?.name);
+    } else if (d.sdel) {
+      if (!(await askConfirm({ title: 'Supprimer la sauvegarde ?', text: 'L’aventure et ses chapitres sont perdus pour de bon.', yes: 'Supprimer', icon: 'skull', danger: true }))) return;
+      mod.SAVE.deleteSlot(d.sdel);
+    } else if (d.schap) {
+      return $(`chap-${d.schap}`)?.classList.toggle('hidden');
+    } else if (d.srew) {
+      if (!(await askConfirm({ title: 'Reprendre à ce chapitre ?', text: 'L’aventure repart de ce point : ce qui a été joué depuis est oublié (les chapitres restent).', yes: 'Reprendre ici', icon: 'hat', danger: true }))) return;
+      mod.SAVE.rewindSlot(d.srew, d.label);
+    } else if (d.scopy) {
+      await copyText(mod.SAVE.rawSlot(d.scopy) || '');
+      return toast('Sauvegarde copiée dans le presse-papiers.');
+    }
+  } catch (err) { toast(esc(err.message)); }
+  renderStorySlots(mod);
+};
 
 // Déroulé d'une table à plusieurs : un jeu choisi par l'hôte, la roue (jeu tiré au sort), ou un championnat.
 const FORMATS = {
   single: ['Un jeu', 'L’hôte choisit le jeu'],
   wheel: ['La roue', 'Un jeu tiré au sort parmi la sélection, à chaque partie'],
   champ: ['Championnat', 'Plusieurs jeux tirés au sort à la suite : des points à chaque partie (5, 3, 2, 1), classement à la fin'],
+  story: ['Histoire', 'Le Filon du Diable : l’aventure en coop, sauvegardée chez l’hôte'],
 };
 const ROUNDS = [3, 5, 7, 10];
 const playersText = (m) => (m.min === m.max ? `${m.min} joueurs` : `${m.min} à ${m.max} joueurs`);
@@ -618,7 +769,7 @@ function showLobby() {
   const variant = V ? l.variants?.[l.mode] ?? null : null;
   $('variants').classList.toggle('hidden', !V);
   if (V) {
-    $('variants').innerHTML = `<span class="lbl">${esc(V.label)} :</span>` + [{ id: '', name: V.any || 'Aléatoire' }, ...V.list].map((v) =>
+    $('variants').innerHTML = `<span class="lbl">${esc(V.label)} :</span>` + [{ id: '', name: V.any || 'Aléatoire' }, ...V.list.filter((v) => !v.hidden)].map((v) => // (hidden : réservées au mode histoire)
       `<button type="button" class="${(variant ?? '') === v.id ? 'on' : ''}" data-variant="${v.id}" ${lock ? 'disabled' : ''}>${esc(v.name)}</button>`).join('');
   }
 
@@ -626,11 +777,26 @@ function showLobby() {
   renderSeats(l, isHost);
   renderChampBoard(l, isHost);
 
+  // format « Histoire » : à la place du choix des jeux, l'aventure (l'hôte la choisit parmi ses sauvegardes)
+  const storyFmt = fmt === 'story';
+  $('modes-label').classList.toggle('hidden', storyFmt);
+  $('modes').closest('.solo-pager').classList.toggle('hidden', storyFmt);
+  $('modes-dots').classList.toggle('hidden', storyFmt);
+  $('lobby-story').classList.toggle('hidden', !storyFmt);
+  if (storyFmt) renderLobbyStory(l, isHost);
+
   const compat = pool.filter((id) => playableAt(id, n));
   const start = $('btn-start');
   start.classList.toggle('hidden', !isHost);
   let hint;
-  if (single) {
+  if (storyFmt) {
+    const p = l.storyPrep;
+    start.disabled = !p || l.spinning;
+    start.textContent = !p ? 'Choisis une aventure' : p.fresh ? 'Commencer l’aventure' : 'Reprendre l’aventure';
+    hint = !p ? (isHost ? 'Choisis une de tes sauvegardes, ou commence une nouvelle aventure.' : 'L’hôte choisit l’aventure…')
+      : isHost ? `${n > 1 ? `${n} cowboys à la table.` : 'Seul à la table : invite des amis, ou lance-toi.'} Chacun lit à son rythme ; les choix se votent.`
+        : `L’hôte va lancer l’aventure de ${p.name}…`;
+  } else if (single) {
     const tooMany = n > mode.max && !tourneyFor(l.mode, n);
     const cup = tourneyFor(l.mode, n);
     start.disabled = n < mode.min || tooMany || l.spinning;
@@ -654,6 +820,35 @@ function showLobby() {
   }
   $('lobby-hint').textContent = hint;
 }
+
+// Lobby au format « Histoire » : l'aventure choisie ; pour l'hôte, ses sauvegardes (dans son navigateur) à choisir.
+async function renderLobbyStory(l, isHost) {
+  const box = $('lobby-story');
+  const p = l.storyPrep;
+  const head = p
+    ? `<div class="ls-chosen"><b>${esc(p.name)}</b><span>${p.ending ? 'Aventure terminée' : `Acte ${p.act}${p.place ? ` · ${esc(p.place)}` : ''}`} · ${p.allies} allié${p.allies > 1 ? 's' : ''}</span></div>`
+    : '<div class="ls-chosen none">Aucune aventure choisie</div>';
+  if (!isHost) { box.innerHTML = head; return; }
+  const mod = await storyMod();
+  if (lobby !== l || !isHostOf(l)) return;
+  const slots = mod.SAVE.listSlots(mod.DATA).filter((s) => !s.bad);
+  box.innerHTML = `${head}<div class="ls-pick">${slots.map((s) => `<button type="button" class="ls-slot${p?.slot === s.id ? ' on' : ''}" data-lspick="${esc(s.id)}" ${l.spinning ? 'disabled' : ''}>
+    <b>${esc(s.name)}</b><small>${s.done ? 'terminée' : `acte ${s.act}`}</small></button>`).join('')}
+    ${slots.length < mod.SAVE.MAX_SLOTS ? '<button type="button" class="ls-slot new" data-lsnew><b>+ Nouvelle</b><small>aventure</small></button>' : ''}</div>`;
+}
+$('lobby-story').onclick = async (e) => {
+  const b = e.target.closest('button');
+  if (!b || !lobby || !isHostOf(lobby)) return;
+  if (b.dataset.lspick) return net.send({ t: 'storyPick', slot: b.dataset.lspick });
+  if (b.dataset.lsnew !== undefined) {
+    const mod = await storyMod();
+    if (!(await askConfirm({ title: 'Nouvelle aventure', text: 'Le nom de votre bande (il apparaîtra dans l’histoire).', yes: 'Créer', icon: 'hat', field: { value: `La bande à ${user.username}`, max: 24, line: true } }))) return;
+    try {
+      const slot = mod.newSlot($('modal-field').value.trim() || `La bande à ${user.username}`, lobby.players.filter((p) => !p.bot).map((p) => p.name));
+      net.send({ t: 'storyPick', slot: slot.id });
+    } catch (err) { toast(esc(err.message)); }
+  }
+};
 
 // Choix du jeu : les cartes du menu solo (icône, nom court), par pages de 2 × 4 parcourues avec les flèches.
 // Un jeu : on choisit la carte ; roue et championnat : on coche les jeux qui peuvent tomber.
@@ -720,8 +915,9 @@ function renderSeats(l, isHost) {
     if (!p) {
       d.className = 'seat empty';
       if (canEdit) {
+        // mode histoire : entre humains (les rivaux viennent de l'aventure), pas de bot à asseoir
         d.innerHTML = `<div class="box acts"><button type="button" class="seat-btn" data-invite title="Envoyer une invitation">Inviter</button>
-          <button type="button" class="seat-btn" data-bot title="Asseoir un bot à cette place">+ Bot</button></div>`;
+          ${l.format === 'story' ? '' : '<button type="button" class="seat-btn" data-bot title="Asseoir un bot à cette place">+ Bot</button>'}</div>`;
       } else {
         d.title = 'Envoyer une invitation';
         d.dataset.invite = '';
@@ -1206,6 +1402,7 @@ function enterRoulette() {
     },
     onCancelSteal: () => { scene.stealMode = false; updateControls(); },
     onMatchEnd: showGameOver,
+    story: lobby?.story?.ep || null, // épisode du mode histoire : titres, ambiance et décor (story.deco) imposés
   });
   updateControls();
 }
@@ -1226,6 +1423,7 @@ function enterMini(kind) {
     live: (d) => { if (!watch) net.sendLive(d); },
     onState: queueHud,
     onEnd: showMiniOver,
+    story: lobby?.story?.ep || null, // épisode du mode histoire : titre, légende, rumeur et ambiance de l'ouverture
   });
   mini.watch = watch;
   if (!watch) pad.attach(mini);
@@ -1365,6 +1563,13 @@ function showGameOver(ev) {
 
 function updateGameOver() {
   if (!lobby) return;
+  if (lobby.story) { // épisode du mode histoire : pas de revanche, l'aventure reprend d'elle-même
+    $('go-buttons').classList.add('hidden');
+    $('go-champ').innerHTML = '';
+    $('go-tourney').innerHTML = '';
+    $('go-rematch').textContent = 'Retour à l’aventure…';
+    return;
+  }
   $('btn-go-menu').textContent = lobby.solo ? 'Retour au menu' : 'Retour à la table';
   const fmt = lobby.solo ? 'single' : lobby.format || 'single';
   const c = fmt === 'champ' ? lobby.champ : null;
@@ -1509,8 +1714,10 @@ $('btn-exit').onclick = async () => {
       yes: 'Quitter', no: 'Rester', icon: 'close', danger: true,
     });
     if (ok) net.send({ t: 'leaveLobby' });
-  } else if (screen === 'game' || screen === 'lobby') leaveTable();
+  } else if (screen === 'game' && story) storyMenu();
+  else if (screen === 'game' || screen === 'lobby') leaveTable();
   else if (screen === 'editor') editorBack();
+  else if (screen === 'story') showMenu();
 };
 
 // chat en jeu : Entrée pour parler

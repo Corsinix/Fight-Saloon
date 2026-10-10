@@ -735,7 +735,7 @@ export function drawCharacter(ctx, c, opts = {}) {
     R(19, 42, 10, 1, clothD);
     for (let x = 5; x < 44; x += 3) R(x, 56, 1, 1, cloth); // franges
   } else {
-    const shirtCol = ['shirt', 'plaid', 'bandolier', 'fringe'].includes(o) ? cloth
+    const shirtCol = o === 'fur' ? skin : ['shirt', 'plaid', 'bandolier', 'fringe'].includes(o) ? cloth
       : o === 'duster' ? cream : o === 'suit' ? '#ece4d0' : o === 'overalls' ? '#c8b48a' : '#d8c8a0';
     outlined([[10, 42, 28, 2], [6, 44, 36, 12]], shirtCol);
     if (o === 'shirt' || o === 'plaid' || o === 'bandolier') {
@@ -806,6 +806,15 @@ export function drawCharacter(ctx, c, opts = {}) {
       for (let y = 45; y < 55; y += 2) { R(4, y, 1, 1, cloth); R(43, y, 1, 1, cloth); }
       P([[21, 45], [26, 45], [21, 47], [26, 47]], '#e8e0cc'); // lacets
       R(22, 51, 1, 1, '#3a8a9a'); R(25, 51, 1, 1, '#c84a3a'); R(23, 52, 2, 1, gold); // perles
+    } else if (o === 'fur') {
+      // peau de bête (le Grand Bison) : torse nu, poils, une toison sur les épaules, nouée d'une lanière
+      R(16, 46, 16, 9, skinD); R(17, 46, 14, 1, skinL);
+      P([[20, 47], [23, 48], [26, 47], [28, 49], [21, 50], [24, 51], [27, 51], [22, 53], [25, 53]], hairD); // poils du torse
+      outlined([[6, 42, 12, 9], [30, 42, 12, 9], [10, 41, 28, 3]], cloth);
+      for (let xx = 6; xx < 18; xx += 2) R(xx, 50 + (xx % 4 ? 1 : 0), 1, 2, clothD); // bord hirsute
+      for (let xx = 30; xx < 42; xx += 2) R(xx, 50 + (xx % 4 ? 0 : 1), 1, 2, clothD);
+      P([[8, 44], [11, 43], [14, 45], [33, 44], [36, 43], [39, 45], [12, 47], [35, 47]], clothL);
+      R(17, 44, 14, 1, '#8a5a30'); R(17, 44, 1, 1, gold); R(30, 44, 1, 1, gold); // lanière et ses clous
     } else {
       // gilet ou shérif
       R(6, 44, 14, 12, cloth); R(28, 44, 14, 12, cloth);
@@ -929,20 +938,34 @@ export function drawCharacter(ctx, c, opts = {}) {
   // Yeux
   const brow = h === 'bald' ? shade(skin, -0.55) : hairD;
   const EY = 23;
+  // sourcil de chaque regard : il reste à sa place quand l'œil cligne
+  const browAt = (x, right) => {
+    switch (c.eyes) {
+      case 'squint': R(x - 1, EY - 1, 5, 1, brow); break;
+      case 'wide': case 'lashes': R(x, EY - 3, 3, 1, brow); break;
+      case 'angry':
+        if (!right) { R(x - 1, EY - 3, 2, 1, brow); R(x + 1, EY - 2, 2, 1, brow); }
+        else { R(x + 2, EY - 3, 2, 1, brow); R(x, EY - 2, 2, 1, brow); }
+        break;
+      default: R(x - 1, EY - 2, 4, 1, brow);
+    }
+  };
   const eye = (x, right) => {
+    // le cache-œil reste en place, même sonné ou en clignant
+    if (c.eyes === 'patch' && right) {
+      R(x - 1, EY - 1, 5, 4, OUT); R(x, EY - 1, 2, 1, '#3a2e28');
+      return;
+    }
     if (opts.hurt) {
       R(x, EY - 1, 1, 1, OUT); R(x + 2, EY - 1, 1, 1, OUT); R(x + 1, EY, 1, 1, OUT);
       R(x, EY + 1, 1, 1, OUT); R(x + 2, EY + 1, 1, 1, OUT);
       return;
     }
-    if (c.eyes === 'patch' && right) {
-      R(x - 1, EY - 1, 5, 4, OUT); R(x, EY - 1, 2, 1, '#3a2e28');
-      return;
-    }
     if (opts.blink || (c.eyes === 'wink' && right)) {
       R(x, EY + 1, 3, 1, OUT);
       if (!opts.blink) { R(x - 1, EY, 1, 1, OUT); R(x + 3, EY, 1, 1, OUT); R(x - 1, EY - 1, 4, 1, brow); }
-      else R(x - 1, EY - 2, 4, 1, brow);
+      else if (c.eyes === 'wink' && right) R(x - 1, EY - 1, 4, 1, brow); // l'œil du clin d'œil garde son sourcil baissé
+      else browAt(x, right);
       return;
     }
     switch (c.eyes) {
@@ -1213,6 +1236,16 @@ export function drawCharacter(ctx, c, opts = {}) {
     outlined([[14, 11, 20, 6], [33, 13, 4, 3], [35, 16, 2, 4], [37, 15, 2, 3]], hatC);
     for (const [px, py] of [[16, 12], [20, 14], [24, 12], [28, 14], [31, 12], [18, 15], [26, 15]]) R(px, py, 1, 1, white);
     R(14, 16, 20, 1, hatD);
+  } else if (hat === 'horns') {
+    // coiffe de bison (le Grand Bison) : calotte de fourrure, deux cornes d'ivoire recourbées vers le haut
+    const horn = '#e8dcc0', hornD = '#a89878';
+    outlined([[16, 8, 16, 2], [14, 10, 20, 7]], hatC);
+    for (let xx = 15; xx < 33; xx += 2) R(xx, 9 + (xx % 4 ? 1 : 0), 1, 1, hatL);
+    for (let xx = 14; xx < 34; xx += 2) R(xx, 16, 1, 2, hatD); // frange hirsute sur le front
+    outlined([[10, 11, 5, 3], [7, 8, 4, 4], [6, 4, 3, 5], [33, 11, 5, 3], [37, 8, 4, 4], [39, 4, 3, 5]], horn);
+    R(10, 13, 5, 1, hornD); R(7, 11, 4, 1, hornD); R(6, 8, 1, 1, hornD);
+    R(33, 13, 5, 1, hornD); R(37, 11, 4, 1, hornD); R(41, 8, 1, 1, hornD);
+    R(6, 4, 1, 1, '#fff8e8'); R(41, 4, 1, 1, '#fff8e8');
   } else if (hat === 'coonskin') {
     const fur = '#8a6a48', furD = '#4a3420', furL = '#b89068';
     outlined([[15, 8, 18, 2], [14, 10, 20, 7], [33, 13, 4, 20]], fur);
@@ -1665,6 +1698,195 @@ export function drawGunFirstPerson(ctx, tx, ty, skin, sawed, recoil = 0, cloth =
   R(rx + 2, gy - 6, 1, 3, sd); // jointure du pouce
 }
 
+// ------------------------------------------------------------- Fusil tenu, en volume (3D légère)
+// Comme les armes en main du FPS (fpsart.js), mais en bien plus léger : le fusil est fait de pièces en tronc de
+// cône à section elliptique. Repère de la scène : x, y = pixels de l'écran sur le plan de l'adversaire (z = 0),
+// z vers la caméra, placée en (cx, cy, d). On projette les deux sections d'extrémité de chaque pièce et on remplit
+// leur enveloppe convexe ligne par ligne (bords nets, aucune rotation de bitmap), de la plus loin à la plus proche.
+export const CAM3 = { cx: 192, cy: 108, d: 120 };
+export const V3 = {
+  add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
+  sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
+  k: (a, k) => [a[0] * k, a[1] * k, a[2] * k],
+  dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+  cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
+  unit: (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; },
+  lerp: (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t],
+};
+export function proj3(p, cam = CAM3) {
+  const s = cam.d / Math.max(4, cam.d - p[2]);
+  return { x: cam.cx + (p[0] - cam.cx) * s, y: cam.cy + (p[1] - cam.cy) * s, s, z: p[2] };
+}
+// Repère d'un objet tenu : origine o, axe A (vers la bouche), haut U (rendu orthogonal à A), côté S ; k : échelle
+export function frame3(o, A, U, k = 1) {
+  const a = V3.unit(A), u = V3.unit(V3.sub(U, V3.k(a, V3.dot(U, a))));
+  return { o, A: a, U: u, S: V3.cross(u, a), k }; // S : flanc droit (fenêtre d'éjection)
+}
+export const lerpFrame = (f, g, t) => frame3(V3.lerp(f.o, g.o, t), V3.lerp(f.A, g.A, t), V3.lerp(f.U, g.U, t), f.k + (g.k - f.k) * t);
+// point du repère : u le long de l'axe, h vers le haut, w sur le côté (unités de l'objet, multipliées par k)
+export const at3 = (F, u, h = 0, w = 0) => [
+  F.o[0] + (F.A[0] * u + F.U[0] * h + F.S[0] * w) * F.k,
+  F.o[1] + (F.A[1] * u + F.U[1] * h + F.S[1] * w) * F.k,
+  F.o[2] + (F.A[2] * u + F.U[2] * h + F.S[2] * w) * F.k,
+];
+
+// Enveloppe convexe (chaîne monotone), puis polygone rempli ligne par ligne (fillPoly)
+export function hull2(pts) {
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (p.length < 3) return p;
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  lo.pop(); up.pop();
+  return lo.concat(up);
+}
+export function fillConvex(ctx, pts, col, outline = true) {
+  if (!pts.length) return [];
+  const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
+  if (pts.length < 3) { // trop fin : un point ou un trait
+    const [a, b = a] = pts, n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1])));
+    for (let i = 0; i <= n; i++) { const x = Math.round(a[0] + ((b[0] - a[0]) * i) / n), y = Math.round(a[1] + ((b[1] - a[1]) * i) / n); if (outline) R(x - 1, y - 1, 3, 3, OUT); }
+    for (let i = 0; i <= n; i++) R(Math.round(a[0] + ((b[0] - a[0]) * i) / n), Math.round(a[1] + ((b[1] - a[1]) * i) / n), 1, 1, col);
+    return [];
+  }
+  return fillPoly(R, pts, col, outline);
+}
+
+// Section elliptique (demi-hauteur a, demi-largeur b) au point (u, h, w) du repère, projetée
+function ring3(F, cam, u, h, w, a, b) {
+  const c = at3(F, u, h, w), pc = proj3(c, cam);
+  const r = Math.max(a, b) * F.k * pc.s;
+  const n = Math.max(8, Math.min(36, Math.round(r * 3)));
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 2, ct = Math.cos(t) * a * F.k, st = Math.sin(t) * b * F.k;
+    const q = proj3([c[0] + F.U[0] * ct + F.S[0] * st, c[1] + F.U[1] * ct + F.S[1] * st, c[2] + F.U[2] * ct + F.S[2] * st], cam);
+    pts.push([q.x, q.y]);
+  }
+  return { c, pc, r, pts };
+}
+// Pièce en volume. p : { u0, u1, h0, h1, a0, b0, a1, b1, w, m: { b, l, d }, cap0, cap1, grooves }
+// cap : face d'extrémité dessinée si elle regarde la caméra ('bore' : bouche du canon, sinon une couleur)
+export function drawTube(ctx, F, p, cam = CAM3) {
+  // ce qui passe derrière la caméra (la crosse contre ma joue) est coupé au plan proche
+  const near = cam.d - 12, z0 = at3(F, p.u0, p.h0, p.w || 0)[2], z1 = at3(F, p.u1, p.h1 ?? p.h0, p.w || 0)[2];
+  if (z0 > near && z1 > near) return;
+  if (z0 > near || z1 > near) {
+    const t = (near - z0) / (z1 - z0), L = (a, b) => a + (b - a) * t;
+    const a1_ = p.a1 ?? p.a0, b0_ = p.b0 ?? p.a0, b1_ = p.b1 ?? (p.b0 ?? a1_), h1_ = p.h1 ?? p.h0;
+    const m = { u: L(p.u0, p.u1), h: L(p.h0, h1_), a: L(p.a0, a1_), b: L(b0_, b1_) };
+    p = z0 > near ? { ...p, u0: m.u, h0: m.h, a0: m.a, b0: m.b, h1: h1_, a1: a1_, b1: b1_, cap0: null }
+      : { ...p, u1: m.u, h1: m.h, a1: m.a, b1: m.b, b0: b0_, cap1: null };
+  }
+  const w = p.w || 0, a1 = p.a1 ?? p.a0, b0 = p.b0 ?? p.a0, b1 = p.b1 ?? (p.b0 ?? a1), h1 = p.h1 ?? p.h0;
+  const r0 = ring3(F, cam, p.u0, p.h0, w, p.a0, b0), r1 = ring3(F, cam, p.u1, h1, w, a1, b1);
+  fillConvex(ctx, hull2(r0.pts.concat(r1.pts)), p.m.d, !p.flat);
+  const R = Math.max(r0.r, r1.r);
+  // modelé : bande moyenne et reflet, rétrécis et poussés vers la lumière (en haut à gauche)
+  const band = (f, off) => {
+    const sh = (r) => r.pts.map(([x, y]) => [r.pc.x + (x - r.pc.x) * f - r.r * off, r.pc.y + (y - r.pc.y) * f - r.r * off]);
+    return hull2(sh(r0).concat(sh(r1)));
+  };
+  if (R >= 1.6) {
+    fillConvex(ctx, band(0.72, 0.2), p.m.b, false);
+    fillConvex(ctx, band(0.3, 0.42), p.m.l, false);
+  } else fillConvex(ctx, band(0.5, 0.25), p.m.b, false);
+  // rainures (pompe) : la moitié visible de quelques anneaux
+  if (p.grooves && R >= 2) {
+    ctx.fillStyle = p.m.d;
+    for (const g of p.grooves) {
+      const t = (g - p.u0) / (p.u1 - p.u0), a = p.a0 + (a1 - p.a0) * t + 0.15, b = b0 + (b1 - b0) * t + 0.15;
+      const c = at3(F, g, p.h0 + (h1 - p.h0) * t, w);
+      const n = 28;
+      for (let i = 0; i < n; i++) {
+        const th = (i / n) * Math.PI * 2, nv = V3.add(V3.k(F.U, Math.cos(th)), V3.k(F.S, Math.sin(th)));
+        const q3 = V3.add(c, V3.add(V3.k(F.U, Math.cos(th) * a * F.k), V3.k(F.S, Math.sin(th) * b * F.k)));
+        if (V3.dot(nv, [cam.cx - q3[0], cam.cy - q3[1], cam.d - q3[2]]) <= 0) continue;
+        const q = proj3(q3, cam);
+        ctx.fillRect(Math.round(q.x), Math.round(q.y), 1, 1);
+      }
+    }
+  }
+  // faces d'extrémité tournées vers la caméra
+  for (const [r, dir, cap] of [[r0, -1, p.cap0], [r1, 1, p.cap1]]) {
+    if (!cap) continue;
+    const toCam = [cam.cx - r.c[0], cam.cy - r.c[1], cam.d - r.c[2]];
+    if (V3.dot(V3.k(F.A, dir), toCam) <= 0) continue;
+    const H = hull2(r.pts);
+    if (cap === 'bore') {
+      fillConvex(ctx, H, p.m.l, false);
+      const inner = (f, dx) => hull2(r.pts.map(([x, y]) => [r.pc.x + (x - r.pc.x) * f + dx, r.pc.y + (y - r.pc.y) * f + dx]));
+      if (r.r >= 2.5) fillConvex(ctx, inner(0.78, 0.3), p.m.d, false);
+      fillConvex(ctx, inner(0.66, 0.2), '#0c0a0a', false);
+    } else fillConvex(ctx, H, cap, false);
+  }
+}
+
+// Pièces du fusil de chaque modèle (repère : u = 0 à l'arrière de la carcasse, vers la bouche ; h vers le haut)
+const gunModels = {};
+function gunModel(kind, sawed, pump) {
+  const key = `${kind}-${sawed}-${pump}`;
+  if (gunModels[key]) return gunModels[key];
+  const g = gunDef(kind), Wd = WOODS[g.wood], M = METALS[g.metal], X = METALS[g.recv];
+  const wood = { b: Wd.b, l: Wd.l, d: Wd.d }, metal = { b: M.b, l: M.l, d: M.d }, dark = { b: M.d, l: M.b, d: M.x };
+  const recv = { b: X.x, l: X.b, d: shade(X.x, -0.35) };
+  const end = gunEnd(sawed, kind) - 34;
+  const P = [
+    { u0: -33, u1: -8, h0: -6.4, h1: -2.4, a0: 4.6, b0: 2.5, a1: 2.6, b1: 1.9, m: wood, cap0: Wd.dd }, // crosse
+    { u0: -8, u1: 0.5, h0: -2.4, h1: -0.6, a0: 2.6, b0: 1.9, a1: 3, b1: 2.2, m: wood }, // poignée
+    { u0: 0, u1: 15, h0: 0, a0: 3.4, b0: 2.5, a1: 3.2, b1: 2.4, m: recv }, // carcasse
+    { u0: 3, u1: 9, h0: -4.3, a0: 0.7, m: dark }, // pontet
+  ];
+  if (g.action === 'pump') {
+    const p0 = 24 - pump, p1 = 42 - pump, mEnd = sawed ? end - 1 : end - 8;
+    P.push({ u0: 14, u1: end, h0: 1.1, a0: 1.9, m: metal, cap1: 'bore' });
+    P.push({ u0: 14, u1: p0, h0: -2.2, a0: 1.4, m: dark });
+    if (mEnd > p1) P.push({ u0: p1, u1: mEnd, h0: -2.2, a0: 1.4, m: dark, cap1: M.x });
+    P.push({ u0: p0, u1: p1, h0: -2.4, a0: 3.3, b0: 3.5, m: wood, cap0: Wd.d, cap1: Wd.d, grooves: [p0 + 4, p0 + 7, p0 + 10, p0 + 13] }); // pompe
+    P.push({ u0: 6.5, u1: 10.5, h0: 0.6, w: 2.45, a0: 0.9, b0: 0.2, flat: true, m: { b: '#c83828', l: '#e86848', d: '#5a1410' } }); // fenêtre d'éjection (cartouche rouge)
+  } else if (g.action === 'lever') {
+    const o = pump ? 3 : 0;
+    P.push({ u0: 14, u1: end, h0: 1, a0: 1.9, m: metal, cap1: 'bore' });
+    P.push({ u0: 14, u1: Math.min(end, end - 6), h0: -2.1, a0: 1.3, m: dark, cap1: M.x });
+    P.push({ u0: 16, u1: 32, h0: -1.2, a0: 2.6, b0: 2.6, m: wood, cap1: Wd.d });
+    P.push({ u0: -9 - o, u1: 6, h0: -6 - o, h1: -4.4, a0: 0.8, m: recv }); // levier
+  } else {
+    // deux canons côte à côte ; cassé (pump) : ils basculent autour de la charnière
+    const dip = pump ? -0.16 : 0, hy = (u) => 0.6 + (u - 14) * dip;
+    for (const w of [-1.95, 1.95]) P.push({ u0: 14, u1: end, h0: hy(14), h1: hy(end), w, a0: 1.9, m: metal, cap1: 'bore' });
+    P.push({ u0: 16, u1: 36, h0: hy(16) - 2.2, h1: hy(36) - 2.2, a0: 2.2, b0: 3.4, m: wood, cap1: Wd.d });
+    for (const w of [-1.5, 1.5]) P.push({ u0: -1.5, u1: 1.5, h0: 3.6, h1: 4.4, w, a0: 1, b0: 0.7, m: metal }); // chiens
+  }
+  if (!sawed) {
+    const top = g.action === 'double' ? 0.6 + (pump ? (end - 14) * -0.16 : 0) + 2.3 : 3.3;
+    P.push({ u0: end - 2, u1: end - 1, h0: top, a0: 0.5, m: { b: '#e0b040', l: '#fff0a0', d: '#a06a20' } }); // guidon
+  }
+  gunModels[key] = P;
+  return P;
+}
+
+// Fusil tenu : F = frame3 de la carcasse ; renvoie de quoi y poser les mains (P), la bouche, et draw(ctx, extras)
+// qui dessine les pièces et les extras ({ z, draw }) mêlés, de la plus loin à la plus proche.
+export function gunRig(kind, sawed, pump, F, cam = CAM3) {
+  const g = gunDef(kind), parts = gunModel(kind, sawed, Math.round(pump));
+  const end = gunEnd(sawed, kind) - 34;
+  const P = (u, h = 0, w = 0) => proj3(at3(F, u, h, w), cam);
+  const m = P(end, g.action === 'double' ? 0.6 : 1.1);
+  return {
+    F, cam, P, end,
+    muzzle: { x: m.x, y: m.y, r: 1.9 * F.k * m.s, s: m.s },
+    pumpU: g.action === 'pump' ? 33 - pump : g.action === 'double' ? 26 : 24, // milieu de la pompe (ou du fût)
+    pumpH: g.action === 'pump' ? -2.1 : g.action === 'double' ? -1.6 : -1.2,
+    // la carcasse, côté éjection (douille), et l'axe du canon à l'écran
+    port: P(8, 0.6, 2.5),
+    draw(ctx, extras = []) {
+      const items = parts.map((p) => ({ z: at3(F, (p.u0 + p.u1) / 2, (p.h0 + (p.h1 ?? p.h0)) / 2, p.w || 0)[2], draw: (c) => drawTube(c, F, p, cam) }));
+      for (const it of [...items, ...extras].sort((a, b) => a.z - b.z)) it.draw(ctx);
+    },
+  };
+}
+
 export function drawFlash(ctx, x, y, size, seed = 0) {
   const { R } = painter(ctx);
   const rays = 8;
@@ -1790,13 +2012,31 @@ export function vulture(ctx, x, y, t) {
   else { R(x - 3, y, 3, 1, col); R(x + 2, y, 3, 1, col); R(x - 4, y + 1, 1, 1, col); R(x + 5, y + 1, 1, 1, col); }
 }
 
-export function tumbleweed(ctx, x, y, t) {
-  const { R } = painter(ctx);
-  const f = Math.floor(t / 120) % 4;
-  disc(ctx, x, y, 5, '#8a6a3a');
-  disc(ctx, x, y, 3, '#a8844a');
+// Virevoltant : 4 images (il roule), dessinées une fois avec leur contour sombre puis recopiées, centrées en (x, y).
+// Le contour prend la place de l'anneau extérieur : même silhouette (rayon 5) et même centre qu'avant.
+const tumbleFrames = [];
+function tumbleFrame(f) {
+  let c = tumbleFrames[f];
+  if (c) return c;
+  c = makeCanvas(13, 13);
+  const g = c.getContext('2d');
+  const { R } = painter(g);
+  disc(g, 6, 6, 5, '#8a6a3a');
+  disc(g, 6, 6, 3, '#a8844a');
+  // contour : les pixels du disque (rayon 5, même formule que disc) dont un voisin direct est dehors
+  const half = (dy) => (Math.abs(dy) > 5 ? -1 : Math.floor(Math.sqrt(25 - dy * dy + 4)));
+  const inside = (dx, dy) => Math.abs(dx) <= half(dy);
+  for (let dy = -5; dy <= 5; dy++) for (let dx = -half(dy); dx <= half(dy); dx++) {
+    if (!inside(dx + 1, dy) || !inside(dx - 1, dy) || !inside(dx, dy + 1) || !inside(dx, dy - 1)) R(6 + dx, 6 + dy, 1, 1, OUT);
+  }
+  R(4, 3, 2, 1, '#c8a060'); // reflet en haut à gauche
   const pts = [[-3, -3], [3, -2], [-2, 3], [2, 3], [0, -4], [4, 1], [-4, 0]];
-  pts.forEach(([dx, dy], i) => { if ((i + f) % 2) R(x + dx, y + dy, 1, 1, '#5a4020'); });
+  pts.forEach(([dx, dy], i) => { if ((i + f) % 2) R(6 + dx, 6 + dy, 1, 1, '#5a4020'); });
+  tumbleFrames[f] = c;
+  return c;
+}
+export function tumbleweed(ctx, x, y, t) {
+  ctx.drawImage(tumbleFrame(((Math.floor(t / 120) % 4) + 4) % 4), Math.round(x) - 6, Math.round(y) - 6);
 }
 
 // Intérieur du saloon (mur du fond), 384×216

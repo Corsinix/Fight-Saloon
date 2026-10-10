@@ -166,8 +166,10 @@ const CHAR = { '.': C.FLOOR, ',': C.PATH, '#': C.WALL, x: C.CRATE, '*': C.BUSH, 
 export function mapIdOf(kind, seed, variant) {
   const list = mapList(kind);
   if (variant && list.some((m) => m.id === variant)) return variant;
-  if (!list.length) return null;
-  return list[(Math.imul((seed ^ 0x2545f491) >>> 0, 0x9e3779b1) >>> 0) % list.length].id;
+  // les cartes du mode histoire (story : true, lieux de l'aventure) ne sont jamais tirées au hasard
+  const pool = list.filter((m) => !m.story);
+  if (!pool.length) return null;
+  return pool[(Math.imul((seed ^ 0x2545f491) >>> 0, 0x9e3779b1) >>> 0) % pool.length].id;
 }
 
 export function brawlWorld(kind, mapId) {
@@ -187,7 +189,7 @@ export function brawlWorld(kind, mapId) {
     ? [spawns.filter((s) => s.x < w / 2).sort((a, b) => a.y - b.y), spawns.filter((s) => s.x > w / 2).sort((a, b) => b.y - a.y)]
     : null;
   return {
-    kind, id: entry.id, env: entry.env, name: entry.name, w, h, rows: m.rows, cells, base: cells.slice(),
+    kind, id: entry.id, env: entry.env, name: entry.name, w, h, rows: m.rows, cells, base: cells.slice(), marks: entry.marks || null,
     spawns, teamSpawns, cx: w / 2, cy: h / 2,
   };
 }

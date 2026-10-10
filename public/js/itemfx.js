@@ -1,11 +1,12 @@
 // Petits dessins des animations d'objets de la roulette : bras et poings, menottes et chaîne, lasso,
-// cigare et allumette, carte, marteau, scie, manipulateur de télégraphe, longue-vue, derringer…
+// cigare et allumette, carte, marteau, scie, manipulateur de télégraphe, longue-vue…
 // Tout est posé en rectangles arrondis au pixel près, pour rester net une fois le canvas agrandi.
 import { OUT, shade, disc, makeCanvas, lru } from './sprites.js';
+import { rlFist } from './vmguns.js';
 
 const R = (ctx, x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); };
 const STEEL = '#8a909a', STEEL_L = '#d8dce4', STEEL_D = '#4a4f58';
-const ROPE = '#c8a060', ROPE_D = '#7a5a30';
+const ROPE = '#c8a060', ROPE_D = '#7a5a30', ROPE_B = shade(ROPE, -0.25); // ROPE_B : moitié arrière de la boucle (calculée une fois)
 const SHIRT = '#e8e0d0';
 const BRASS = '#c8901c', BRASS_L = '#f8e08a', BRASS_D = '#7a5010';
 
@@ -25,65 +26,165 @@ export function thick(ctx, x0, y0, x1, y1, w0, col, { w1 = w0, out = OUT, light 
   if (light && w0 >= 4) pass(-Math.ceil(w0 * 0.55), light, w0 * 0.22);
 }
 
-// ------------------------------------------------------------- bras et poings
-// Poing vu à la première personne (≈ 20 × 16), centré sur x, y ; side > 0 : bras qui vient de la droite
-export function fpFist(ctx, x, y, skin, side = 1) {
-  const sd = shade(skin, -0.22), sl = shade(skin, 0.16);
-  const L = Math.round(x) - 10, T = Math.round(y) - 8;
-  const tx = side > 0 ? L - 3 : L + 15; // pouce, côté intérieur
-  R(ctx, L - 1, T, 22, 16, OUT); R(ctx, L, T - 1, 20, 18, OUT);
-  R(ctx, tx - 1, T + 4, 10, 9, OUT);
-  R(ctx, L, T, 20, 16, skin);
-  R(ctx, L + 1, T, 18, 2, sl);
-  for (let k = 1; k < 4; k++) R(ctx, L + k * 5, T, 1, 7, sd);
-  R(ctx, L + 1, T + 7, 18, 1, sd);
-  R(ctx, L, T + 13, 20, 3, sd);
-  R(ctx, tx, T + 5, 8, 7, skin); R(ctx, tx, T + 5, 8, 1, sl); R(ctx, tx + (side > 0 ? 0 : 7), T + 6, 1, 6, sd);
+// ------------------------------------------------------------- matières et coudes
+// Matière : teinte de base, reflet, ombre (calculés une fois par couleur)
+const mats = new Map();
+export function mat(col) {
+  let m = mats.get(col);
+  if (!m) { m = { b: col, l: shade(col, 0.18), d: shade(col, -0.28) }; mats.set(col, m); }
+  return m;
+}
+// Coude d'un bras de l'épaule sh au poignet wr ({ x, y }), pour un bras (up) et un avant-bras (fore) de ces longueurs,
+// plié du côté bend (-1 : à gauche, 1 : à droite) ; trop loin, le bras se tend.
+// raised : coude levé sur le côté (bras qui frappe) plutôt que retombant
+export function elbow(sh, wr, up, fore, bend = 1, raised = false) {
+  const dx = wr.x - sh.x, dy = wr.y - sh.y, d = Math.hypot(dx, dy) || 1;
+  if (d >= up + fore - 0.01) return { x: sh.x + (dx * up) / (up + fore), y: sh.y + (dy * up) / (up + fore) };
+  const a = (up * up - fore * fore + d * d) / (2 * d), hh = Math.sqrt(Math.max(0, up * up - a * a));
+  let nx = -dy / d, ny = dx / d;
+  // le coude retombe plutôt vers le bas, du côté bend
+  if (raised ? nx * bend < 0 : ny + nx * bend * 0.6 < 0) { nx = -nx; ny = -ny; }
+  return { x: sh.x + (dx / d) * a + nx * hh, y: sh.y + (dy / d) * a + ny * hh };
 }
 
-// Mon bras : la manche monte du bas de l'écran jusqu'au poing (x, y). hold : objet tenu, dessiné sous les doigts ;
-// cuff : bracelet de menotte au poignet. Renvoie la position du poignet.
-export function fpArm(ctx, x, y, skin, cloth, side = 1, { hold = null, cuff = false } = {}) {
-  const ex = x + side * 46, ey = 262;
-  const dx = ex - x, dy = ey - y, l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
-  thick(ctx, x + ux * 10, y + uy * 10, ex, ey, 18, cloth, { w1: 26, light: shade(cloth, 0.18) });
-  thick(ctx, x + ux * 7, y + uy * 7, x + ux * 10, y + uy * 10, 17, SHIRT);
-  const wx = x + ux * 13, wy = y + uy * 13;
-  if (cuff) cuffBand(ctx, wx, wy, 24, 6);
+// ------------------------------------------------------------- bras et poings
+// Mon bras (vue subjective) : la main des armes en main du FPS (vmguns.js : rlFist), refermée, l'avant-bras et la
+// manche qui filent vers le bas de l'écran, avec les mêmes proportions et le même modelé qu'au FPS. Le poing est centré
+// sur (x, y) ; side > 0 : main droite. hold : objet tenu, dessiné avant la main (les doigts se referment dessus) ;
+// cuff : bracelet de menotte au poignet ; small : poing lointain (posé sur le fusil au milieu de la table).
+// Renvoie la position du poignet.
+export function fpArm(ctx, x, y, skin, cloth, side = 1, { hold = null, cuff = false, small = false } = {}) {
+  const f = rlFist(side > 0 ? 1 : -1, skin, cloth, small);
+  const L = Math.round(x) - f.ax, T = Math.round(y) - f.ay;
   hold?.(ctx);
-  fpFist(ctx, x, y, skin, side);
+  ctx.drawImage(f, L, T);
+  const wx = L + f.wx, wy = T + f.wy;
+  if (cuff) cuffBand(ctx, wx, wy, small ? 12 : 22, small ? 4 : 6);
   return { x: wx, y: wy };
 }
 
-// Poing de l'adversaire (≈ 12 × 8)
-export function smallFist(ctx, x, y, skin, side = 1) {
-  const sd = shade(skin, -0.22), sl = shade(skin, 0.15);
-  const L = Math.round(x) - 6, T = Math.round(y) - 4;
-  const tx = side > 0 ? L - 2 : L + 10;
-  R(ctx, L - 1, T - 1, 14, 10, OUT); R(ctx, tx - 1, T + 1, 6, 6, OUT);
-  R(ctx, L, T, 12, 8, skin); R(ctx, L, T, 12, 1, sl);
-  for (let k = 1; k < 4; k++) R(ctx, L + k * 3, T, 1, 3, sd);
-  R(ctx, L, T + 6, 12, 2, sd);
-  R(ctx, tx, T + 2, 4, 4, skin); R(ctx, tx, T + 2, 4, 1, sl);
+// ------------------------------------------------------------- bras de l'adversaire, en gros pixels du buste
+// Comme les cow-boys du FPS (fpsart.js : ppLimb, ppFist) : bras et avant-bras en traits épais cernés, ombrés du côté
+// opposé à la lumière, poing carré. Tout est compté en unités du buste (characterSprite, agrandi ×2 à l'écran) :
+// g = { x, y, s } pose l'unité (u, v) en (x + s·u, y + s·v) ; s = 2 à l'écran (pixels calés sur ceux du buste),
+// s = 1 dans un calque en unités qu'on agrandit ensuite. Épaisseurs : celles des côtés du torse du buste.
+export const BUST_UP = 5, BUST_FORE = 4, BUST_FIST = 5;
+function uLine(ctx, g, a, b, w, col) {
+  const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) * 2)), h = Math.floor(w / 2);
+  ctx.fillStyle = col;
+  for (let i = 0; i <= n; i++) {
+    const u = Math.round(a[0] + ((b[0] - a[0]) * i) / n) - h, v = Math.round(a[1] + ((b[1] - a[1]) * i) / n) - h;
+    ctx.fillRect(g.x + g.s * u, g.y + g.s * v, g.s * w, g.s * w);
+  }
+}
+// liseré d'ombre (bas droite) et de lumière (haut gauche) le long d'un segment de largeur w
+function uShade(ctx, g, a, b, w, col) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+  let nx = -dy / l, ny = dx / l;
+  if (nx + ny < 0) { nx = -nx; ny = -ny; }
+  const k = Math.max(0, w / 2 - 0.7);
+  uLine(ctx, g, [a[0] + nx * k, a[1] + ny * k], [b[0] + nx * k, b[1] + ny * k], 1, mat(col).d);
+  if (w >= 4) uLine(ctx, g, [a[0] - nx * k, a[1] - ny * k], [b[0] - nx * k, b[1] - ny * k], 1, mat(col).l);
+}
+// Bras : épaule sh → coude el → poignet wr (points [u, v]) ; sl : { up, fore } (manche, avant-bras : manche ou peau).
+// Contours d'abord, puis les couleurs : pas de trait au pli du coude.
+export function bustArm(ctx, g, sh, el, wr, sl) {
+  uLine(ctx, g, sh, el, BUST_UP + 2, OUT);
+  uLine(ctx, g, el, wr, BUST_FORE + 2, OUT);
+  uLine(ctx, g, sh, el, BUST_UP, sl.up);
+  uShade(ctx, g, sh, el, BUST_UP, sl.up);
+  uLine(ctx, g, el, wr, BUST_FORE, sl.fore);
+  uShade(ctx, g, el, wr, BUST_FORE, sl.fore);
+  // manchette de chemise au poignet (pas sur un avant-bras nu)
+  if (sl.fore !== sl.skin) {
+    const dx = wr[0] - el[0], dy = wr[1] - el[1], l = Math.hypot(dx, dy) || 1;
+    uLine(ctx, g, [wr[0] - (dx / l) * 0.6, wr[1] - (dy / l) * 0.6], wr, BUST_FORE, SHIRT);
+  }
+}
+// Poing carré (vu du dos, jointures en haut), centré sur p = [u, v]
+export function bustFist(ctx, g, p, skin, n = BUST_FIST) {
+  const x = Math.round(p[0] - n / 2), y = Math.round(p[1] - n / 2), m = mat(skin);
+  const Q = (u, v, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(g.x + g.s * u, g.y + g.s * v, g.s * w, g.s * h); };
+  Q(x - 1, y - 1, n + 2, n + 2, OUT);
+  Q(x, y, n, n, skin);
+  Q(x + n - 1, y, 1, n, m.d); Q(x, y + n - 1, n, 1, m.d); Q(x, y, n - 1, 1, m.l);
+  for (let i = 1; i < n - 1; i += 2) Q(x + i, y + 1, 1, 1, m.d); // jointures
+}
+// Main refermée sur ce qu'elle tient, vue de dos : dos des doigts éclairé en haut, plis des jointures, bout des doigts
+// repliés en bas, pouce du côté intérieur (vers le milieu de son torse) qui passe par-dessus. Dessinée pour une main à
+// ma droite (sa main gauche, pouce à gauche), retournée pour l'autre. L : reflet, s : peau, k : pli, d : ombre,
+// T / t : pouce. Contour d'une unité tout autour (comme bras et buste).
+const HAND = [
+  '.LLLL.',
+  'TskskD',
+  'TssssD',
+  '.dkdk.',
+];
+const hands = new Map();
+function handImg(skin, side) {
+  const key = `${skin}|${side}`;
+  let c = hands.get(key);
+  if (c) return c;
+  const m = mat(skin), w = HAND[0].length, h = HAND.length;
+  const col = { L: m.l, s: skin, k: shade(skin, -0.14), d: shade(skin, -0.2), D: m.d, T: shade(skin, 0.08), t: shade(skin, -0.1) };
+  c = makeCanvas(w + 2, h + 2);
+  const x = c.getContext('2d');
+  const at = (i, j) => { const r = HAND[j]; return r && r[side > 0 ? i : w - 1 - i]; };
+  const full = (i, j) => { const ch = at(i, j); return !!ch && ch !== '.'; };
+  // contour : toute case vide qui touche (aussi en diagonale) une case pleine
+  x.fillStyle = OUT;
+  for (let j = -1; j <= h; j++) for (let i = -1; i <= w; i++) {
+    if (full(i, j)) continue;
+    let near = false;
+    for (let dj = -1; dj <= 1 && !near; dj++) for (let di = -1; di <= 1; di++) if (full(i + di, j + dj)) { near = true; break; }
+    if (near) x.fillRect(i + 1, j + 1, 1, 1);
+  }
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (full(i, j)) { x.fillStyle = col[at(i, j)]; x.fillRect(i + 1, j + 1, 1, 1); }
+  hands.set(key, c);
+  return c;
+}
+export const BUST_HAND = { w: HAND[0].length, h: HAND.length };
+// Main posée en p = [u, v] (son centre) ; side > 0 : main à ma droite (pouce vers ma gauche)
+export function bustHand(ctx, g, p, skin, side = 1) {
+  const img = handImg(skin, side > 0 ? 1 : -1);
+  const u = Math.round(p[0] - BUST_HAND.w / 2) - 1, v = Math.round(p[1] - BUST_HAND.h / 2) - 1;
+  ctx.drawImage(img, g.x + g.s * u, g.y + g.s * v, img.width * g.s, img.height * g.s);
+}
+// Couleurs d'un bras : chaîne (manche et avant-bras de la même couleur) ou { up, fore, skin }
+const sleeve = (cloth, skin) => (typeof cloth === 'string' ? { up: cloth, fore: cloth, skin } : { ...cloth, skin });
+
+// Coude d'un bras de l'adversaire vu de face (unités du buste), de l'épaule sh à la main h ([u, v]) : comme les cow-boys
+// du FPS qui visent (fpsart.js : ppRig), il reste près du flanc (à peine décalé vers la main, jamais écarté vers
+// l'extérieur) et se pose sur la table (BUST_TABLE) tant que la main est plus haut ; une main levée haut l'emmène avec
+// elle (avant-bras de BUST_FA au plus : le bras se tend vers moi, raccourci), bras de BUST_UA au plus.
+export const BUST_TABLE = 50, BUST_FA = 12, BUST_UA = 10;
+export function bustElbow(sh, h) {
+  let e = [sh[0] + (h[0] - sh[0]) * 0.1, Math.min(BUST_TABLE, Math.max(sh[1] + 3, h[1] + 8))];
+  let dx = e[0] - h[0], dy = e[1] - h[1], l = Math.hypot(dx, dy);
+  if (l > BUST_FA) e = [h[0] + (dx * BUST_FA) / l, h[1] + (dy * BUST_FA) / l];
+  dx = e[0] - sh[0]; dy = e[1] - sh[1]; l = Math.hypot(dx, dy);
+  if (l > BUST_UA) e = [sh[0] + (dx * BUST_UA) / l, sh[1] + (dy * BUST_UA) / l];
+  return e;
+}
+// Bras entier d'un seul tenant, en unités du buste : épaule sh → coude (el, sinon bustElbow) → poignet → main en h.
+// L'avant-bras finit sous la main (le poignet est caché par elle) : on suit le bras de l'épaule jusqu'aux doigts.
+// hold : objet tenu, dessiné entre le bras et la main (les doigts se referment dessus).
+export function bustLimb(ctx, g, sh, h, skin, sl, side = 1, { el = null, hold = null } = {}) {
+  const e = el || bustElbow(sh, h);
+  const dx = e[0] - h[0], dy = e[1] - h[1], l = Math.hypot(dx, dy) || 1;
+  const wr = l > 3 ? [h[0] + (dx / l) * 3, h[1] + (dy / l) * 3] : h;
+  bustArm(ctx, g, sh, e, wr, sl);
+  hold?.(ctx);
+  bustHand(ctx, g, h, skin, side);
+  return e;
 }
 
-// Bras à l'échelle de la table : du coude (ex, ey) au poing (x, y). reach : longueur du bras complet depuis
-// l'épaule (ex, ey) — le coude se plie alors vers l'extérieur (bend : 1 à droite, -1 à gauche) au lieu d'un bras raide.
-export function smallArm(ctx, ex, ey, x, y, skin, cloth, { hold = null, w = 10, reach = 0, bend = 1 } = {}) {
-  if (reach) {
-    const d = Math.hypot(x - ex, y - ey) || 1, half = reach / 2;
-    const out = Math.sqrt(Math.max(0, half * half - (d / 2) * (d / 2)));
-    let nx = -(y - ey) / d, ny = (x - ex) / d;
-    if (nx * bend < 0) { nx = -nx; ny = -ny; }
-    const jx = (ex + x) / 2 + nx * out, jy = (ey + y) / 2 + ny * out;
-    thick(ctx, jx, jy, ex, ey, w + 2, cloth, { w1: w + 4, light: shade(cloth, 0.2) }); // haut du bras
-    ex = jx; ey = jy;
-  }
-  const dx = ex - x, dy = ey - y, l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
-  thick(ctx, x + ux * 6, y + uy * 6, ex, ey, w, cloth, { w1: w + 2, light: shade(cloth, 0.2) });
-  thick(ctx, x + ux * 4, y + uy * 4, x + ux * 6, y + uy * 6, w - 1, SHIRT);
-  hold?.(ctx);
-  smallFist(ctx, x, y, skin, ux < 0 ? -1 : 1);
+// Bras de l'adversaire, de son épaule sh ({ x, y } à l'écran, sh.g : repère du buste) au poing (x, y), coude près du
+// flanc (bustElbow) ; hold : objet tenu, dessiné sous les doigts. Renvoie le coude (à l'écran).
+export function oppArm(ctx, sh, x, y, skin, cloth, side = 1, hold = null) {
+  const g = sh.g || { x: 0, y: 0, s: 2 }, U = (px, py) => [(px - g.x) / g.s, (py - g.y) / g.s];
+  const e = bustLimb(ctx, g, U(sh.x, sh.y), U(x, y), skin, sleeve(cloth, skin), side, { hold });
+  return { x: g.x + g.s * e[0], y: g.y + g.s * e[1] };
 }
 
 // ------------------------------------------------------------- menottes
@@ -130,7 +231,7 @@ export function loop(ctx, cx, cy, rx, ry, phase, part = 'all', w = 1) {
     const a = (i / n) * Math.PI * 2, front = Math.sin(a) >= 0;
     if ((part === 'back' && front) || (part === 'front' && !front)) continue;
     const x = Math.round(cx + Math.cos(a) * rx), y = Math.round(cy + Math.sin(a) * ry);
-    R(ctx, x, y + w, w, 1, ROPE_D); R(ctx, x, y, w, w, front ? ROPE : shade(ROPE, -0.25));
+    R(ctx, x, y + w, w, 1, ROPE_D); R(ctx, x, y, w, w, front ? ROPE : ROPE_B);
   }
   const kx = cx + Math.cos(phase) * rx, ky = cy + Math.sin(phase) * ry;
   if (part !== 'back') { R(ctx, kx - 1, ky - 1, w + 2, w + 2, ROPE_D); R(ctx, kx - 1, ky - 1, w + 1, w + 1, ROPE); }
@@ -306,19 +407,4 @@ export function lensView(ctx, cx, cy, r, W, H, inside) {
   if (cy + ro < H) R(ctx, 0, cy + ro, W, H - cy - ro, '#0a0604');
   if (cx - ro > 0) R(ctx, 0, cy - ro, cx - ro, ro * 2, '#0a0604');
   if (cx + ro < W) R(ctx, cx + ro, cy - ro, W - cx - ro, ro * 2, '#0a0604');
-}
-
-// Derringer vu à la première personne : crosse dans le poing (x, y), canons jusqu'à la bouche (mx, my)
-export function derringerFP(ctx, x, y, mx, my) {
-  thick(ctx, x + 2, y + 2, x + 8, y + 12, 6, '#7a4a24', { light: '#a8703c' });
-  thick(ctx, x, y, mx, my, 7, '#3a3e46', { w1: 5, light: '#9aa0aa' });
-  thick(ctx, x - 2, y - 4, x + 1, y - 7, 2, STEEL_D); // chien
-  disc(ctx, mx, my, 2, OUT);
-}
-
-// Derringer pointé droit sur moi : les deux canons superposés, vus de face
-export function derringerFront(ctx, x, y) {
-  R(ctx, x - 5, y - 8, 10, 16, OUT); R(ctx, x - 4, y - 7, 8, 14, '#4a4f58'); R(ctx, x - 4, y - 7, 1, 14, '#9aa0aa'); R(ctx, x + 3, y - 7, 1, 14, '#2a2e36');
-  disc(ctx, x, y - 3, 2, OUT); disc(ctx, x, y + 3, 2, OUT);
-  R(ctx, x - 1, y - 4, 1, 1, '#6a6e76');
 }

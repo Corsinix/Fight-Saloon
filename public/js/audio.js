@@ -1100,7 +1100,8 @@ function parseChord(name) {
   const pc = (PC[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0) + 12) % 12;
   return { pc, iv: QUAL[m[3]] };
 }
-const toks = (str) => str.split(/\s+/).filter((x) => x && x !== '|').map((tok) => {
+// les barres de mesure « | » sont ignorées, même collées à une note (« |C6:8 », fin d'une chaîne suivie de la suivante)
+const toks = (str) => str.split(/[\s|]+/).filter(Boolean).map((tok) => {
   const [n, l] = tok.split(':');
   return [n, l === undefined ? 1 : +l];
 });
@@ -1894,6 +1895,10 @@ const PLAYLISTS = {
   'mini-fpsdm': ['mesa', 'enfer', 'cri', 'fusillade', 'nocturne'],
   // La mêlée (vue de dessus), tous ses modes
   'mini-melee': ['fusillade', 'cri', 'plomb', 'filon', 'ruee', 'duel'],
+  // La piste (tactique au tour par tour) : des thèmes posés pour réfléchir, le glas et le vautour pour le repaire
+  'mini-piste': ['collines', 'feu', 'desert', 'colt', 'vautour', 'glas'],
+  // le repaire d'El Diablo (piste.js) : son thème tourne en boucle jusqu'à sa chute
+  'mini-piste-boss': ['diable'],
   'mini-bagarre': ['cogneur', 'uppercut', 'combat', 'dernier', 'coup', 'debout'],
   // le combat contre le champion (bagarre.js) : son thème tourne en boucle jusqu'à la fin du combat
   'mini-bagarre-boss': ['entree'],
@@ -1902,6 +1907,13 @@ const PLAYLISTS = {
 };
 const compiled = {};
 const getSong = (id) => (compiled[id] ||= compile(SONGS[id]));
+// Morceaux et playlists ajoutés par un module chargé plus tard (musiques du mode histoire : story/music.js)
+export function addSongs(songs, playlists = {}) {
+  Object.assign(SONGS, songs);
+  Object.assign(PLAYLISTS, playlists);
+}
+// Compile un morceau sans le jouer (bancs d'essai) : lève une erreur si une mesure n'a pas le bon nombre de pas
+export const checkSong = (id) => getSong(id);
 
 // Vraies musiques : fichiers à déposer dans public/music/ (mp3, ogg, m4a ou wav).
 // Ceux qui sont présents s'intercalent dans la playlist synthétisée correspondante,

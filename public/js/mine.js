@@ -23,6 +23,9 @@ const rd = Math.round;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const smooth = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k));
 const STAGE_FX = 2200; // durée du bandeau de changement d'étape
+// image des roues selon la distance parcourue (un quart de tour tous les 12 px) : elles tournent avec
+// la vitesse du wagonnet et s'arrêtent avec lui
+const wheelF = (x) => Math.floor(x / 12) & 1;
 
 // Vues de côté : hauteur des trois voies et colonne du wagonnet
 const SIDE = {
@@ -40,6 +43,8 @@ const BK = { hz: 84, floor: 106, ceil: 150, half: 176, lane: 96, depth: 90, fog:
 const bkScale = (d) => 1 / (1 + Math.max(-60, d) / BK.depth);
 const bkProj = (lane, d) => { const s = bkScale(d); return { x: W / 2 + (lane - 1) * BK.lane * s, y: BK.hz + BK.floor * s, s }; };
 const fogAt = (d) => Math.pow(clamp(d / BK.fog, 0, 1), 0.7);
+// longueur de traverse (4 px tous les 14) entre le début de la voie et x
+const sleeperLen = (x) => { const n = Math.floor(x / 14); return n * 4 + Math.min(x - n * 14, 4); };
 
 // ------------------------------------------------------------ outils de dessin
 const cache = new Map();
@@ -158,6 +163,29 @@ function chasmTile() {
 }
 
 // ------------------------------------------------------------ sprites
+// rail d'un embranchement, vu de côté, de la voie en ya à celle en yb : une colonne par pixel, qui rejoint
+// la précédente (sans trou même dans la pente raide entre les voies du haut et du bas), avec la poutre
+// dessous. Dessiné une fois, puis recopié ; top : la hauteur du haut du sprite à l'écran.
+function junctionRail(ya, yb) {
+  return cached(`jr${ya}:${yb}`, () => {
+    const top = Math.min(ya, yb) - 3, w = MINE.jLen + 3;
+    const c = S.makeCanvas(w, Math.abs(yb - ya) + 6);
+    const x = c.getContext('2d');
+    let prev = ya;
+    for (let k = 0; k < w; k++) {
+      const y = rd(ya + (yb - ya) * smooth(k / MINE.jLen));
+      const a = Math.min(y, prev) - top, b = Math.max(y, prev) - top;
+      x.fillStyle = '#5a3a20'; x.fillRect(k, b + 1, 1, 1);
+      x.fillStyle = OUT; x.fillRect(k, a - 2, 1, b - a + 3);
+      x.fillStyle = '#8a8f98'; x.fillRect(k, a - 2, 1, b - a + 2);
+      x.fillStyle = '#c9ced6'; x.fillRect(k, a - 2, 1, 1);
+      prev = y;
+    }
+    c.top = top;
+    return c;
+  });
+}
+
 // wagonnet et son passager, vus de côté (rail en y = 0) ; f : image des roues
 function cartSprite(r, f) {
   return cached(`c${r.key}|${f}`, () => pixelSprite(40, 42, 20, 40, (R) => {
@@ -169,7 +197,7 @@ function cartSprite(r, f) {
     if (beardHasChin(r.beard)) R(-4, -34 + b, 4, 1, r.hair);
     R(-6, -22, 6, 1, r.color); R(-9, -22 + (f % 2), 3, 1, r.color); // foulard au vent
     drawHat(R, r, b);
-    R(2, -21, 2, 5, r.cloth); R(3, -17, 2, 2, r.skin); // main sur le rebord
+    R(1, -21, 2, 5, r.cloth); R(2, -17, 2, 2, r.skin); // main sur le rebord (le bras part de l'épaule, sans jour)
     // caisse en tôle, plus large en haut
     for (let y = -16; y <= -5; y++) {
       const k = Math.floor((y + 16) / 4);
@@ -193,7 +221,7 @@ function cartBackSprite(r, f) {
     const brim = { sombrero: 22, tophat: 12, bowler: 10, gambler: 14, kepi: 10, bandana: 0, coonskin: 0, none: 0 }[r.hat] ?? 16;
     // buste et tête de dos
     R(-7, -26, 14, 10, r.cloth); R(-7, -26, 14, 1, S.shade(r.cloth, 0.2));
-    R(-6, -22, 12, 1, r.color); R(5 + (f % 2), -21, 3, 1, r.color); // foulard au vent
+    R(-5, -26, 10, 1, r.color); R(5 + (f % 2), -25, 3, 1, r.color); // foulard au vent, noué au col
     R(-4, -33, 8, 7, r.hair); R(-5, -31, 1, 3, r.skin); R(4, -31, 1, 3, r.skin); // oreilles
     if (brim) R(-brim / 2, -34, brim, 2, r.hatC);
     if (r.hat === 'tophat') R(-4, -42, 8, 8, r.hatC);
@@ -265,7 +293,7 @@ const OBS_DRAW = {
   barrier(R) { // voie barrée : barricade rayée rouge et blanc
     R(-11, -16, 3, 16, '#5a3a20'); R(8, -16, 3, 16, '#5a3a20');
     for (const y of [-15, -9]) for (let k = 0; k < 26; k++) R(-13 + k, y, 1, 4, Math.floor(k / 4) % 2 ? '#fdf6e0' : '#c8302a');
-    R(-2, -21, 5, 5, '#f8d070'); R(0, -20, 1, 2, '#1a0f0a'); R(0, -17, 1, 1, '#1a0f0a'); // panneau « ! »
+    R(-2, -22, 5, 6, '#f8d070'); R(0, -21, 1, 2, '#1a0f0a'); R(0, -18, 1, 1, '#1a0f0a'); // panneau « ! »
   },
 };
 const obsSprite = (k) => cached(`o${k}`, () => pixelSprite(32, 26, 16, 23, OBS_DRAW[k]));
@@ -329,6 +357,8 @@ const GOLD_DRAW = {
   },
 };
 const goldSprite = (k) => cached(`g${k}`, () => pixelSprite(16, 14, 8, 12, GOLD_DRAW[k]));
+// où l'or scintille (un pixel blanc sur la pièce, la pépite ou la gemme, autour de l'origine du sprite)
+const GLINT = { gold: [1, -4], nugget: [1, -6], gem: [1, -8] };
 
 // accélérateur, boue, tremplin : vus de côté (side) et de derrière (back)
 const PAD_DRAW = {
@@ -339,7 +369,7 @@ const PAD_DRAW = {
     },
     back(R, on) {
       R(-11, -2, 22, 2, '#6a5020');
-      for (const oy of [-14, -9, -4]) for (let k = 0; k < 4; k++) { R(-k - 2, oy + k, 2, 1, on); R(k, oy + k, 2, 1, on); }
+      for (const oy of [-16, -11, -6]) for (let k = 0; k < 4; k++) { R(-k - 2, oy + k, 2, 1, on); R(k, oy + k, 2, 1, on); }
     },
   },
   mud: {
@@ -566,6 +596,9 @@ function paintTunnel(T, buf, wx, len, t) {
   const { A, RHO, DF, FX, CE, AO, RB, PAL, FOGI, SKY, SAND, TW, TH, wall, floor, water, NZ } = T;
   const TA = stageThemes();
   const FOGMAX = FOGI.length * 8 - 8, PS = SHADES + 1, DEPTH = BK.depth, flow = (t * 0.03) | 0;
+  // la sortie est en vue : tout ce qui est au-delà est dehors, même tout au fond (sinon le point de fuite
+  // restait une tache de roche sombre au milieu de la lumière)
+  const out = len - wx < 1600;
   for (let i = 0, N = TW * TH; i < N; i++) {
     // la paroi : on part de la voûte sans bosses, et on corrige deux fois avec les bosses à cette profondeur
     const a = A[i], rho = RHO[i], rb = RB[a], nz = a * NZU;
@@ -578,7 +611,7 @@ function paintTunnel(T, buf, wx, len, t) {
     let surf = CE[i] ? 2 : 1;
     if (DF[i] < d) { d = DF[i]; surf = 0; }
     const u = wx + d;
-    if (u > len && d < 1600) { buf[i] = surf === 0 ? SAND : SKY[(i / TW) | 0]; continue; }
+    if (u > len && (out || d < 1600)) { buf[i] = surf === 0 ? SAND : SKY[(i / TW) | 0]; continue; }
     const ui = u | 0;
     // au-delà du brouillard, on garde le décor d'ici (le fond du tunnel ne prend pas la couleur d'une étape lointaine)
     const tu = d < FOGMAX ? ui : (wx + FOGMAX) | 0;
@@ -640,7 +673,7 @@ export class MineScene extends MiniScene {
     this.finishT = null; // temps de course à l'arrivée (ms)
     this.finishNow = null;
     this.remote = {};
-    for (let i = 0; i < this.n; i++) if (i !== this.me) this.remote[i] = { x: 0, tx: 0, l: 1, tl: 1, air: false, hitAt: -1e9, outAt: null };
+    for (let i = 0; i < this.n; i++) if (i !== this.me) this.remote[i] = { x: 0, tx: 0, l: 1, tl: 1, air: false, lift: 0, hitAt: -1e9, outAt: null };
     this.riders = this.state.players.map((p, i) => riderLook(p.character, this.color(i), `${i}:${JSON.stringify(p.character || {})}`));
     S.forgetLooks(cache, this.riders.map((r) => r.key)); // wagonnets des joueurs des parties précédentes
     this.fx = []; // étincelles, poussière (coordonnées de l'écran)
@@ -648,6 +681,14 @@ export class MineScene extends MiniScene {
     this.lastL = null;
     this.outside = null;
     tunnelTables(this.touch ? 2 : 1); // les textures du tunnel se calculent pendant le compte à rebours
+    // mode histoire : la galerie huit de la Mine du Vieux Joe (routesdeco.js), chargée pendant la cinématique
+    this.sd = null;
+    const deco = this.hooks.story?.deco;
+    if (deco?.set) {
+      const world = this.world;
+      import('./routesdeco.js').then((m) => m.mineDeco(deco, this.env)).then((d) => { if (this.world === world) { this.sd = d; this.outside = null; } })
+        .catch((e) => console.warn('décor de l’épisode', e));
+    }
   }
 
   applySync(st) {
@@ -826,6 +867,8 @@ export class MineScene extends MiniScene {
       if (t >= 0 && r.outAt == null && !this.over) r.tx = Math.min(this.world.len, r.tx + baseSpeed(r.tx) * dt);
       r.x += (r.tx - r.x) * Math.min(1, dt * 0.01);
       r.l += (r.tl - r.l) * Math.min(1, dt * 0.012);
+      // hauteur du saut : on ne reçoit que « en l'air ou pas », le wagonnet monte et redescend en douceur
+      r.lift += ((r.air ? 16 : 0) - r.lift) * Math.min(1, dt * 0.012);
     }
     for (const p of this.fx) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt; }
     this.fx = this.fx.filter((p) => p.t < p.max);
@@ -918,9 +961,11 @@ export class MineScene extends MiniScene {
       const bob = rd(Math.sin(now / 200 + g.id) * 1.5);
       const spr = goldSprite(g.kind);
       ctx.drawImage(spr, rd(g.x - cam - spr.ox), L.lanes[g.lane] - 10 + bob - spr.oy);
-      if (Math.floor(now / 140 + g.id) % 6 === 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(rd(g.x - cam) + 2, L.lanes[g.lane] - 22 + bob, 1, 1); }
+      if (Math.floor(now / 140 + g.id) % 6 === 0) {
+        const [gx, gy] = GLINT[g.kind];
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(rd(g.x - cam) + gx, L.lanes[g.lane] - 10 + bob + gy, 1, 1);
+      }
     }
-    const frame = Math.floor(now / 90) % 2;
     for (const o of this.world.obstacles) {
       if (o.kind === 'gap') continue;
       const hit = this.crashed.has(o.id);
@@ -929,8 +974,9 @@ export class MineScene extends MiniScene {
         const r = runawayAt(o, c.wx);
         if (r.k < 1 && !hit) {
           if (!onScreen(r.x)) continue;
-          const sx = rd(r.x - cam), sy = rd(laneYf(L, r.lane)) + 1;
-          const spr = oreCartSprite(r.k > 0 ? frame : 0);
+          // les roues reposent sur le rail (bas des roues sur le champignon du rail, comme à l'arrivée)
+          const sx = rd(r.x - cam), sy = rd(laneYf(L, r.lane)) - 1;
+          const spr = oreCartSprite(wheelF(r.x));
           ctx.drawImage(spr, sx - spr.ox, sy - spr.oy);
           if (r.k > 0 && Math.floor(now / 50) % 2) { ctx.fillStyle = '#fff070'; ctx.fillRect(sx - 12 - (o.id % 3), sy - 2, 1, 1); ctx.fillRect(sx + 4, sy - 1, 1, 1); }
           continue;
@@ -962,15 +1008,15 @@ export class MineScene extends MiniScene {
       if (r.left || r.outAt != null || !onScreen(r.x, 30)) continue;
       const wob = t - r.hitAt < MINE.stun ? rd(Math.sin(now / 30) * 2) : 0;
       ctx.globalAlpha = 0.42;
-      const spr = cartSprite(this.riders[+i], frame);
-      ctx.drawImage(spr, rd(r.x - cam) + wob - spr.ox, rd(laneYf(L, r.l) - (r.air ? 16 : 0)) + 1 - spr.oy);
+      const spr = cartSprite(this.riders[+i], wheelF(r.x));
+      ctx.drawImage(spr, rd(r.x - cam) + wob - spr.ox, rd(laneYf(L, r.l) - r.lift) - 1 - spr.oy);
       ctx.globalAlpha = 1;
     }
     const p = this.cartScreen();
     const stun = t < c.stunUntil;
     if (c.air) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(L.px - 12, rd(laneYf(L, cartLane(c))) - 1, 24, 2); }
-    const spr = cartSprite(this.riders[this.me], frame);
-    ctx.drawImage(spr, L.px + (stun ? rd(Math.sin(now / 25) * 2) : 0) - spr.ox, rd(p.y) + 1 - spr.oy + (stun ? rd(Math.abs(Math.sin(now / 40)) * -2) : 0));
+    const spr = cartSprite(this.riders[this.me], wheelF(c.wx));
+    ctx.drawImage(spr, L.px + (stun ? rd(Math.sin(now / 25) * 2) : 0) - spr.ox, rd(p.y) - 1 - spr.oy + (stun ? rd(Math.abs(Math.sin(now / 40)) * -2) : 0));
     for (const b of this.booms) S.drawFlash(ctx, b.x, b.y, 24, b.at);
     // obscurité, percée par les lanternes et la lampe du wagonnet
     this.light(ctx, lamps, p, L, cam, chasm ? 0.42 : theme === 'crystal' ? 0.68 : 0.62);
@@ -1012,6 +1058,9 @@ export class MineScene extends MiniScene {
         const sx = rd(x - cam), ly = y - UP + 3;
         if (crys) this.glowCrystal(ctx, sx, ly, now, x, lamps);
         else this.lantern(ctx, sx, ly, now, x, lamps);
+        // mode histoire : une planche peinte clouée près de la lanterne (le numéro de la galerie, les avertissements de Joe)
+        const sg = !crys && this.sd?.signs[(Math.floor(x / 160) >> 1) % this.sd.signs.length];
+        if (sg && Math.floor(x / 160) % 2 === 0) ctx.drawImage(sg, sx + 10, ly + 1);
       }
     });
   }
@@ -1111,14 +1160,8 @@ export class MineScene extends MiniScene {
   // et un levier d'aiguillage à l'entrée de chaque voie
   junction(ctx, j, cam, now, L) {
     for (const [la, lb] of junctionRails(j)) {
-      const ya = L.lanes[la], yb = L.lanes[lb];
-      for (let k = 0; k <= MINE.jLen; k += 2) {
-        const sx = rd(j.x - cam + k), y = rd(ya + (yb - ya) * smooth(k / MINE.jLen));
-        ctx.fillStyle = '#5a3a20'; ctx.fillRect(sx, y, 2, 2);
-        ctx.fillStyle = OUT; ctx.fillRect(sx, y - 2, 3, 3);
-        ctx.fillStyle = '#8a8f98'; ctx.fillRect(sx, y - 2, 3, 2);
-        ctx.fillStyle = '#c9ced6'; ctx.fillRect(sx, y - 2, 3, 1);
-      }
+      const spr = junctionRail(L.lanes[la], L.lanes[lb]);
+      ctx.drawImage(spr, rd(j.x - cam), spr.top);
     }
     // le levier s'allume quand ton aiguillage est prêt pour cet embranchement
     const c = this.cart;
@@ -1157,8 +1200,9 @@ export class MineScene extends MiniScene {
         ctx.fillStyle = '#8a5a34'; ctx.fillRect(bx, by, 7, 9);
         ctx.fillStyle = '#5a3a20'; ctx.fillRect(bx + 3, by + 9, 1, 8);
         ctx.fillStyle = '#fdf6e0';
-        ctx.fillRect(bx + 3, by + 2, 1, 5);
-        for (let k = 0; k < 3; k++) ctx.fillRect(bx + 3 - k, up ? by + 2 + k : by + 6 - k, 2 * k + 1, 1);
+        // flèche : longue hampe et pointe de trois lignes (sinon elle se lit comme une croix)
+        ctx.fillRect(bx + 3, by + 1, 1, 7);
+        for (let k = 0; k < 3; k++) ctx.fillRect(bx + 3 - k, up ? by + 1 + k : by + 7 - k, 2 * k + 1, 1);
       }
     }
   }
@@ -1249,11 +1293,19 @@ export class MineScene extends MiniScene {
         for (const [la, lb] of junctionRails(j)) lats.push(la + (lb - la) * e);
       }
       const rw = Math.max(1, rd(3 * s));
-      const sl = ((u | 0) % 14 + 14) % 14, sleeper = sl < 4;
+      // traverses (4 px tous les 14) : au loin, une ligne de l'écran couvre plusieurs traverses ; elle prend
+      // alors la teinte de la part de traverse qu'elle couvre (sinon elles clignotent d'une image à l'autre)
+      const span = (BK.depth * BK.floor) / ((y - BK.hz) * (y - BK.hz));
+      const sl = ((u | 0) % 14 + 14) % 14;
+      const cov = span < 1 ? (sl < 4 ? 1 : 0) : (sleeperLen(u) - sleeperLen(u - span)) / span;
       for (const lat of lats) {
         const cx = W / 2 + (lat - 1) * BK.lane * s;
         // traverse, avec un bord sombre côté wagonnet pour qu'elle se lise même sous l'eau
-        if (sleeper) { ctx.fillStyle = sl === 0 ? T.SLEEPD[y] : T.SLEEP[y]; ctx.fillRect(rd(cx - 22 * s), y, Math.max(1, rd(44 * s)), 1); }
+        if (cov > 0.04) {
+          ctx.globalAlpha = Math.min(1, cov);
+          ctx.fillStyle = span < 1 && sl === 0 ? T.SLEEPD[y] : T.SLEEP[y]; ctx.fillRect(rd(cx - 22 * s), y, Math.max(1, rd(44 * s)), 1);
+          ctx.globalAlpha = 1;
+        }
         for (const o of [-13, 13]) {
           const x = rd(cx + o * s - rw / 2);
           ctx.fillStyle = T.RAILD[y]; ctx.fillRect(x - 1, y, rw + 2, 1); // contour sombre
@@ -1285,13 +1337,12 @@ export class MineScene extends MiniScene {
     }
     for (const p of this.world.pads) if (ahead(p.x)) items.push({ d: p.x - wx, lane: p.lane, spr: padSprite(p.kind, 'back', Math.floor(now / 120) % 2 ? '#fff070' : '#f8a030') });
     for (const g of this.world.gold) if (!this.got.has(g.id) && ahead(g.x)) items.push({ d: g.x - wx, lane: g.lane, spr: goldSprite(g.kind), lift: 10 + Math.sin(now / 200 + g.id) * 1.5 });
-    const frame = Math.floor(now / 90) % 2;
     for (const o of this.world.obstacles) {
       const hit = this.crashed.has(o.id);
       if (o.kind === 'runaway' && !hit) {
         // le wagonnet fou, de dos, qui dévale devant toi et prend l'aiguillage
         const r = runawayAt(o, wx);
-        if (r.k < 1) { if (ahead(r.x)) items.push({ d: r.x - wx, lane: r.lane, spr: oreCartBackSprite(r.k > 0 ? frame : 0) }); continue; }
+        if (r.k < 1) { if (ahead(r.x)) items.push({ d: r.x - wx, lane: r.lane, spr: oreCartBackSprite(wheelF(r.x)) }); continue; }
       }
       if (!ahead(o.x)) continue;
       const flame = o.kind === 'flame';
@@ -1300,7 +1351,7 @@ export class MineScene extends MiniScene {
     }
     for (const [i, r] of Object.entries(this.remote)) {
       if (r.left || r.outAt != null || !ahead(r.x) || r.x - wx < 20) continue;
-      items.push({ d: r.x - wx, lane: r.l, spr: cartBackSprite(this.riders[+i], frame), alpha: 0.5, lift: r.air ? 16 : 0, name: +i });
+      items.push({ d: r.x - wx, lane: r.l, spr: cartBackSprite(this.riders[+i], wheelF(r.x)), alpha: 0.5, lift: r.lift, name: +i });
     }
     items.sort((a, b) => b.d - a.d);
     const tags = []; // noms des fantômes, qui s'empilent vers le haut quand ils roulent ensemble
@@ -1328,7 +1379,7 @@ export class MineScene extends MiniScene {
     const p = this.cartScreen();
     const stun = t < c.stunUntil;
     if (c.air) { ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(rd(p.x) - 24, BK.hz + BK.floor - 2, 48, 3); }
-    const spr = cartBackSprite(this.riders[this.me], frame);
+    const spr = cartBackSprite(this.riders[this.me], wheelF(wx));
     const bump = Math.floor(now / 70) % 3 === 0 && !c.air ? 1 : 0;
     // un peu transparent : on voit la voie et les obstacles à travers le wagonnet
     ctx.globalAlpha = 0.6;
@@ -1358,20 +1409,29 @@ export class MineScene extends MiniScene {
     };
     const top = -118, cap = -102;
     // les poteaux, éclairés du côté des rails (la lampe du wagonnet)
+    // (beam éclaire le bord gauche et assombrit le droit : on inverse pour le poteau de gauche)
     beam(-166, cap, -146, BK.floor);
     beam(146, cap, 166, BK.floor);
+    ctx.fillStyle = dk; ctx.fillRect(X(-166), Y(cap), e, Y(BK.floor) - Y(cap));
     ctx.fillStyle = lt; ctx.fillRect(X(-146) - e, Y(cap), e, Y(BK.floor) - Y(cap));
-    ctx.fillStyle = dk; ctx.fillRect(X(146), Y(cap), e, Y(BK.floor) - Y(cap));
     // fibres du bois et pieds calés par une pierre
     if (s > 0.25) {
       ctx.fillStyle = dk;
       for (const x of [-160, 152]) for (const y of [-60, -10, 40]) ctx.fillRect(X(x), Y(y + (f.x % 30)), e, rd(10 * s));
     }
-    beam(-176, top, 176, cap, 'top');
-    // jambes de force entre poteau et chapeau
-    for (const side of [-1, 1]) for (let k = 0; k < 6; k++) {
+    // jambes de force entre poteau et chapeau : elles montent jusque sous le chapeau (dessiné par-dessus)
+    for (const side of [-1, 1]) for (let k = 0; k < 7; k++) {
       const x = side > 0 ? 138 - k * 6 : -145 + k * 6;
       ctx.fillStyle = k ? md : lt; ctx.fillRect(X(x), Y(-62 - k * 7), Math.max(1, rd(7 * s)), Math.max(1, rd(9 * s)));
+    }
+    beam(-176, top, 176, cap, 'top');
+    // mode histoire : « GALERIE 8 » peint sur le chapeau d'un cadre sur trois
+    const plank = this.sd?.beam;
+    if (plank && Math.floor(f.x / 96) % 3 === 0 && f.th !== 2 && s > 0.12) {
+      ctx.globalAlpha = 1 - fog;
+      const pw = rd(plank.width * s * 1.6), ph = rd(plank.height * s * 1.6);
+      ctx.drawImage(plank, rd(W / 2 - pw / 2), rd(BK.hz + (top + cap) / 2 * s - ph / 2), pw, ph);
+      ctx.globalAlpha = 1;
     }
     if (f.th === 2) {
       // galerie en feu : des flammes lèchent le chapeau
@@ -1430,12 +1490,12 @@ export class MineScene extends MiniScene {
       o.fillStyle = '#5a3a20'; o.fillRect(128, 110, 3, 70); o.fillRect(176, 110, 3, 70);
       for (let x = 128; x < 179; x++) { o.fillStyle = Math.floor((x - 128) / 6) % 2 ? '#fdf6e0' : '#1a0f0a'; o.fillRect(x, 108, 1, 10); }
       canvasText(o, 'SORTIE', 153, 96, { color: '#f8d070' });
+      this.sd?.out(o); // mode histoire : le chevalement et l'enseigne de la Mine du Vieux Joe, la dynamite de Bart
     }
     ctx.drawImage(this.outside, 0, 0);
     // les wagonnets sortis, rangés par ordre d'arrivée (le premier tout au bout) ; à 5 ou 6, ils se serrent
     // pour que le dernier reste sous la ligne d'arrivée
     const players = this.state?.players || [];
-    const frame = Math.floor(now / 90) % 2;
     const gap = Math.min(56, Math.floor(180 / Math.max(1, players.length - 1)));
     players.forEach((pl, i) => {
       const r = i === this.me ? null : this.remote[i];
@@ -1444,7 +1504,7 @@ export class MineScene extends MiniScene {
       const slot = W - 40 - (pl.rank - 1) * gap;
       const k = smooth(clamp((now - out) / 1600, 0, 1));
       const x = rd(60 + (slot - 60) * k);
-      const spr = cartSprite(this.riders[i], k < 1 ? frame : 0);
+      const spr = cartSprite(this.riders[i], wheelF(x));
       ctx.drawImage(spr, x - spr.ox, 179 - spr.oy);
       if (k >= 1) canvasText(ctx, `${pl.rank}`, x, 128, { size: 16, color: this.color(i) });
     });
@@ -1563,8 +1623,11 @@ export class MineScene extends MiniScene {
     mark(c.wx, this.color(this.me), true);
     // vitesse et effets en cours
     const kmh = rd(cartSpeed(c, Math.max(0, t)) * 260);
-    const fx = t < c.boostUntil ? ' TURBO' : t < c.slowUntil ? ' BOUE' : c.air ? ' EN L\'AIR' : '';
-    canvasText(ctx, `${t < 0 ? 0 : kmh} KM/H${fx}`, W - 6, 4, { align: 'right', color: t < c.boostUntil ? '#fff070' : kmh > 44 ? '#f0907a' : '#e8d8b8' });
+    const fx = t < c.boostUntil ? 'TURBO' : t < c.slowUntil ? 'BOUE' : c.air ? 'EN L\'AIR' : '';
+    // l'effet en cours passe à la ligne : sur une seule ligne, « 77 KM/H TURBO » mordait sur « SORTIE »
+    const kcol = t < c.boostUntil ? '#fff070' : kmh > 44 ? '#f0907a' : '#e8d8b8';
+    canvasText(ctx, `${t < 0 ? 0 : kmh} KM/H`, W - 6, 4, { align: 'right', color: kcol });
+    if (fx) canvasText(ctx, fx, W - 6, 13, { align: 'right', color: kcol });
     // position dans la course
     const pos = this.position();
     canvasText(ctx, `${pos}${pos === 1 ? 'ER' : 'E'} / ${this.n}`, 6, 4, { align: 'left', color: '#f8d070' });

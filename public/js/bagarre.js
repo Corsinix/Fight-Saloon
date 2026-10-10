@@ -7,7 +7,7 @@
 import * as S from './sprites.js';
 import { sfx, bossMusic } from './audio.js';
 import { canvasText, textSprite } from './scene.js';
-import { MiniScene, pixelSprite, ring } from './miniscene.js';
+import { MiniScene, ring } from './miniscene.js';
 import { riderLook } from './lasso.js';
 import { W, H, BAGARRE } from './worlds.js';
 
@@ -20,8 +20,10 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 // ------------------------------------------------------------ réglages
 const OPP_X = 192, OPP_Y = 200; // ceinture de l'adversaire (sprite ×2)
-const ME_X = 192, ME_Y = 246; // bas du dos du joueur (sous le bord de l'image : on voit la tête et les épaules)
-const HEAD_LINE = 100; // clic au-dessus : coup au visage, en dessous : au corps
+// bas du dos du joueur, bien sous le bord de l'image : on voit sa tête et ses épaules, sans cacher le ventre de l'adversaire
+const ME_X = 192, ME_Y = 262;
+const GHOST = 0.6; // au repos, le joueur est à demi transparent : on voit le corps de l'adversaire à travers
+const HEAD_LINE = 100; // clic au-dessus : coup au visage, en dessous : au corps (suit son menton une fois dessiné)
 const PUNCH_HIT = 90, PUNCH_LEN = 230; // le poing touche à 90 ms, le suivant part à 230 ms
 const SPECIAL_HIT = 320, SPECIAL_LEN = 760; // le coup spécial : les deux poings ensemble (armé 320 ms, puis l'impact)
 const HIT_STOP = 130; // l'impact du spécial fige le combat un instant
@@ -50,6 +52,8 @@ const F = BAGARRE.fighters;
 // (dodgeL / dodgeR : esquive à gauche / à droite, duck : se baisser, block : garde ; un pictogramme les montre) ;
 // open : il reste découvert après une esquive réussie (ou une garde, pour le direct : parry) ;
 // kd : contré au corps juste avant l'impact, il s'écroule.
+// wave : le coup frappe le tapis, l'onde arrive sur toi tant de ms plus tard (c'est à ce moment-là qu'il faut esquiver) ;
+// item : ce qu'il lance ; poison : touché, la vue se brouille ; taunt : pas un coup, une pose (ms : sa durée, heal : il se soigne).
 const ANY = ['dodgeL', 'dodgeR', 'duck', 'block'], SIDE = ['dodgeL', 'dodgeR'];
 const ATK = {
   // le jab : tout marche, mais la garde ne le laisse pas découvert
@@ -68,12 +72,19 @@ const ATK = {
   slam: { kind: 'slam', side: 'B', tell: 1150, dmg: 24, beat: SIDE, open: 1300 },
   belly: { kind: 'belly', side: 'B', tell: 1000, dmg: 18, beat: SIDE, open: 1200 },
   charge: { kind: 'charge', side: 'B', tell: 1700, dmg: 38, beat: SIDE, open: 1500, kd: true },
-  bottle: { kind: 'throw', side: 'R', tell: 900, dmg: 16, beat: ['duck'], open: 1000 },
+  bottle: { kind: 'throw', item: 'bottle', side: 'R', tell: 900, dmg: 16, beat: ['duck'], open: 1000, poison: true },
+  mug: { kind: 'throw', item: 'mug', side: 'R', tell: 950, dmg: 16, beat: ['duck'], open: 1100 },
+  // le coup de pied du Bison dans le tapis : l'onde court jusqu'à toi, esquive quand elle arrive
+  stomp: { kind: 'stomp', side: 'B', tell: 1100, dmg: 20, beat: SIDE, open: 1300, wave: 480 },
   feint: { kind: 'jab', side: 'L', tell: 560, feint: true, beat: ANY },
   // enchaînements : chaque coup demande sa parade
   combo: { chain: ['jabL', 'hookR', 'direct'] },
   fury: { chain: ['hookL', 'hookR', 'direct', 'upper'] },
+  // poses : Pierrot s'endort debout, Doc boit son élixir (il se soigne si on ne l'interrompt pas)
+  doze: { taunt: 'doze', ms: 2300 },
+  elixir: { taunt: 'elixir', ms: 1800, heal: 0.15 },
 };
+for (const k in ATK) ATK[k].id = k;
 
 // Répliques des adversaires (bulles de dialogue), par occasion ; GENERIC quand le cogneur n'a rien à lui
 const GENERIC = {
@@ -85,23 +96,29 @@ const LINES = {
   pierrot: {
     start: ['HIC ! EN GARDE…', 'JE VOIS DOUBLE !'], taunt: ['À LA TIENNE !', 'HIC ! SANTÉ !'], hook: ['ATTENTION… HIC !'],
     hurt: ['AÏE, MA TÊTE !', 'OUILLE !'], down: ['ZZZ…'], up: ['PAS SAOUL… HIC !'], win: ['TOURNÉE GÉNÉRALE !'], block: ['RATÉ… HIC !'],
+    doze: ['ZZZ… HIC…', 'JUSTE… CINQ MINUTES…'], woken: ['HEIN ? QUI ÇA ?', 'J\'DORMAIS PAS !'],
   },
   bill: {
     start: ['ON FERME !', 'DEHORS, GAMIN !'], taunt: ['HO HO HO !'], slam: ['TIENS, LE MARTEAU !'], belly: ['ET MA BEDAINE ?'],
     direct: ['UN DIRECT DU BAR !'], hurt: ['HÉ ! MES VERRES !'], down: ['MON COMPTOIR…'], up: ['JE SUIS PAS FINI !'], win: ['L\'ADDITION, GAMIN !'],
+    throw: ['C\'EST MA TOURNÉE !', 'UNE MOUSSE, UNE !'], bounce: ['ÇA CHATOUILLE !', 'HO HO, ÇA REBONDIT !'],
   },
   toro: {
     start: ['¡VAMOS!', '¡ARRIBA!'], taunt: ['¡OLÉ! ¡OLÉ!'], charge: ['¡TORO! ¡TORO!'], swing: ['¡CUIDADO!'], direct: ['¡TOMA!'],
     hurt: ['¡AY, CARAMBA!'], down: ['¡MADRE MÍA!'], up: ['¡OTRA VEZ!'], win: ['¡ADIÓS, AMIGO!'], block: ['¡NO, NO, NO!'],
+    oled: ['¿DÓNDE ESTÁ?', '¡CARAMBA, LAS CUERDAS!'],
   },
   doc: {
     start: ['UNE PETITE DOSE ?', 'OUVREZ GRAND…'], taunt: ['ADMIREZ LE CHAPEAU.'], throw: ['GOÛTE MON ÉLIXIR !'], feint: ['HÉ HÉ… RATÉ !'],
     direct: ['PRESCRIPTION !'], upper: ['AU LIT !'], hurt: ['QUEL MALOTRU !'], down: ['MON… ÉLIXIR…'], up: ['LE REMÈDE AGIT !'], win: ['SUIVANT !'],
+    elixir: ['UNE PETITE GORGÉE…', 'À MA SANTÉ !'], healed: ['AH… ÇA REQUINQUE !'], broken: ['MA FIOLE ! VANDALE !'], poison: ['ÇA PIQUE, HEIN ?'],
+    read: ['TOUJOURS LE MÊME PAS…'],
   },
   bison: {
     start: ['TU VAS TOMBER.', 'À GENOUX.'], taunt: ['GRRRAAAH !'], rage: ['TU M\'AS MIS EN COLÈRE !'], charge: ['LA CHARGE !'],
     direct: ['ENCAISSE ÇA !'], upper: ['ENVOLE-TOI !'], swing: ['BAISSE LA TÊTE !'], hurt: ['C\'EST TOUT ?'], down: ['IMPOSSIBLE…'],
     up: ['JE SUIS LE CHAMPION !'], win: ['RESTE À TERRE !'], block: ['PATHÉTIQUE.'],
+    stomp: ['ÉCOUTE LA TERRE.', 'LA TERRE GRONDE.'], read: ['JE CONNAIS TA DANSE.'],
   },
 };
 
@@ -109,50 +126,71 @@ const LINES = {
 // look : allure (build : carrure ; top : torse ; hat : chapeau) ; speed : multiplie la préparation des coups ;
 // think : attente entre deux actions ; combo : coups encaissés avant de se ressaisir ; counter : chance de riposter ;
 // guard : gardes possibles au repos (high : protège le visage, low : le corps) ; switchy : garde ce qu'on vient de frapper ;
-// moves : coups et poids ; taunt : sa fanfaronnade (le frapper à ce moment-là rapporte une étoile) ;
+// patterns : ses enchaînements écrits, [round à partir duquel il s'en sert, coups…] ; il en pioche un, le déroule jusqu'au
+// bout, puis en pioche un autre : on peut apprendre ses habitudes ('taunt' : sa fanfaronnade, le frapper à ce moment-là
+// rapporte une étoile) ; smart : chance de remplacer un coup par celui qui punit ta parade favorite ;
+// guide : combien de fois chaque coup montre ses signes de parade (ensuite, à toi de lire ses gestes) ;
+// drunk : préparations irrégulières, il tangue ; belly : sa bedaine renvoie les coups au corps ;
 // getUp : compte auquel il se relève après le 1er, 2e… passage au tapis (absent : il reste au tapis) ; recover : forces retrouvées.
 const ROSTER = [
   {
     id: 'pierrot', name: 'PIERROT LA GNÔLE', from: 'DE DODGE CITY', record: '2 V - 31 D', quote: 'HIC ! LE PREMIER QUI TOMBE PAIE SA TOURNÉE !',
     look: { skin: '#f0c8a0', hair: '#8a5a30', build: 'thin', top: 'stripes', topC: '#e8e0d0', topC2: '#b03a2a', pants: '#5a4a6a', hat: 'bowler', hatC: '#5a3a24', nose: 'red', beard: 'stubble', brows: 'sad' },
-    hp: 80, speed: 1.25, think: [900, 1700], combo: 6, counter: 0.1, guard: ['none', 'none', 'low'],
-    moves: [['jabL', 3], ['jabR', 3], ['hookL', 1], ['hookR', 1], ['taunt', 2]],
+    hp: 80, speed: 1.25, think: [900, 1700], combo: 6, counter: 0.1, guard: ['none', 'none', 'low'], drunk: true, smart: 0, guide: 99,
+    patterns: [[1, 'jabL', 'jabR'], [1, 'jabR', 'taunt'], [1, 'hookL'], [1, 'jabL', 'hookR'], [1, 'taunt'], [2, 'doze'], [2, 'jabR', 'jabL', 'hookL'], [3, 'hookR', 'hookL', 'doze']],
     taunt: 'drink', getUp: [3, 6], recover: [0.7, 0.5],
-    tips: ['IL ARME SON POING AVANT DE FRAPPER : ESQUIVE, PUIS COGNE !', 'SON CROCHET VIENT D\'UN CÔTÉ : ESQUIVE DE L\'AUTRE, OU BAISSE-TOI.', 'QUAND IL BOIT À SA FLASQUE, FRAPPE : TA BARRE DE SPÉCIAL SE REMPLIT.'],
+    tips: ['IL ARME SON POING AVANT DE FRAPPER : ESQUIVE, PUIS COGNE !', 'QUAND IL S\'ENDORT DEBOUT OU BOIT À SA FLASQUE, COGNE : TA BARRE DE SPÉCIAL SE REMPLIT.', 'SON CROCHET VIENT D\'UN CÔTÉ : ESQUIVE DE L\'AUTRE, OU BAISSE-TOI.'],
   },
   {
     id: 'bill', name: 'GROS BILL', from: 'BARMAN DU LONGHORN', record: '14 V - 6 D', quote: 'ICI, C\'EST MOI QUI SERS LES TOURNÉES… DE BAFFES !',
-    look: { skin: '#e8b090', hair: '#3a2a1a', build: 'fat', top: 'apron', topC: '#f0ece0', pants: '#3a3a4a', hat: 'none', bald: true, beard: 'handlebar', brows: 'thick', chestHair: true },
-    hp: 110, speed: 1.05, think: [700, 1400], combo: 4, counter: 0.3, guard: ['low', 'low', 'none'],
-    moves: [['jabL', 2], ['jabR', 2], ['hookL', 2], ['direct', 2], ['belly', 2], ['slam', 2], ['taunt', 1]],
+    look: { skin: '#e8b090', hair: '#3a2a1a', build: 'fat', top: 'apron', topC: '#f0ece0', pants: '#3a3a4a', hat: 'none', bald: true, beard: 'handlebar', brows: 'thick', chestHair: true, mug: true },
+    hp: 110, speed: 1.05, think: [700, 1400], combo: 4, counter: 0.3, guard: ['none', 'high', 'none'], belly: true, smart: 0.1, guide: 99,
+    patterns: [[1, 'jabL', 'jabR'], [1, 'belly'], [1, 'direct'], [1, 'jabL', 'slam'], [1, 'taunt'], [2, 'mug'], [2, 'hookL', 'direct'], [2, 'belly', 'slam'], [3, 'mug', 'jabR', 'direct']],
     taunt: 'laugh', getUp: [4, 7], recover: [0.7, 0.5],
-    tips: ['SA BEDAINE ENCAISSE TOUT : VISE LA TÊTE !', 'SON DIRECT TE SUIT PARTOUT : NE BOUGE PAS, GARDE (BAS) !', 'QUAND IL BOMBE LE VENTRE OU LÈVE LES DEUX POINGS, ESQUIVE SUR LE CÔTÉ.'],
+    tips: ['SA BEDAINE RENVOIE LES COUPS AU CORPS : VISE LA TÊTE !', 'QUAND IL LÈVE SA CHOPE, BAISSE-TOI. SON DIRECT, LUI, SE PARE : GARDE (BAS) !', 'QUAND IL BOMBE LE VENTRE OU LÈVE LES DEUX POINGS, ESQUIVE SUR LE CÔTÉ.'],
   },
   {
     id: 'toro', name: 'SEÑOR TORO', from: 'DE SONORA', record: '21 V - 3 D', quote: '¡OLÉ! TU VAS SENTIR LES CORNES DU TAUREAU !',
     look: { skin: '#c88a5a', hair: '#1a1210', build: 'big', top: 'bandolier', pants: '#7a2a1a', hat: 'sombrero', hatC: '#c8a050', beard: 'mustache', brows: 'thick' },
-    hp: 125, speed: 0.95, think: [600, 1300], combo: 4, counter: 0.35, guard: ['high', 'high', 'none'],
-    moves: [['jabL', 2], ['jabR', 2], ['hookR', 2], ['direct', 1], ['swing', 2], ['charge', 2], ['taunt', 1]],
+    hp: 125, speed: 0.95, think: [600, 1300], combo: 4, counter: 0.35, guard: ['high', 'high', 'none'], smart: 0.15, guide: 3,
+    patterns: [[1, 'jabL', 'jabR'], [1, 'swing'], [1, 'hookR'], [1, 'taunt', 'charge'], [2, 'direct', 'swing'], [2, 'jabR', 'hookR', 'swing'], [2, 'charge'], [3, 'swing', 'charge']],
     taunt: 'flex', getUp: [3, 6, 8], recover: [0.7, 0.5, 0.35],
-    tips: ['SA GARDE EST HAUTE : FRAPPE AU CORPS.', 'QUAND IL CHARGE, UN COUP AU VENTRE JUSTE AVANT L\'IMPACT ET IL S\'ÉCROULE !', 'SON GRAND REVERS PASSE AU RAS DU CHAPEAU : BAISSE-TOI !'],
+    tips: ['SA CHARGE : ESQUIVE AU TOUT DERNIER MOMENT ET IL FILE DANS LES CORDES. ¡OLÉ !', 'SA GARDE EST HAUTE : FRAPPE AU CORPS. ET UN COUP AU VENTRE JUSTE AVANT SA CHARGE L\'ÉCROULE !', 'SON GRAND REVERS PASSE AU RAS DU CHAPEAU : BAISSE-TOI !'],
   },
   {
     id: 'doc', name: 'DOC VIPÈRE', from: 'MARCHAND D\'ÉLIXIRS', record: '27 V - 2 D', quote: 'UNE GORGÉE DE MON ÉLIXIR ET TU DORMIRAS COMME UN BÉBÉ.',
     look: { skin: '#e0c0a0', hair: '#2a2a2a', build: 'thin', top: 'vest', topC: '#f0ece0', topC2: '#3a6a4a', sleeves: '#f0ece0', pants: '#2a2a3a', hat: 'tophat', hatC: '#2a2228', beard: 'goatee', brows: 'sly', tooth: true },
-    hp: 135, speed: 0.8, think: [500, 1100], combo: 3, counter: 0.5, guard: ['high', 'low'], switchy: true,
-    moves: [['jabL', 2], ['jabR', 2], ['hookL', 1], ['direct', 2], ['upper', 2], ['bottle', 2], ['feint', 2], ['combo', 2], ['taunt', 1]],
+    hp: 135, speed: 0.8, think: [500, 1100], combo: 3, counter: 0.5, guard: ['high', 'low'], switchy: true, smart: 0.3, guide: 2,
+    patterns: [[1, 'jabL', 'direct'], [1, 'feint'], [1, 'bottle'], [1, 'upper'], [1, 'elixir'], [1, 'taunt'], [2, 'combo'], [2, 'feint', 'upper'], [2, 'bottle', 'hookL'], [2, 'elixir'], [3, 'combo', 'bottle'], [3, 'feint', 'direct', 'elixir']],
     taunt: 'hat', getUp: [4, 7], recover: [0.65, 0.45],
-    tips: ['IL FEINTE : ATTENDS L\'ÉCLAIR DANS SON ŒIL AVANT DE BOUGER.', 'SON UPPERCUT CUEILLE CEUX QUI SE BAISSENT : ESQUIVE SUR LE CÔTÉ !', 'SES ENCHAÎNEMENTS CHANGENT DE PARADE À CHAQUE COUP : REGARDE LES SIGNES.'],
+    tips: ['S\'IL BOIT SON ÉLIXIR, COGNE AVANT QU\'IL AIT FINI : SINON, IL SE REQUINQUE.', 'SA FIOLE TE BROUILLE LA VUE : BAISSE-TOI ! ET SON UPPERCUT, ESQUIVE-LE SUR LE CÔTÉ.', 'IL FEINTE : ATTENDS L\'ÉCLAIR DANS SON ŒIL AVANT DE BOUGER.'],
   },
   {
     id: 'bison', name: 'LE GRAND BISON', from: 'CHAMPION DES TERRITOIRES', record: '41 V - 0 D', champ: true, quote: 'PERSONNE NE TIENT TROIS ROUNDS CONTRE MOI. PERSONNE.',
     look: { skin: '#d8a078', hair: '#4a3020', build: 'huge', top: 'fur', topC: '#5a3a22', pants: '#2a2a2a', hat: 'horns', hatC: '#4a3020', beard: 'full', brows: 'thick', belt: true, chestHair: true },
-    hp: 150, speed: 0.75, think: [450, 1000], combo: 3, counter: 0.5, guard: ['high', 'low', 'high'], switchy: true, rage: true,
-    moves: [['jabL', 2], ['jabR', 2], ['hookL', 2], ['hookR', 2], ['direct', 2], ['upper', 2], ['swing', 1], ['charge', 1], ['combo', 2], ['taunt', 1]],
+    hp: 150, speed: 0.75, think: [450, 1000], combo: 3, counter: 0.5, guard: ['high', 'low', 'high'], switchy: true, rage: true, smart: 0.35, guide: 1,
+    patterns: [[1, 'jabL', 'jabR'], [1, 'hookL', 'hookR'], [1, 'direct'], [1, 'upper'], [1, 'stomp'], [1, 'taunt'], [2, 'combo'], [2, 'swing', 'upper'], [2, 'stomp', 'direct'], [3, 'charge'], [3, 'hookR', 'stomp']],
     taunt: 'roar', getUp: [2, 5, 8], recover: [0.75, 0.55, 0.4],
-    tips: ['LE CHAMPION NE PARDONNE RIEN : GARDE TON SPÉCIAL POUR QUAND IL VACILLE.', 'QUAND IL RUGIT, UNE RAFALE ARRIVE : CROCHET, CROCHET, DIRECT, UPPERCUT !', 'AU TAPIS, ALTERNE GAUCHE ET DROITE : TU REPRENDS DES FORCES.'],
+    tips: ['QUAND IL FRAPPE LE TAPIS, ATTENDS QUE L\'ONDE ARRIVE SUR TOI POUR ESQUIVER.', 'IL TE LIT : NE PARE PAS TOUJOURS DE LA MÊME FAÇON. ET QUAND IL RUGIT, UNE RAFALE ARRIVE !', 'LE CHAMPION NE PARDONNE RIEN : GARDE TON SPÉCIAL POUR QUAND IL VACILLE.'],
   },
 ];
+// les coups simples de chacun, où piocher celui qui punit ta parade favorite
+for (const d of ROSTER) d.pool = [...new Set(d.patterns.flatMap((p) => p.slice(1)))].filter((m) => ATK[m]?.beat && !ATK[m].feint && !ATK[m].wave);
+
+// ------------------------------------------------------------ les salles : une par cogneur
+// wall : le fond (dessiné une fois) ; mat, rope, post, pad, cap : le ring ; fans : chemises, chapeaux, sombreros de la foule
+const STAGES = {
+  pierrot: { banner: 'BAGARRE DU SAMEDI SOIR', place: 'LA GRANGE DE DODGE CITY', wall: 'barn', mat: '#b8a47a', rope: '#d8c090', post: '#6a3a20', pad: '#a02a1a', cap: '#c8a050',
+    shirts: ['#7a3a2a', '#3a5a7a', '#6a6a3a', '#5a3a5a', '#8a6a3a', '#3a3a3a'], hats: ['#5a3a24', '#3a2a1a', '#8a6a48', '#2a2228', '#c8a050'], dim: -0.45 },
+  bill: { banner: 'TOURNÉE DE BAFFES AU LONGHORN', place: 'LE SALOON LONGHORN', wall: 'bar', mat: '#a8986e', rope: '#ece0c0', post: '#4a2a1a', pad: '#2a5a3a', cap: '#d8b860',
+    shirts: ['#8a2a2a', '#2a4a3a', '#5a4a3a', '#3a3a5a', '#f0ece0', '#6a3a2a'], hats: ['#3a2a1a', '#2a2228', '#6a4a30'], dim: -0.4 },
+  toro: { banner: 'GRANDE FIESTA DE SONORA', place: 'LA PLAZA DE SONORA', wall: 'plaza', mat: '#d8bc84', rope: '#e8dcc0', post: '#8a4a28', pad: '#2a7a3a', cap: '#e0b040', sand: true,
+    shirts: ['#e8e0d0', '#c8402a', '#2a7a3a', '#e0a040', '#6a3a8a', '#3a6aa0'], hats: ['#c8a050', '#e0c070', '#8a6a3a'], sombrero: 0.7, dim: -0.25 },
+  doc: { banner: 'LE SPECTACLE DU DOC VIPÈRE', place: 'LA FOIRE AUX ÉLIXIRS', wall: 'tent', mat: '#b0a07a', rope: '#a8e0a0', post: '#2a4a3a', pad: '#7a2a5a', cap: '#c8c0b0',
+    shirts: ['#5a3a6a', '#3a5a4a', '#8a6a3a', '#6a2a2a', '#2a3a5a'], hats: ['#2a2228', '#5a3a24', '#3a2a3a', '#7a6a50'], dim: -0.5 },
+  bison: { banner: 'CHAMPIONNAT DES TERRITOIRES', place: 'LE GRAND CHAPITEAU', wall: 'champ', mat: '#c4ac80', rope: '#f0d070', post: '#2a1a14', pad: '#b02a1a', cap: '#f8e08a',
+    shirts: ['#7a2a2a', '#3a5a7a', '#6a6a3a', '#5a3a5a', '#8a6a3a', '#2a2a2a', '#e8e0d0'], hats: ['#5a3a24', '#3a2a1a', '#8a6a48', '#2a2228', '#c8a050'], dim: -0.35 },
+};
 
 // ------------------------------------------------------------ sprites des adversaires (×2, ceinture en 0,0)
 const BUILD = {
@@ -177,10 +215,10 @@ function oppPose(name, fr) {
     case 'w_hookR': set({ lf: [-10, -56, 8], rf: [40, -58, 8], hx: 3, face: 'angry' }); break;
     case 'w_upper': set({ lf: [-10, -56, 8], rf: [16, -18, 8], cr: 4, hy: 2, face: 'angry' }); break;
     case 'w_swing': set({ lf: [-42, -62, 8], rf: [42, -62, 8], face: 'angry' }); break;
-    case 'w_slam': set({ lf: [-5, -100, 9], rf: [5, -100, 9], cr: -2, face: 'angry' }); break;
+    case 'w_slam': set({ lf: [-6, -80, 9], rf: [6, -80, 9], cr: -2, face: 'angry' }); break; // poings au-dessus de la tête, sous le bandeau du haut
     case 'w_belly': set({ lf: [-26, -38, 8], rf: [26, -38, 8], cr: -3, hy: -3, belly: 3, face: 'laugh' }); break;
     case 'w_charge': set({ lf: [-14, -30, 8], rf: [14, -30, 8], cr: 7, hy: 5, face: 'angry' }); break;
-    case 'w_throw': set({ lf: [-12, -48, 8], rf: [24, -86, 8], hx: 1, face: 'angry', item: 'bottle' }); break;
+    case 'w_throw': set({ lf: [-12, -48, 8], rf: [26, -70, 8], hx: 1, face: 'angry', item: 'bottle' }); break;
     case 'w_direct': set({ lf: [-8, -58, 9], rf: [25, -60, 7], hx: 3, cr: 1, face: 'angry' }); break;
     case 's_jabL': set({ lf: [-3, -32, 17], rf: [12, -52, 8], hx: -2, face: 'angry' }); break;
     case 's_jabR': set({ lf: [-12, -52, 8], rf: [3, -32, 17], hx: 2, face: 'angry' }); break;
@@ -202,17 +240,54 @@ function oppPose(name, fr) {
     case 't_drink': set({ lf: [-13, -40, 8], rf: [3, -60 + fr, 8], hx: fr ? -1 : 0, hy: -1, face: 'laugh', item: 'flask' }); break;
     case 't_laugh': set({ lf: [-11, -20, 8], rf: [11, -20, 8], hy: -fr, cr: -fr, face: 'laugh', belly: 1 }); break;
     case 't_flex': set({ lf: [-30, -76 - fr, 9], rf: [30, -76 - fr, 9], face: 'laugh' }); break;
-    case 't_hat': set({ lf: [-13, -42, 8], rf: [8, -92 - fr * 2, 8], hatUp: 10 + fr * 2, face: 'laugh' }); break;
+    case 't_hat': set({ lf: [-13, -42, 8], rf: [24, -62 - fr * 2, 8], hatX: 24, hatUp: -6 + fr * 2, face: 'laugh' }); break; // le chapeau présenté à bout de bras
     case 't_roar': set({ lf: [-34, -42, 9], rf: [34, -42, 9], hy: -fr, face: 'roar' }); break;
+    case 'w_stomp': set({ lf: [-30, -74, 9], rf: [30, -74, 9], cr: -4, hy: -2, face: 'roar' }); break; // il lève les poings, le pied en l'air
+    case 's_stomp': set({ lf: [-26, -10, 10], rf: [26, -10, 10], cr: 8, hy: 6, face: 'angry' }); break; // accroupi, les poings au tapis
+    case 't_doze': set({ lf: [-15, -22, 8], rf: [15, -21 + fr, 8], hx: fr ? 2 : 1, hy: 4, cr: 2, face: 'sleep' }); break; // endormi debout
+    case 't_elixir': set({ lf: [-13, -40, 8], rf: [4, -62 + fr, 8], hx: -1, hy: -2, face: 'closed', item: 'elixir' }); break;
   }
   return P;
 }
 const ANIM = /^(g_|t_|stun)/; // poses à deux images
 const POSE_NAMES = [
-  'g_none', 'g_high', 'g_low', 'w_jabL', 'w_jabR', 'w_hookL', 'w_hookR', 'w_upper', 'w_swing', 'w_slam', 'w_belly', 'w_charge', 'w_throw', 'w_direct',
-  's_jabL', 's_jabR', 's_hookL', 's_hookR', 's_upper', 's_swing', 's_slam', 's_belly', 's_charge', 's_throw', 's_direct',
-  'open', 'block', 'hhL', 'hhR', 'hb', 'stun', 't_drink', 't_laugh', 't_flex', 't_hat', 't_roar',
+  'g_none', 'g_high', 'g_low', 'w_jabL', 'w_jabR', 'w_hookL', 'w_hookR', 'w_upper', 'w_swing', 'w_slam', 'w_belly', 'w_charge', 'w_throw', 'w_direct', 'w_stomp',
+  's_jabL', 's_jabR', 's_hookL', 's_hookR', 's_upper', 's_swing', 's_slam', 's_belly', 's_charge', 's_throw', 's_direct', 's_stomp',
+  'open', 'block', 'hhL', 'hhR', 'hb', 'stun', 't_drink', 't_laugh', 't_flex', 't_hat', 't_roar', 't_doze', 't_elixir', 'lying',
 ];
+// les poses dont chaque cogneur se sert (les autres ne sont jamais préparées pour lui)
+const POSE_OF = { stomp: ['w_stomp', 's_stomp'], throw: ['w_throw', 's_throw'] };
+function posesFor(def) {
+  const used = new Set(def.patterns.flatMap((p) => p.slice(1).map((m) => ATK[m]?.kind || m)));
+  return POSE_NAMES.filter((n) => {
+    if (n.startsWith('t_')) return n === `t_${def.taunt}` || used.has(n.slice(2)); // sa fanfaronnade, sa sieste, son élixir
+    return !Object.entries(POSE_OF).some(([m, ns]) => ns.includes(n) && !used.has(m));
+  });
+}
+
+// Sprite dessiné à la main (R autour de l'origine ox, oy), puis contour d'un pixel. Les bras et les poings ont déjà
+// le leur, posé exprès (pour se détacher du torse) : on ne le double pas. Fait une fois par pose, jamais par image.
+const INK = [26, 15, 10]; // OUT
+function inkSprite(w, h, ox, oy, draw) {
+  const c = S.makeCanvas(w, h, true), x = c.getContext('2d');
+  draw((dx, dy, ww, hh, col) => { x.fillStyle = col; x.fillRect(ox + dx, oy + dy, ww, hh); });
+  const img = x.getImageData(0, 0, w, h), d = img.data, o = new Uint8ClampedArray(d);
+  const solid = (X, Y) => {
+    if (X < 0 || Y < 0 || X >= w || Y >= h) return false;
+    const j = (Y * w + X) * 4;
+    return d[j + 3] > 0 && !(d[j] === INK[0] && d[j + 1] === INK[1] && d[j + 2] === INK[2]);
+  };
+  for (let y = 0; y < h; y++) for (let X = 0; X < w; X++) {
+    const i = (y * w + X) * 4;
+    if (d[i + 3] || !(solid(X + 1, y) || solid(X - 1, y) || solid(X, y + 1) || solid(X, y - 1))) continue;
+    o[i] = INK[0]; o[i + 1] = INK[1]; o[i + 2] = INK[2]; o[i + 3] = 255;
+  }
+  img.data.set(o);
+  x.putImageData(img, 0, 0);
+  c.ox = ox;
+  c.oy = oy;
+  return c;
+}
 
 // trait épais en pixels (bras) : carrés posés le long du segment, épaisseur de t0 à t1
 function limb(R, x0, y0, x1, y1, t0, t1, col) {
@@ -246,7 +321,7 @@ function drawHatFront(R, L, cx, y0, B) {
       R(cx - 8, y0 - 13, 16, 12, c); R(cx - 6, y0 - 15, 12, 2, c); R(cx - 8, y0 - 5, 16, 2, '#a02a1a');
       for (let x = -28; x < 28; x += 4) R(cx + x, y0 + 1, 2, 1, '#a02a1a'); break;
     case 'tophat':
-      R(cx - 8, y0 - 19, 16, 18, c); R(cx - 6, y0 - 18, 2, 16, l); R(cx - 8, y0 - 6, 16, 3, '#7a1a2a');
+      R(cx - 8, y0 - 15, 16, 14, c); R(cx - 6, y0 - 14, 2, 12, l); R(cx - 8, y0 - 6, 16, 3, '#7a1a2a'); // assez bas pour passer sous le bandeau du haut
       R(cx - 12, y0 - 1, 24, 2, c); break;
     case 'horns': {
       const hw = B.head / 2 + 1;
@@ -352,7 +427,23 @@ function drawBoxer(R, d, P) {
     else { R(exL - 1, ey - 3, 4, th, browC); R(exR, ey - 3, 4, th, browC); }
   };
   const face = P.face;
-  if (face === 'hurt') { eyes('closed'); brows('up'); }
+  // les coups laissent des traces (dmg 1 : un œil au beurre noir ; 2 : les deux, le nez qui saigne, un sparadrap)
+  const dmg = P.dmg || 0;
+  if (dmg) {
+    const bruise = S.mix(skin, '#5a2a6a', 0.5), red = S.mix(skin, '#c0402a', 0.45);
+    const shiner = (ex) => { R(ex - 1, ey - 1, 5, 4, bruise); R(ex, ey + 3, 3, 1, bruise); };
+    shiner(exR);
+    R(x0 + 2, ey + 4, 3, 2, red);
+    if (dmg > 1) {
+      shiner(exL);
+      R(x0 + hd - 5, ey + 4, 3, 2, red);
+      R(cx - 1, ey + 6, 1, 3, '#a02a1a'); R(cx - 1, ey + 9, 1, 1, '#7a1a10');
+      const py = y0 + 5 + (L.hat === 'none' || !L.hatC ? 0 : 2);
+      R(cx + 2, py, 6, 2, '#e8dcc0'); R(cx + 4, py - 1, 2, 4, '#e8dcc0'); R(cx + 4, py, 2, 2, '#c8b890');
+    }
+  }
+  if (face === 'hurt' || face === 'closed') { eyes('closed'); brows(face === 'hurt' ? 'up' : undefined); }
+  else if (face === 'sleep') { eyes('closed'); brows('up'); }
   else if (face === 'dizzy') { eyes('x'); brows('up'); }
   else if (face === 'laugh') { eyes('happy'); brows(); }
   else if (face === 'oops') { eyes('wide'); brows('up'); }
@@ -377,13 +468,13 @@ function drawBoxer(R, d, P) {
     if (L.tooth) R(cx + 1, my - 1, 1, 1, '#e0b040');
   } else if (face === 'grit' || face === 'angry') {
     R(cx - 3, my - 1, 6, 2, '#f4ecd8'); R(cx - 3, my, 6, 1, '#b8b0a0'); R(cx - 4, my - 1, 1, 2, lip); R(cx + 3, my - 1, 1, 2, lip);
-  } else if (face === 'oops') R(cx - 1, my - 1, 2, 2, '#5a1a14');
+  } else if (face === 'oops' || face === 'sleep') R(cx - 1, my - 1, 2, 2, '#5a1a14');
   else if (face === 'dizzy') { R(cx - 3, my, 2, 1, lip); R(cx - 1, my - 1, 2, 1, lip); R(cx + 1, my, 2, 1, lip); }
   else R(cx - 3, my, 6, 1, lip);
   if (L.beard === 'mustache' || L.beard === 'handlebar' || L.beard === 'full') R(cx - 5, my - 3, 10, 2, hb);
   if (L.beard === 'handlebar') { R(cx - 7, my - 4, 2, 2, hb); R(cx + 5, my - 4, 2, 2, hb); R(cx - 8, my - 6, 1, 2, hb); R(cx + 7, my - 6, 1, 2, hb); }
   if (L.beard === 'goatee') { R(cx - 4, my - 3, 8, 1, hb); R(cx - 2, my + 2, 4, 4, hb); R(cx - 1, my + 6, 2, 1, hb); }
-  drawHatFront(R, L, cx, y0 - (P.hatUp || 0), B);
+  drawHatFront(R, L, cx + (P.hatX || 0), y0 - (P.hatUp || 0), B);
   P.eye = [exR + 1, ey];
   // bras : le poing le plus proche de nous en dernier ; contour sombre d'abord, pour qu'ils se détachent du torse
   const sy = top + 3;
@@ -400,33 +491,119 @@ function drawBoxer(R, d, P) {
     if (L.sleeves) limb(R, lerp(mx, fx, 0.75), lerp(my2, fy, 0.75), fx, fy, t1, t1, skin); // les mains sortent des manches
     fist(R, fx, fy, fs, skin, sg);
     if (sg > 0 && P.item === 'flask') { R(fx - 2, fy - 12, 5, 8, '#8a8f98'); R(fx - 1, fy - 12, 1, 7, '#c9ced6'); R(fx - 1, fy - 14, 3, 2, '#4a4f58'); }
-    if (sg > 0 && P.item === 'bottle') { R(fx - 2, fy - 13, 5, 9, '#3a8a4a'); R(fx - 1, fy - 12, 1, 7, '#7ad08a'); R(fx - 1, fy - 16, 3, 3, '#a8703c'); }
+    if (sg > 0 && P.item === 'bottle' && L.mug) mug(R, fx - 3, fy - 13);
+    else if (sg > 0 && (P.item === 'bottle' || P.item === 'elixir')) { R(fx - 2, fy - 13, 5, 9, '#3a8a4a'); R(fx - 1, fy - 12, 1, 7, '#7ad08a'); R(fx - 1, fy - 16, 3, 3, '#a8703c'); }
   }
 }
 
-const OPP = new Map(); // `${id}:${pose}:${image}` -> sprite
-function oppSprite(def, name, fr = 0) {
+// la chope de Gros Bill (6 × 9), mousse comprise
+function mug(R, x, y) {
+  R(x, y + 2, 6, 7, '#e0a030'); R(x + 1, y + 3, 1, 5, '#f8d070'); R(x, y, 6, 3, '#fdf6e0'); R(x + 1, y - 1, 3, 1, '#fdf6e0');
+  R(x + 6, y + 3, 2, 1, '#c8c0b0'); R(x + 7, y + 3, 1, 4, '#c8c0b0'); R(x + 6, y + 6, 2, 1, '#c8c0b0');
+}
+
+// Au tapis, sur le dos, vu depuis ses pieds : les semelles devant nous, le torse en raccourci, la tête au fond,
+// les bras en croix sur la toile, le chapeau tombé à côté. (×2, la ceinture en 0,0 comme les autres poses)
+function drawLying(R, d, dmg) {
+  const L = d.look, B = BUILD[L.build];
+  const skin = L.skin, skinD = S.shade(skin, -0.22), hairC = L.hair, armC = L.sleeves || skin;
+  const sh = B.sh - 2, wa = B.wa, bel = B.belly;
+  // les bras en croix
+  for (const sg of [-1, 1]) {
+    const sx = sg * (sh - 3), fx = sg * (sh + 20);
+    limb(R, sx, -26, fx, -34, B.arm + 2, B.arm + 1, OUT);
+    limb(R, sx, -26, fx, -34, B.arm, B.arm - 1, armC);
+    fist(R, fx, -34, 8, skin, sg);
+  }
+  // le torse, de la ceinture aux épaules (raccourci : 18 lignes au lieu de 40)
+  for (let y = -27; y < -8; y++) {
+    const k = (y + 27) / 19;
+    const hw = Math.round(lerp(sh, wa, k) + bel * Math.sin(Math.PI * clamp(k * 1.2, 0, 1)) * 1.4);
+    let col = skin;
+    if (L.top === 'stripes') col = Math.floor((y + 27) / 2) % 2 ? L.topC2 : L.topC;
+    else if (L.top === 'vest') col = L.topC2;
+    R(-hw, y, hw * 2, 1, col);
+    R(hw - 2, y, 2, 1, S.shade(col, -0.22));
+    if (L.top === 'vest') { const vw = Math.round(lerp(6, 2, k)); R(-vw, y, vw * 2, 1, L.topC); }
+  }
+  if (L.top === 'apron') { R(-wa + 3, -20, (wa - 3) * 2, 12, L.topC); R(-wa + 3, -20, (wa - 3) * 2, 1, '#c8c0b0'); }
+  if (L.top === 'bandolier') for (let i = 0; i <= 16; i++) { const x = lerp(-sh + 3, wa - 3, i / 16), y = lerp(-26, -10, i / 16); R(x - 2, y - 1, 4, 3, '#6a4020'); if (i % 3 === 0) R(x - 1, y - 2, 2, 2, '#e0b040'); }
+  if (L.top === 'fur') { R(-sh - 4, -29, 12, 9, L.topC); R(sh - 8, -29, 12, 9, L.topC); }
+  if (L.chestHair && L.top !== 'apron') for (let k = 0; k < 8; k++) R(-5 + ((k * 7) % 10), -24 + ((k * 5) % 9), 1, 1, S.shade(hairC, 0.15));
+  // ceinture, short, jambes vers nous et les semelles
+  if (L.belt) { R(-wa - 2, -10, wa * 2 + 4, 3, '#e0b040'); R(-5, -11, 10, 5, '#f8e08a'); R(-2, -10, 4, 3, '#c0392b'); }
+  else R(-wa - 2, -10, wa * 2 + 4, 3, '#3a2214');
+  R(-wa - 2, -7, wa * 2 + 4, 8, L.pants); R(-1, -4, 2, 5, S.shade(L.pants, -0.35));
+  for (const sg of [-1, 1]) {
+    const lx = sg * Math.round(wa * 0.55);
+    R(lx - 6, 1, 12, 5, S.shade(L.pants, -0.15)); // le bas des jambes, raccourci
+    R(lx - 6, 6, 12, 11, '#3a2214'); R(lx - 5, 7, 10, 6, '#5a3a22'); R(lx - 5, 13, 10, 3, '#2a1810'); // la semelle et le talon
+    R(lx - 4, 7, 3, 1, '#7a5a3a');
+  }
+  // la tête, renversée en arrière : on voit le menton, la bouche ouverte, les yeux en croix ; les cheveux au fond
+  const hd = B.head, hh = Math.round(hd * 0.72), x0 = -Math.round(hd / 2), y0 = -28 - hh;
+  R(-4, -31, 8, 4, skinD); // le cou
+  R(x0 + 1, y0, hd - 2, hh, skin); R(x0, y0 + 2, hd, hh - 4, skin);
+  R(x0 + hd - 3, y0 + 2, 2, hh - 4, skinD);
+  if (!L.bald) { R(x0, y0, hd, 3, hairC); R(x0, y0 + 2, 2, 4, hairC); R(x0 + hd - 2, y0 + 2, 2, 4, hairC); }
+  const cx = 0, ey = y0 + Math.round(hh * 0.38), exL = cx - 6, exR = cx + 3;
+  for (const ex of [exL, exR]) { R(ex, ey, 1, 1, OUT); R(ex + 2, ey, 1, 1, OUT); R(ex + 1, ey + 1, 1, 1, OUT); R(ex, ey + 2, 1, 1, OUT); R(ex + 2, ey + 2, 1, 1, OUT); }
+  if (dmg) R(exR - 1, ey - 1, 5, 1, S.mix(skin, '#5a2a6a', 0.5));
+  if (L.nose === 'red') R(cx - 2, ey + 3, 4, 2, '#d0503a'); else R(cx - 1, ey + 3, 2, 2, skinD);
+  const my = y0 + hh - 5;
+  if (L.beard === 'full') R(x0 + 2, my - 2, hd - 4, 7, hairC);
+  R(cx - 3, my, 6, 3, '#5a1a14'); R(cx - 1, my + 2, 3, 1, '#d0605a'); // bouche ouverte, la langue
+  if (L.beard === 'mustache' || L.beard === 'handlebar' || L.beard === 'full') R(cx - 5, my - 2, 10, 2, hairC);
+  if (L.beard === 'goatee') R(cx - 2, my + 3, 4, 3, hairC);
+  if (L.hat === 'horns') { R(x0 - 6, y0 + 1, 7, 3, '#e8dcc0'); R(x0 + hd - 1, y0 + 1, 7, 3, '#e8dcc0'); }
+  else if (L.hatC) { // le chapeau a roulé à côté de lui
+    const hx = sh + 22, hy = -48, c = L.hatC;
+    R(hx - 9, hy + 4, 18, 3, c); R(hx - 5, hy - 2, 10, 6, c); R(hx - 5, hy + 2, 10, 1, S.shade(c, -0.3));
+  }
+  return [cx, y0 + 2];
+}
+
+const OPP = new Map(); // `${id}:${dégâts}:${pose}:${image}` -> sprite
+function oppSprite(def, name, fr = 0, dmg = 0) {
   if (!ANIM.test(name)) fr = 0;
-  const key = `${def.id}:${name}:${fr}`;
+  const key = `${def.id}:${dmg}:${name}:${fr}`;
   let c = OPP.get(key);
   if (c) return c;
   const P = oppPose(name, fr);
-  c = pixelSprite(160, 150, 80, 124, (R0) => {
+  P.dmg = dmg;
+  let eye;
+  c = inkSprite(160, 150, 80, 124, (R0) => {
     const R = (x, y, w, h, col) => R0(Math.round(x), Math.round(y), Math.round(w), Math.round(h), col);
-    drawBoxer(R, def, P);
+    if (name === 'lying') eye = drawLying(R, def, dmg);
+    else drawBoxer(R, def, P);
   });
-  c.eye = P.eye;
+  c.eye = eye || P.eye;
   OPP.set(key, c);
   return c;
 }
-// un seul adversaire à la fois en mémoire
-function forgetFighters(keep) {
+// un seul adversaire (et un seul état de son visage) à la fois en mémoire
+function forgetFighters(keep, dmg = 0) {
   for (const [k, c] of OPP) {
-    if (k.startsWith(`${keep.id}:`)) continue;
+    if (k.startsWith(`${keep.id}:${dmg}:`)) continue;
     OPP.delete(k);
     S.freeCanvas(c.white);
+    c.lean?.forEach(S.freeCanvas);
     S.freeCanvas(c);
   }
+}
+// au tapis, il bascule en arrière : chaque ligne du sprite décalée d'un pixel entier (pas de rotation, qui
+// brouille les pixels) ; step 1 à 3, trois images en cache par pose
+const LEAN = 0.06;
+function leanOf(c, step) {
+  if (!step) return c;
+  const L = (c.lean ||= []);
+  if (L[step]) return L[step];
+  const k = step * LEAN, pad = Math.ceil(Math.max(c.oy, c.height - c.oy) * k) + 1;
+  const l = S.makeCanvas(c.width + pad * 2, c.height), x = l.getContext('2d');
+  for (let y = 0; y < c.height; y++) x.drawImage(c, 0, y, c.width, 1, pad + Math.round((y - c.oy) * k), y, c.width, 1);
+  l.ox = c.ox + pad;
+  l.oy = c.oy;
+  return (L[step] = l);
 }
 // silhouette blanche (éclair quand il encaisse)
 function whiteOf(c) {
@@ -444,17 +621,17 @@ function whiteOf(c) {
 const BACK_POSES = {
   idle0: { lf: [-12, -44, 7], rf: [12, -44, 7] },
   idle1: { lf: [-12, -43, 7], rf: [12, -43, 7], cr: 1 },
-  pLh: { lf: [-5, -76, 5], rf: [12, -42, 7], hx: 2 },
-  pLb: { lf: [-6, -58, 5], rf: [12, -42, 7], hx: 2 },
-  pRh: { lf: [-12, -42, 7], rf: [5, -76, 5], hx: -2 },
-  pRb: { lf: [-12, -42, 7], rf: [6, -58, 5], hx: -2 },
+  pLh: { lf: [-5, -84, 5], rf: [12, -42, 7], hx: 2 }, // (le joueur est bas dans l'image : le poing monte jusqu'au visage)
+  pLb: { lf: [-6, -64, 5], rf: [12, -42, 7], hx: 2 },
+  pRh: { lf: [-12, -42, 7], rf: [5, -84, 5], hx: -2 },
+  pRb: { lf: [-12, -42, 7], rf: [6, -64, 5], hx: -2 },
   block: { lf: [-7, -50, 7], rf: [7, -50, 7], hy: 1 },
   hurt: { lf: [-17, -36, 7], rf: [17, -38, 7], hy: -2 },
   tired: { lf: [-13, -30, 7], rf: [13, -30, 7], hy: 2, tired: true },
   dodgeL: { lf: [-14, -44, 7], rf: [10, -46, 7], hx: -3 },
   dodgeR: { lf: [-10, -46, 7], rf: [14, -44, 7], hx: 3 },
   sw: { lf: [-14, -28, 7], rf: [14, -28, 7], cr: 5 }, // le spécial : les deux poings armés en bas…
-  sh: { lf: [-6, -84, 6], rf: [6, -84, 6], cr: -3 }, // … puis lancés ensemble
+  sh: { lf: [-6, -92, 6], rf: [6, -92, 6], cr: -3 }, // … puis lancés ensemble
   win: { lf: [-15, -70, 7], rf: [15, -70, 7] },
 };
 
@@ -517,7 +694,7 @@ function backSprite(r, pose) {
   const key = `${r.key}:${pose}`;
   let c = BACK.get(key);
   if (!c) {
-    c = pixelSprite(84, 96, 42, 92, (R0) => {
+    c = inkSprite(84, 96, 42, 92, (R0) => {
       const R = (x, y, w, h, col) => R0(Math.round(x), Math.round(y), Math.round(w), Math.round(h), col);
       drawBack(R, r, BACK_POSES[pose] || BACK_POSES.idle0);
     });
@@ -526,78 +703,212 @@ function backSprite(r, pose) {
   return c;
 }
 
-// ------------------------------------------------------------ la grange (décor dessiné une fois)
-let ARENA = null;
-function arena() {
-  if (ARENA) return ARENA;
-  const R = (x, X, y, w, h, col) => { x.fillStyle = col; x.fillRect(X, y, w, h); };
-  const wall = S.makeCanvas(W, H), w = wall.getContext('2d');
-  R(w, 0, 0, W, H, '#2a1a12');
-  for (let x = 0; x < W; x += 14) { R(w, x, 0, 1, 120, '#1e120c'); R(w, x + 1, 0, 1, 120, '#3a2418'); }
-  R(w, 0, 36, W, 4, '#4a2e1c'); R(w, 0, 40, W, 1, OUT);
-  // lanternes et leur halo
-  for (const lx of [56, 192, 328]) {
-    const g = w.createRadialGradient(lx, 30, 0, lx, 30, 80);
-    g.addColorStop(0, 'rgba(255,190,110,0.35)');
-    g.addColorStop(1, 'rgba(255,190,110,0)');
-    w.fillStyle = g;
-    w.fillRect(lx - 80, 0, 160, 120);
-    R(w, lx, 0, 1, 22, OUT); R(w, lx - 4, 22, 9, 2, '#4a4f58'); R(w, lx - 3, 24, 7, 8, '#f8d070'); R(w, lx - 4, 32, 9, 2, '#4a4f58');
-    R(w, lx - 1, 26, 3, 4, '#fdf6e0');
+// ------------------------------------------------------------ l'arbitre (sprite ×1 au fond du ring, ×2 quand il se penche sur toi)
+// stand : bras le long du corps ; count : le bras levé ; chop : il l'abat sur le chiffre ; point : il montre le coin neutre ;
+// wave : bras croisés au-dessus de la tête, le combat est fini (deux images)
+const REF = new Map();
+function refSprite(pose, fr = 0) {
+  const key = `${pose}:${pose === 'wave' ? fr : 0}`;
+  let c = REF.get(key);
+  if (c) return c;
+  c = inkSprite(48, 70, 24, 66, (R0) => {
+    const R = (x, y, w, h, col) => R0(Math.round(x), Math.round(y), Math.round(w), Math.round(h), col);
+    const skin = '#e8c098', shirt = '#ece6d6', vest = '#34343e', pants = '#26262c';
+    R(-5, -22, 4, 21, pants); R(1, -22, 4, 21, pants); R(-1, -20, 1, 18, S.shade(pants, 0.2));
+    R(-7, -2, 6, 2, '#1a1210'); R(1, -2, 6, 2, '#1a1210');
+    R(-7, -41, 14, 19, shirt); R(-7, -41, 1, 19, S.shade(shirt, -0.15));
+    R(-7, -40, 4, 17, vest); R(3, -40, 4, 17, vest); R(-3, -32, 1, 1, '#e0b040'); R(-3, -28, 1, 1, '#e0b040');
+    R(-7, -23, 14, 2, '#3a2214');
+    R(-3, -41, 6, 2, '#a02a2a'); R(-1, -41, 2, 2, '#6a1a1a'); // nœud papillon
+    R(-3, -44, 6, 3, S.shade(skin, -0.2)); // le cou
+    R(-5, -53, 10, 10, skin); R(-5, -53, 2, 10, S.shade(skin, 0.1)); R(3, -52, 2, 9, S.shade(skin, -0.15));
+    R(-3, -49, 1, 2, OUT); R(2, -49, 1, 2, OUT); R(-1, -47, 2, 2, S.shade(skin, -0.25));
+    R(-5, -45, 10, 2, '#5a3a24'); R(-6, -46, 2, 2, '#5a3a24'); R(4, -46, 2, 2, '#5a3a24'); // la moustache
+    R(-5, -57, 10, 5, '#2a2228'); R(-4, -58, 8, 1, '#2a2228'); R(-7, -53, 14, 2, '#2a2228'); R(-3, -56, 2, 2, '#4a4248'); // le melon
+    const arm = (sx, x, y) => { limb(R, sx, -39, x, y, 4, 4, shirt); R(x - 2, y - 2, 4, 4, skin); };
+    switch (pose) {
+      case 'count': arm(-8, -9, -25); arm(8, 11, -66); R(10, -70, 1, 3, skin); R(12, -70, 1, 3, skin); break;
+      case 'chop': arm(-8, -9, -25); arm(8, 19, -20); break;
+      case 'point': arm(-8, -9, -25); arm(8, 22, -42); R(24, -43, 3, 1, skin); break;
+      case 'wave': if (fr) { arm(-8, -16, -58); arm(8, 16, -58); } else { arm(-8, 6, -60); arm(8, -6, -60); } break;
+      default: arm(-8, -9, -25); arm(8, 9, -25);
+    }
+  });
+  REF.set(key, c);
+  return c;
+}
+
+// ------------------------------------------------------------ les salles (une par cogneur, dessinée une fois)
+const R2 = (g, x, y, w, h, col) => { g.fillStyle = col; g.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); };
+function glow(g, x, y, r, a = 0.35) {
+  const gr = g.createRadialGradient(x, y, 0, x, y, r); // (une fois, dans le canvas du fond)
+  gr.addColorStop(0, `rgba(255,190,110,${a})`);
+  gr.addColorStop(1, 'rgba(255,190,110,0)');
+  g.fillStyle = gr;
+  g.fillRect(x - r, y - r, r * 2, r * 2);
+}
+function lantern(g, lx) {
+  glow(g, lx, 30, 80);
+  R2(g, lx, 0, 1, 22, OUT); R2(g, lx - 4, 22, 9, 2, '#4a4f58'); R2(g, lx - 3, 24, 7, 8, '#f8d070'); R2(g, lx - 4, 32, 9, 2, '#4a4f58');
+  R2(g, lx - 1, 26, 3, 4, '#fdf6e0');
+}
+function bottles(g, x0, x1, y, seed = 3) {
+  const cols = ['#3a6a3a', '#6a3a1a', '#c8a050', '#3a3a5a', '#8a2a2a', '#5a6a30'];
+  for (let x = x0, k = seed; x < x1; x += 7, k++) {
+    const h = 6 + ((k * 5) % 4), c = cols[(k * 7) % cols.length];
+    R2(g, x, y - h, 4, h, c); R2(g, x + 1, y - h - 3, 2, 3, c); R2(g, x + 1, y - h + 1, 1, h - 2, S.shade(c, 0.35));
   }
-  // la foule, derrière les cordes : deux images (les têtes bougent)
+}
+
+// Le haut du fond est caché par le bandeau des scores (0-24) et la foule commence vers 46 : les détails qui font
+// reconnaître la salle vont dans la bande 24-46, de part et d'autre de la bannière du ring (x 96-288).
+const WALLS = {
+  // la grange de Dodge City : planches et lanternes
+  barn(g) {
+    R2(g, 0, 0, W, H, '#2a1a12');
+    for (let x = 0; x < W; x += 14) { R2(g, x, 0, 1, 120, '#1e120c'); R2(g, x + 1, 0, 1, 120, '#3a2418'); }
+    R2(g, 0, 36, W, 4, '#4a2e1c'); R2(g, 0, 40, W, 1, OUT);
+    for (const x of [22, 362]) { R2(g, x - 4, 28, 9, 2, '#8a8f98'); R2(g, x - 5, 30, 2, 4, '#8a8f98'); R2(g, x + 4, 30, 2, 4, '#8a8f98'); } // fers à cheval cloués
+    for (const lx of [56, 192, 328]) lantern(g, lx);
+  },
+  // le Longhorn : papier peint rayé, le miroir du bar et ses bouteilles, deux crânes à cornes
+  bar(g) {
+    R2(g, 0, 0, W, H, '#3a1a16');
+    for (let x = 0; x < W; x += 12) R2(g, x, 0, 6, 120, '#45201a');
+    R2(g, 0, 24, W, 24, '#5a3a22'); R2(g, 0, 24, W, 1, '#8a5a34');
+    R2(g, 0, 26, W, 15, '#3e4c56');
+    for (let i = 0; i < 7; i++) for (let k = 0; k < 15; k++) R2(g, 10 + i * 56 + Math.floor(k * 0.6), 26 + k, 2 + (i % 2), 1, '#5a6a74'); // reflets
+    R2(g, 0, 41, W, 3, '#6a4428'); R2(g, 0, 41, W, 1, '#9a6a3c');
+    bottles(g, 4, W - 4, 41);
+    for (const sx of [56, 328]) { // le crâne de longhorn, cloué au-dessus du miroir
+      for (let k = 0; k < 18; k++) {
+        const y = 28 - Math.round((k / 18) ** 2 * 6), c = k > 14 ? '#a89c80' : '#e8dcc0';
+        R2(g, sx - 6 - k, y, 2, 2, c); R2(g, sx + 4 + k, y, 2, 2, c);
+      }
+      R2(g, sx - 6, 25, 12, 10, '#e8dcc0'); R2(g, sx - 4, 35, 8, 5, '#d8ccb0'); R2(g, sx - 4, 28, 3, 3, OUT); R2(g, sx + 1, 28, 3, 3, OUT);
+      R2(g, sx - 2, 38, 1, 2, '#8a7c60'); R2(g, sx + 1, 38, 1, 2, '#8a7c60');
+    }
+  },
+  // la plaza de Sonora : galerie d'arcades de pisé, guirlandes de papel picado
+  plaza(g) {
+    const sky = g.createLinearGradient(0, 0, 0, 30);
+    sky.addColorStop(0, '#4a3270'); sky.addColorStop(1, '#f0a860');
+    g.fillStyle = sky; g.fillRect(0, 0, W, 30);
+    R2(g, 0, 24, W, 90, '#c8905a'); R2(g, 0, 24, W, 1, '#e8b88a');
+    for (let x = 2; x < W; x += 20) { R2(g, x, 30, 13, 16, '#5a3020'); R2(g, x + 2, 28, 9, 2, '#5a3020'); R2(g, x + 4, 27, 5, 1, '#5a3020'); R2(g, x + 13, 28, 1, 18, '#a8703c'); }
+    const cols = ['#e04a6a', '#f8c048', '#4ab0e0', '#7ad04a', '#e07a2a', '#b04ae0'];
+    for (let x = 0; x < W; x++) {
+      const y = 25 + Math.round(5 * Math.sin(((x % 96) / 96) * Math.PI));
+      R2(g, x, y, 1, 1, '#2a1a20');
+      if (x % 8 === 0) { const c = cols[(x / 8) % cols.length]; R2(g, x, y + 1, 5, 6, c); R2(g, x + 2, y + 5, 1, 2, '#c8905a'); R2(g, x + 1, y + 2, 1, 1, S.shade(c, 0.4)); }
+    }
+  },
+  // la foire du Doc : intérieur de chapiteau à rayures, ampoules, affiches de l'élixir
+  tent(g) {
+    R2(g, 0, 0, W, H, '#1e1014');
+    for (let y = 0; y < 112; y++) {
+      const k = 0.5 + 0.5 * (y / 112);
+      for (let s = -9; s <= 9; s++) {
+        const xa = 192 + (s * 28 - 14) * k, xb = 192 + (s * 28 + 14) * k;
+        R2(g, xa, y, xb - xa, 1, S.shade(s % 2 ? '#8a2a2a' : '#c8b890', -0.3 - (1 - y / 112) * 0.25));
+        if (y % 8 === 4) R2(g, xa, y, 1, 1, '#f8d070');
+      }
+    }
+    for (const x of [24, 316]) { // l'affiche : la fiole, la croix rouge, des lignes de boniment
+      R2(g, x - 1, 25, 46, 22, OUT); R2(g, x, 26, 44, 20, '#e8d8a8'); R2(g, x + 1, 27, 42, 18, '#d8c490');
+      R2(g, x + 18, 31, 8, 13, '#3a8a4a'); R2(g, x + 20, 28, 4, 3, '#3a8a4a'); R2(g, x + 19, 27, 6, 1, '#a8703c'); R2(g, x + 19, 32, 1, 11, '#7ad08a');
+      R2(g, x + 17, 35, 10, 5, '#e8dcc0'); R2(g, x + 21, 36, 2, 3, '#c0392b'); R2(g, x + 20, 37, 4, 1, '#c0392b');
+      for (let k = 0; k < 3; k++) { R2(g, x + 4, 31 + k * 5, 10, 1, '#9a2a1c'); R2(g, x + 30, 31 + k * 5, 10, 1, '#9a2a1c'); }
+    }
+    for (const lx of [84, 300]) lantern(g, lx);
+  },
+  // le grand chapiteau du championnat : tentures rouges, lambrequin doré, bannières au bison
+  champ(g) {
+    R2(g, 0, 0, W, H, '#2a1412');
+    for (let x = 0; x < W; x += 8) { R2(g, x, 0, 4, 120, '#5a1a16'); R2(g, x + 4, 0, 4, 120, '#6a2018'); R2(g, x + 5, 0, 1, 120, '#7e2a1e'); }
+    for (let x = 0; x < W; x += 16) { // le lambrequin doré, juste sous le bandeau des scores
+      R2(g, x, 24, 16, 3, '#c8a050'); R2(g, x + 2, 27, 12, 2, '#c8a050'); R2(g, x + 5, 29, 6, 2, '#c8a050');
+      R2(g, x, 24, 16, 1, '#f8e08a'); R2(g, x + 7, 31, 2, 2, '#f8e08a');
+    }
+    for (const x of [30, 328]) { // les bannières à tête de bison
+      R2(g, x - 1, 25, 28, 24, OUT); R2(g, x, 26, 26, 22, '#e0b040'); R2(g, x + 2, 28, 22, 18, '#7a1a14');
+      R2(g, x + 8, 33, 10, 8, '#3a2214'); R2(g, x + 6, 31, 14, 4, '#4a3020'); R2(g, x + 3, 30, 4, 2, '#e8dcc0'); R2(g, x + 19, 30, 4, 2, '#e8dcc0');
+      R2(g, x + 10, 41, 6, 3, '#3a2214'); R2(g, x + 10, 35, 2, 1, '#f8d070'); R2(g, x + 14, 35, 2, 1, '#f8d070');
+    }
+    for (const lx of [84, 300]) lantern(g, lx);
+  },
+};
+
+let ARENA = null;
+function arena(id) {
+  if (ARENA?.id === id) return ARENA;
+  if (ARENA) { S.freeCanvas(ARENA.wall); ARENA.crowd.forEach(S.freeCanvas); S.freeCanvas(ARENA.ring); }
+  const st = STAGES[id] || STAGES.pierrot;
+  const wall = S.makeCanvas(W, H);
+  WALLS[st.wall](wall.getContext('2d'));
+  // la foule, derrière les cordes : au calme (deux images, les têtes bougent) et en délire (deux images, les bras en l'air)
   let s = 11;
   const rr = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
   const fans = [];
   for (let row = 0; row < 3; row++) for (let i = 0; i < 27; i++) {
     fans.push({
       x: Math.round(i * 15 + (row % 2) * 7 + rr() * 6 - 6), y: 50 + row * 13, row,
-      skin: pick2(rr, ['#c88a5a', '#e8b090', '#a86a40', '#f0c8a0']), shirt: pick2(rr, ['#7a3a2a', '#3a5a7a', '#6a6a3a', '#5a3a5a', '#8a6a3a', '#3a3a3a']),
-      hat: rr() < 0.75 ? pick2(rr, ['#5a3a24', '#3a2a1a', '#8a6a48', '#2a2228', '#c8a050']) : null, jump: rr(), arm: rr() < 0.4,
+      skin: pick2(rr, ['#c88a5a', '#e8b090', '#a86a40', '#f0c8a0']), shirt: pick2(rr, st.shirts),
+      hat: rr() < 0.75 ? pick2(rr, st.hats) : null, som: rr() < (st.sombrero || 0), jump: rr(), arm: rr() < 0.4,
     });
   }
   fans.sort((a, b) => a.row - b.row);
-  const crowd = [0, 1].map((fr) => {
+  const crowd = [0, 1, 2, 3].map((fr) => {
     const c = S.makeCanvas(W, H), x = c.getContext('2d');
+    const hype = fr > 1, alt = fr % 2;
     for (const f of fans) {
-      const dim = -0.45 - (2 - f.row) * 0.12;
-      const b = fr && f.jump < 0.55 ? -2 : 0;
-      const y = f.y + b;
-      R(x, f.x - 6, y + 7, 13, 18, S.shade(f.shirt, dim));
-      R(x, f.x - 3, y, 7, 8, S.shade(f.skin, dim));
-      if (f.hat) { R(x, f.x - 5, y - 1, 11, 2, S.shade(f.hat, dim)); R(x, f.x - 3, y - 4, 7, 3, S.shade(f.hat, dim)); }
-      if (fr && f.arm) { R(x, f.x + 5, y - 6, 2, 13, S.shade(f.shirt, dim)); R(x, f.x + 5, y - 8, 2, 2, S.shade(f.skin, dim)); }
+      const dim = st.dim - (2 - f.row) * 0.12;
+      const b = hype ? ((alt ^ (f.jump < 0.5)) ? -3 : 0) : alt && f.jump < 0.55 ? -2 : 0;
+      const y = f.y + b, shirt = S.shade(f.shirt, dim), skin = S.shade(f.skin, dim);
+      R2(x, f.x - 6, y + 7, 13, 18, shirt);
+      R2(x, f.x - 3, y, 7, 8, skin);
+      if (f.hat) {
+        const hc = S.shade(f.hat, dim);
+        if (f.som) { R2(x, f.x - 8, y - 1, 17, 2, hc); R2(x, f.x - 3, y - 5, 7, 4, hc); }
+        else { R2(x, f.x - 5, y - 1, 11, 2, hc); R2(x, f.x - 3, y - 4, 7, 3, hc); }
+      }
+      if (hype && f.jump < 0.8) { // les deux bras levés
+        const up = alt ? 2 : 0;
+        R2(x, f.x - 8, y - 6 + up, 2, 13, shirt); R2(x, f.x - 8, y - 8 + up, 2, 2, skin);
+        R2(x, f.x + 6, y - 6 - up, 2, 13, shirt); R2(x, f.x + 6, y - 8 - up, 2, 2, skin);
+      } else if ((alt || hype) && f.arm) { R2(x, f.x + 5, y - 6, 2, 13, shirt); R2(x, f.x + 5, y - 8, 2, 2, skin); }
     }
     return c;
   });
-  // le ring : tapis, poteaux, cordes
+  // le ring : tapis (ou sable), poteaux, cordes
   const ring = S.makeCanvas(W, H), g = ring.getContext('2d');
-  R(g, 0, 104, W, 6, '#5a2a1a'); R(g, 0, 104, W, 1, '#8a4a2a'); R(g, 0, 110, W, 1, OUT);
-  R(g, 0, 111, W, H - 111, '#b8a47a');
-  for (let y = 116; y < H; y += 9) R(g, 0, y, W, 1, '#ac9870');
+  R2(g, 0, 104, W, 6, '#5a2a1a'); R2(g, 0, 104, W, 1, '#8a4a2a'); R2(g, 0, 110, W, 1, OUT);
+  R2(g, 0, 111, W, H - 111, st.mat);
+  if (st.sand) for (let k = 0; k < 260; k++) R2(g, (k * 97) % W, 112 + ((k * 61) % (H - 112)), 1, 1, S.shade(st.mat, k % 2 ? -0.12 : 0.1));
+  else for (let y = 116; y < H; y += 9) R2(g, 0, y, W, 1, S.shade(st.mat, -0.07));
   const spot = g.createRadialGradient(192, 170, 10, 192, 170, 190);
   spot.addColorStop(0, 'rgba(255,236,190,0.35)');
   spot.addColorStop(1, 'rgba(255,236,190,0)');
   g.fillStyle = spot;
   g.fillRect(0, 104, W, H - 104);
-  const ROPES = [62, 76, 90];
+  const ROPES = [62, 76, 90], rope = st.rope, ropeD = S.shade(st.rope, -0.45);
   for (const ry of ROPES) {
     // les cordes du fond, puis celles des côtés qui descendent vers nous
-    R(g, 24, ry, 336, 2, '#d8c090'); R(g, 24, ry + 2, 336, 1, '#7a5a30');
+    R2(g, 24, ry, 336, 2, rope); R2(g, 24, ry + 2, 336, 1, ropeD);
     for (const [px, dir] of [[20, -1], [364, 1]]) {
       for (let k = 0; k < 90; k++) {
-        const x = px + dir * k * 0.55, y = ry + k * 1.4;
-        R(g, Math.round(x), Math.round(y), 2, 2, '#d8c090');
-        R(g, Math.round(x), Math.round(y) + 2, 2, 1, '#7a5a30');
+        const x = Math.round(px + dir * k * 0.55), y = Math.round(ry + k * 1.4);
+        R2(g, x, y, 2, 2, rope);
+        R2(g, x, y + 2, 2, 1, ropeD);
       }
     }
   }
   for (const px of [20, 364]) {
-    R(g, px - 5, 52, 10, 60, OUT); R(g, px - 4, 54, 8, 57, '#6a3a20'); R(g, px - 4, 54, 2, 57, '#8a5a30');
-    R(g, px - 6, 50, 12, 5, '#c8a050'); R(g, px - 6, 50, 12, 1, '#f8e08a');
-    for (const ry of ROPES) R(g, px - 5, ry - 1, 10, 4, '#a02a1a'); // coussins
+    R2(g, px - 5, 52, 10, 60, OUT); R2(g, px - 4, 54, 8, 57, st.post); R2(g, px - 4, 54, 2, 57, S.shade(st.post, 0.25));
+    R2(g, px - 6, 50, 12, 5, st.cap); R2(g, px - 6, 50, 12, 1, S.shade(st.cap, 0.3));
+    for (const ry of ROPES) R2(g, px - 5, ry - 1, 10, 4, st.pad); // coussins
   }
-  return (ARENA = { wall, crowd, ring });
+  return (ARENA = { id, st, wall, crowd, ring });
 }
 function pick2(rr, arr) { return arr[Math.floor(rr() * arr.length)]; }
 
@@ -605,7 +916,9 @@ function pick2(rr, arr) { return arr[Math.floor(rr() * arr.length)]; }
 function wrap(text, max = 46) {
   const out = [];
   let line = '';
-  for (const w of text.split(' ')) {
+  // la ponctuation haute reste collée au mot d'avant (jamais un « ! » seul en début de ligne)
+  const words = text.split(' ').reduce((a, w) => { if (a.length && /^[!?:;»]/.test(w)) a[a.length - 1] += ` ${w}`; else a.push(w); return a; }, []);
+  for (const w of words) {
     if (line && (line + ' ' + w).length > max) { out.push(line); line = w; }
     else line = line ? `${line} ${w}` : w;
   }
@@ -639,6 +952,8 @@ export class BagarreScene extends MiniScene {
     this.lastDown = -1e9;
     this.excite = 0;
     this.redFlash = 0;
+    this.meA = 1; // opacité du joueur (à demi transparent au repos)
+    this.ref = { x: 318, y: 122, near: false, enter: 0 }; // l'arbitre
     this.cv.addEventListener('pointermove', (e) => {
       if (e.pointerType !== 'mouse' || (e.button !== 0 && e.button !== 2) || !(e.buttons & (e.button === 0 ? 1 : 2))) return;
       if (e.button === 0) this.onFire(this.mouse, e);
@@ -654,7 +969,7 @@ export class BagarreScene extends MiniScene {
         : 'CLIC : POING GAUCHE - CLIC DROIT : POING DROIT (VISE SA TÊTE OU SON CORPS)',
       this.touch ? 'STICK GAUCHE, DROITE : ESQUIVE - BAS : GARDE - SE BAISSER : SOUS LES GRANDS REVERS'
         : 'GAUCHE DROITE : ESQUIVE - BAS : GARDE - BAS BAS OU C : SE BAISSER',
-      'CHAQUE COUP A SA PARADE (SIGNES AU-DESSUS DE SA TÊTE) : PARE, PUIS COGNE !',
+      'CHAQUE COUP A SA PARADE : SIGNES D\'ABORD, PUIS À TOI DE LIRE SES GESTES',
       'IL EST AU TAPIS ? ALTERNE GAUCHE ET DROITE POUR REPRENDRE DES FORCES',
       'COUPS, ESQUIVES ET CONTRES REMPLISSENT LA BARRE DE SPÉCIAL',
       this.touch ? 'BARRE PLEINE : DEUX DOIGTS EN MÊME TEMPS = COUP SPÉCIAL'
@@ -687,6 +1002,12 @@ export class BagarreScene extends MiniScene {
     this.others = {};
     this.ticker = [];
     bossMusic('mini-bagarre', false); // une partie précédente a pu finir contre le champion
+    // mode histoire : l'arène de Red Rock, la nuit du grand combat (routesdeco.js), chargée pendant la cinématique
+    const deco = this.hooks.story?.deco;
+    if (deco?.set && !this.sd) {
+      import('./routesdeco.js').then((m) => m.arenaDeco(deco, this.env)).then((d) => { this.sd = d; })
+        .catch((e) => console.warn('décor de l’épisode', e));
+    }
   }
 
   applySync(st) {
@@ -707,9 +1028,11 @@ export class BagarreScene extends MiniScene {
   newFight(def) {
     return {
       def, n: this.run.n, round: 1, clock: 0, ms: 0, count: null, res: null, tip: null,
-      me: { hp: 100, hearts: HEARTS, sp: 0, kd: 0, kdT: 0, kdGiven: 0, act: null, hurtUntil: 0, tiredUntil: 0, down: null, downAt: 0, taken: 0, landed: 0 },
+      me: { hp: 100, hearts: HEARTS, sp: 0, kd: 0, kdT: 0, kdGiven: 0, act: null, hurtUntil: 0, tiredUntil: 0, down: null, downAt: 0, taken: 0, landed: 0,
+        hist: [], poisonUntil: 0 },
       op: { hp: def.hp, max: def.hp, st: 'idle', at: this.lt, dur: 0, atk: null, chain: null, quick: false, guard: def.guard[0], combo: 0, idleHits: 0,
-        next: 0, kd: 0, kdT: 0, kdGiven: 0, taken: 0, flash: -1e9, hitAt: -1e9, hitHigh: false, hitSide: 1, rage: false, res: null, tauntKind: def.taunt },
+        next: 0, kd: 0, kdT: 0, kdGiven: 0, taken: 0, flash: -1e9, hitAt: -1e9, hitHigh: false, hitSide: 1, rage: false, res: null, tauntKind: def.taunt,
+        seq: [], seen: {}, guide: true, dmg: 0, waveAt: 0 },
     };
   }
 
@@ -718,9 +1041,25 @@ export class BagarreScene extends MiniScene {
     forgetFighters(def);
     this.f = this.newFight(def);
     bossMusic('mini-bagarre', !!def.champ); // le champion a son thème
-    this.warm = POSE_NAMES.flatMap((n) => (ANIM.test(n) ? [[n, 0], [n, 1]] : [[n, 0]]));
+    this.warmUp(0);
+    this.ref = { x: 318, y: 122, near: false, enter: 0 };
+    this.hidHint = false;
     this.setPhase('intro');
     sfx('whip');
+  }
+
+  // sprites de l'adversaire préparés quelques-uns par image (pendant sa présentation, ou quand son visage s'abîme)
+  warmUp(dmg) {
+    this.warm = posesFor(this.f.def).flatMap((n) => (ANIM.test(n) ? [[n, 0, dmg], [n, 1, dmg]] : [[n, 0, dmg]]));
+  }
+
+  // son visage s'abîme avec les dégâts encaissés depuis le début du combat (jamais l'inverse, même s'il se requinque)
+  checkDamage() {
+    const op = this.f.op, lvl = op.taken > op.max * 1.1 ? 2 : op.taken > op.max * 0.45 ? 1 : 0;
+    if (lvl <= op.dmg) return;
+    op.dmg = lvl;
+    forgetFighters(this.f.def, lvl);
+    this.warmUp(lvl);
   }
 
   ringBell() {
@@ -746,7 +1085,8 @@ export class BagarreScene extends MiniScene {
     f.clock = 0;
     me.hp = Math.min(100, me.hp + 25); me.hearts = HEARTS; me.tiredUntil = 0; me.kd = 0;
     op.hp = Math.min(op.max, op.hp + op.max * 0.1); op.kd = 0;
-    op.chain = null; op.quick = false; op.atk = null;
+    op.chain = null; op.quick = false; op.atk = null; op.seq = []; op.waveAt = 0;
+    me.poisonUntil = 0;
     this.opIdle();
     this.setPhase('between');
   }
@@ -761,8 +1101,10 @@ export class BagarreScene extends MiniScene {
       this.excite = 6000;
       sfx('cheer');
       sfx('good', 0.3);
+      this.hats(14);
     } else {
       this.opSet('win');
+      this.trash(10);
       sfx('aww');
       sfx('bad', 0.3);
     }
@@ -797,12 +1139,14 @@ export class BagarreScene extends MiniScene {
   onFire(m, e) {
     if (this.t < 0) return;
     const side = e?.pointerType === 'touch' ? (m.x < ME_X ? 'L' : 'R') : 'L';
-    this.punch(side, m.y < HEAD_LINE || this.high);
+    this.punch(side, m.y < this.headLine || this.high);
   }
   onAlt(m) {
     if (this.t < 0) return;
-    this.punch('R', m.y < HEAD_LINE || this.high);
+    this.punch('R', m.y < this.headLine || this.high);
   }
+  // la ligne entre son visage et son corps : sous son menton, où qu'il soit (il se baisse, recule, charge…)
+  get headLine() { return this.chinY ?? HEAD_LINE; }
   onKey(k) {
     if (this.t < 0) return;
     if (k === 'j') this.punch('L', this.high);
@@ -885,6 +1229,9 @@ export class BagarreScene extends MiniScene {
     me.act = { kind: 'special', t0: this.lt };
     me.sp = 0;
     this.lastFist = null;
+    // il coupe l'adversaire dans son élan : son coup en préparation attend l'impact (qui l'envoie au tapis ou le sonne)
+    const op = this.f.op;
+    if (op.st === 'tell') op.dur = Math.max(op.dur, this.lt - op.at + SPECIAL_HIT + 40);
     sfx('charge');
     sfx('whip', 0.26);
   }
@@ -906,6 +1253,23 @@ export class BagarreScene extends MiniScene {
     if (me.act && !(me.act.kind === 'punch' && me.act.hit)) return; // un coup parti peut s'interrompre pour esquiver
     me.act = { kind, t0: this.lt };
     sfx(kind === 'duck' ? 'duck' : 'dodge');
+  }
+
+  // ses parades, retenues : l'adversaire malin finit par punir celle que tu répètes
+  remember(d) {
+    const h = this.f.me.hist;
+    h.push(d || 'none');
+    if (h.length > 8) h.shift();
+  }
+  punisher() {
+    const f = this.f, h = f.me.hist;
+    if (h.length < 5) return null;
+    const n = {};
+    for (const d of h) n[d] = (n[d] || 0) + 1;
+    const [top, k] = Object.entries(n).sort((a, b) => b[1] - a[1])[0];
+    if (top === 'none' || k / h.length < 0.6) return null;
+    const c = f.def.pool.filter((m) => !ATK[m].beat.includes(top));
+    return c.length ? pick(c) : null;
   }
 
   // défense du joueur au moment où le coup arrive
@@ -932,6 +1296,7 @@ export class BagarreScene extends MiniScene {
     op.st = st;
     op.at = this.lt;
     op.dur = dur;
+    op.waveAt = 0; // sonné ou au tapis avant que son onde t'atteigne : elle s'éteint (strike() la pose juste après)
   }
 
   pace() { const f = this.f; return (1 - 0.06 * (f.round - 1)) * (f.op.rage ? 0.82 : 1); }
@@ -951,6 +1316,7 @@ export class BagarreScene extends MiniScene {
     if (d.rage && !op.rage && op.hp < op.max * 0.5) {
       op.rage = true;
       op.chain = ATK.fury.chain.slice();
+      op.seq = [];
       op.tauntKind = 'roar';
       this.opSet('taunt', 1200);
       sfx('roar');
@@ -958,38 +1324,52 @@ export class BagarreScene extends MiniScene {
       this.popup(OPP_X, 34, 'IL ENRAGE !', SALMON, true);
       return;
     }
-    const moves = op.rage ? [...d.moves, ['fury', 1]] : d.moves;
-    let x = Math.random() * moves.reduce((s, m) => s + m[1], 0), id = moves[0][0];
-    for (const [m, w] of moves) if ((x -= w) <= 0) { id = m; break; }
-    if (Math.random() < 0.35) op.guard = pick(d.guard);
-    if (id === 'taunt') {
-      op.tauntKind = d.taunt;
-      this.opSet('taunt', TAUNT_MS);
-      this.say('taunt');
-      if (d.taunt === 'laugh') sfx('laugh');
-      else if (d.taunt === 'roar') sfx('roar');
-      else if (d.taunt === 'drink') { sfx('gulp'); sfx('hic', 0.6); }
-      else if (d.taunt === 'flex') sfx('ole');
-      else sfx('tsk');
-      return;
+    // son enchaînement en cours, ou un nouveau parmi ceux qu'il connaît à ce round (la rafale, s'il enrage)
+    if (!op.seq.length) op.seq = op.rage && Math.random() < 0.3 ? ['fury'] : pick(d.patterns.filter((p) => p[0] <= f.round)).slice(1);
+    let id = op.seq.shift();
+    // il a remarqué ta parade favorite : il glisse le coup qui la punit
+    if (d.smart && ATK[id]?.beat && Math.random() < d.smart) {
+      const p = this.punisher();
+      if (p && p !== id) { id = p; this.say('read', 0.5); }
     }
+    if (Math.random() < 0.35) op.guard = pick(d.guard);
     const a = ATK[id];
+    if (id === 'taunt' || a.taunt) return this.taunt(id === 'taunt' ? d.taunt : a.taunt, a?.ms ?? TAUNT_MS);
     if (a.chain) { op.chain = a.chain.slice(1); return this.attack(ATK[a.chain[0]]); }
     this.attack(a);
   }
 
-  attack(a, tell) {
+  // fanfaronnade, sieste, élixir : il se découvre (le frapper rapporte une étoile, et l'élixir est perdu)
+  taunt(kind, ms) {
     const op = this.f.op;
+    op.tauntKind = kind;
+    this.opSet('taunt', ms);
+    this.say(kind === 'doze' || kind === 'elixir' ? kind : 'taunt');
+    if (kind === 'laugh') sfx('laugh');
+    else if (kind === 'roar') sfx('roar');
+    else if (kind === 'drink' || kind === 'elixir') { sfx('gulp'); if (kind === 'drink') sfx('hic', 0.6); }
+    else if (kind === 'flex') sfx('ole');
+    else if (kind !== 'doze') sfx('tsk');
+  }
+
+  attack(a, tell) {
+    const f = this.f, op = f.op, d = f.def;
     op.atk = a;
     op.idleHits = 0;
-    this.opSet('tell', Math.max(300, Math.round((tell ?? a.tell * this.f.def.speed) * this.pace())));
+    let ms = tell ?? a.tell * d.speed;
+    if (d.drunk && tell == null) ms *= rnd(0.7, 1.4); // Pierrot tangue : ses préparations ne durent jamais pareil
+    this.opSet('tell', Math.max(300, Math.round(ms * this.pace())));
+    // les signes de parade : un nombre limité de fois par coup, selon l'adversaire (puis il faut lire ses gestes)
+    op.seen[a.id] = (op.seen[a.id] || 0) + 1;
+    op.guide = op.seen[a.id] <= d.guide;
+    if (!op.guide && !this.hidHint) { this.hidHint = true; this.popup(W / 2, H - 40, 'PLUS DE SIGNES : LIS SES GESTES !', '#e2d2a6'); }
     if (tell == null && !a.feint) this.say(a.kind, 0.45); // il annonce parfois ses gros coups
     if (a.kind !== 'jab' && !a.feint) sfx('windup');
     op.hop = -1;
   }
 
   opTick() {
-    const op = this.f.op, el = this.lt - op.at;
+    const f = this.f, op = f.op, el = this.lt - op.at;
     switch (op.st) {
       case 'idle': if (this.lt >= op.next) this.opDecide(); break;
       case 'tell':
@@ -1001,21 +1381,58 @@ export class BagarreScene extends MiniScene {
         if (op.atk.feint) { this.opIdle(140); op.quick = true; this.say('feint', 0.8); sfx('tsk'); } // la feinte : le vrai coup part aussitôt
         else this.strike();
         break;
-      case 'strike': if (el >= op.dur) this.afterStrike(); break;
+      case 'strike':
+        if (op.waveAt && this.lt >= op.waveAt) { op.waveAt = 0; this.resolve(op.atk); } // l'onde arrive sur toi
+        if (op.st === 'strike' && el >= op.dur) this.afterStrike();
+        break;
       case 'getup': if (el >= op.dur) this.opIdle(500); break;
       case 'down': case 'ko': case 'win': break;
-      default: // découvert, sonné, fanfaronnade, garde, coup encaissé
+      case 'taunt':
+        if (el < op.dur) break;
+        if (op.tauntKind === 'elixir') { // il a fini sa fiole : il se requinque
+          const gain = Math.round(op.max * ATK.elixir.heal);
+          op.hp = Math.min(op.max, op.hp + gain);
+          this.popup(OPP_X, 46, `+${gain} : IL SE REQUINQUE`, SALMON);
+          sfx('rise');
+          this.say('healed');
+        }
+        this.opIdle(op.chain?.length ? 80 : undefined);
+        break;
+      default: // découvert, sonné, garde, coup encaissé, ventre rebondi
         if (el >= op.dur) this.opIdle(op.quick || op.chain?.length ? 80 : undefined);
     }
   }
 
-  // le coup arrive : esquivé, bloqué ou encaissé
+  // son coup part ; il arrive aussitôt, ou (l'onde du Bison) un peu plus tard
   strike() {
-    const f = this.f, op = f.op, a = op.atk;
+    const op = this.f.op, a = op.atk;
+    if (a.wave) {
+      this.opSet('strike', a.wave + STRIKE_MS);
+      op.waveAt = this.lt + a.wave;
+      op.res = null;
+      sfx('stomp'); sfx('boom', 0.02);
+      this.shake = 7;
+      return;
+    }
     this.opSet('strike', STRIKE_MS);
+    this.resolve(a);
+  }
+
+  // le coup arrive : esquivé, bloqué ou encaissé
+  resolve(a) {
+    const f = this.f, op = f.op, me = f.me;
     const d = this.myDef();
+    this.remember(d);
     const ok = d && a.beat.includes(d);
-    if (a.kind === 'throw') sfx('glass', ok ? 0.25 : 0.05); // la fiole se brise (derrière toi, ou sur toi)
+    if (a.kind === 'throw') sfx('glass', ok ? 0.25 : 0.05); // la fiole (ou la chope) se brise derrière toi, ou sur toi
+    if (ok && a.kind === 'charge' && d !== 'block' && this.lt - me.act.t0 < 260) { // ¡olé ! esquivé au dernier moment
+      op.res = 'ole';
+      sfx('ole'); sfx('cheer', 0.1);
+      this.charge(20);
+      this.popup(ME_X, 104, '¡OLÉ !', GOLD, true);
+      this.excite = Math.max(this.excite, 2500);
+      return;
+    }
     if (ok && d === 'block' && !a.parry) { op.res = 'blocked'; this.loseHearts(1); sfx('block'); this.shake = 2; }
     else if (ok && d === 'block') { op.res = 'dodged'; sfx('parry'); this.shake = 3; this.charge(8); this.popup(ME_X, 112, 'PARÉ !', GREEN); }
     else if (ok) { op.res = 'dodged'; sfx('swish'); this.charge(6); }
@@ -1033,6 +1450,7 @@ export class BagarreScene extends MiniScene {
     me.hp = Math.max(0, me.hp - dmg);
     me.taken += dmg;
     this.loseHearts(3);
+    if (me.act?.kind === 'special' && !me.act.hit) me.sp = SPECIAL_MAX; // spécial coupé avant l'impact : la barre n'est pas perdue
     me.sp = Math.max(0, me.sp - 20); // un coup encaissé vide un peu la barre
     me.act = null;
     me.hurtUntil = this.lt + HURT_MS;
@@ -1042,12 +1460,24 @@ export class BagarreScene extends MiniScene {
     sfx('oof', 0.05);
     if (dmg >= 20) sfx('ooh', 0.1);
     this.spark(ME_X + rnd(-8, 8), 150, a.dmg > 20 ? 2 : 1);
-    if (a.kind === 'throw') this.spark(ME_X, 150, 2, '#7ad08a');
+    if (a.kind === 'throw') this.spark(ME_X, 150, 2, a.item === 'mug' ? '#f8d070' : '#7ad08a');
+    if (a.poison) { // l'élixir dans les yeux : la vue se brouille, et plus de signes de parade
+      me.poisonUntil = this.lt + 3200;
+      this.popup(ME_X, 104, 'LA VUE SE BROUILLE !', '#7ad08a');
+      this.say('poison', 0.7);
+    }
+    if (a.wave) this.dust(ME_X, 200, 10);
     if (me.hp <= 0) this.knockMe();
   }
 
   afterStrike() {
     const op = this.f.op, a = op.atk;
+    if (op.res === 'ole') { // il file dans les cordes et en revient tout étourdi
+      this.opSet('stun', 2300);
+      op.combo = 0; op.chain = null;
+      this.say('oled', 0.9);
+      return;
+    }
     if (op.chain?.length) return this.attack(ATK[op.chain.shift()], CHAIN_GAP);
     if (op.res === 'dodged') { this.opSet('open', a.open); op.combo = 0; }
     else if (op.res === 'blocked') this.opSet('reset', 380);
@@ -1057,8 +1487,8 @@ export class BagarreScene extends MiniScene {
   // ---------------------------------------------------------- coups du joueur
   land(side, high, special) {
     const f = this.f, op = f.op, me = f.me, d = f.def, lt = this.lt, el = lt - op.at, st = op.st;
-    if (st === 'down' || st === 'getup' || st === 'ko' || st === 'win') return;
-    if (st === 'strike') return; // trop tard : son coup est déjà parti
+    if (st === 'down' || st === 'getup' || st === 'ko' || st === 'win') { if (special) me.sp = SPECIAL_MAX; return; } // spécial dans le vide : rendu
+    if (st === 'strike' && !special) return; // trop tard : son coup est déjà parti (le spécial, lui, le cueille quand même)
     let mult = 1, star = false, stun = 0, label = null;
     if (special) stun = 1500; // le spécial
     else if (st === 'tell') {
@@ -1069,9 +1499,15 @@ export class BagarreScene extends MiniScene {
         mult = 1.6; star = true; stun = 900; label = 'CONTRE !';
       } else mult = 0;
     } else if (st === 'open' || st === 'stun') mult = op.combo >= d.combo ? 0 : 1.4;
-    else if (st === 'taunt') { mult = 1.5; star = true; stun = 900; label = 'PRIS EN PLEINE FANFARONNADE !'; op.chain = null; }
-    else {
+    else if (st === 'taunt') {
+      mult = 1.5; star = true; stun = 900; op.chain = null;
+      const k = op.tauntKind;
+      label = k === 'elixir' ? 'FIOLE BRISÉE !' : k === 'doze' ? 'RÉVEIL EN FANFARE !' : 'PRIS EN PLEINE FANFARONNADE !';
+      if (k === 'elixir') { sfx('glass'); this.spark(OPP_X + 10, (this.eyeAt?.[1] ?? 80) + 4, 2, '#7ad08a'); this.say('broken'); }
+      else if (k === 'doze') this.say('woken');
+    } else {
       const guarded = st === 'block' || op.idleHits >= 2 || (op.guard === 'high' && high) || (op.guard === 'low' && !high);
+      if (!guarded && !high && d.belly) return this.bounce();
       mult = guarded ? 0 : 1;
     }
     if (!special && !mult) return this.blocked();
@@ -1083,8 +1519,12 @@ export class BagarreScene extends MiniScene {
     op.hitAt = lt;
     op.hitHigh = high || special;
     op.hitSide = side === 'L' ? -1 : 1;
-    if (special) { this.spark(OPP_X - 14, 84, 3); this.spark(OPP_X + 14, 84, 3); }
-    else this.spark(OPP_X + (side === 'L' ? -12 : 12) + rnd(-4, 4), op.hitHigh ? 82 : 128, mult > 1 ? 2 : 1);
+    const hy = (this.eyeAt?.[1] ?? 78) + 6, by = this.headLine + 30;
+    if (special) { this.spark(OPP_X - 14, hy, 3); this.spark(OPP_X + 14, hy, 3); this.drops(OPP_X, hy, 10, true); }
+    else {
+      this.spark(OPP_X + (side === 'L' ? -12 : 12) + rnd(-4, 4), op.hitHigh ? hy : by, mult > 1 ? 2 : 1);
+      if (op.hitHigh) this.drops(OPP_X + (side === 'L' ? -6 : 6), hy - 4, mult > 1 ? 7 : 3); // la sueur gicle
+    }
     sfx(op.hitHigh ? 'smack' : 'punch');
     if (stun || Math.random() < 0.3) sfx('ugh', 0.04);
     if (label) sfx('ooh', 0.08);
@@ -1099,8 +1539,12 @@ export class BagarreScene extends MiniScene {
       op.flash = lt + 90; // éclair blanc plus long
       sfx('kaboom');
       sfx('cheer', 0.15);
+      this.hats(6);
+    } else {
+      this.charge(star ? 25 : mult > 1 ? 6 : 4);
+      if (star) this.hitStop = lt + 45; // un contre fige l'image un instant
     }
-    else this.charge(star ? 25 : mult > 1 ? 6 : 4);
+    this.checkDamage();
     if (op.hp <= 0) return this.knockOp();
     if (stun) {
       op.atk = null;
@@ -1109,12 +1553,28 @@ export class BagarreScene extends MiniScene {
       this.opSet('stun', stun);
       return;
     }
-    if (st === 'open' || st === 'stun') { op.combo++; return; }
+    if (st === 'open' || st === 'stun') {
+      // son quota de coups encaissés est atteint : il relève la garde (et ça se voit) pour le temps qui reste
+      if (++op.combo >= d.combo) this.opSet('block', clamp(op.dur - el, 260, 700));
+      return;
+    }
     // coup dans une garde ouverte : il encaisse, protège ce qu'on vient de frapper, et parfois riposte
     op.idleHits++;
     this.opSet('hit', 240);
     if (d.switchy || Math.random() < 0.4) op.guard = high ? 'high' : 'low';
     if (Math.random() < d.counter) op.quick = true;
+  }
+
+  // la bedaine de Gros Bill : le coup au corps rebondit, et il en profite pour riposter
+  bounce() {
+    const op = this.f.op;
+    this.loseHearts(1);
+    sfx('thud');
+    this.popup(OPP_X, (this.headLine || 100) + 20, 'ÇA REBONDIT !', '#f0a0a0');
+    this.say('bounce', 0.5);
+    this.opSet('bounce', 320);
+    op.combo = 0;
+    op.quick = true;
   }
 
   blocked() {
@@ -1149,6 +1609,7 @@ export class BagarreScene extends MiniScene {
     sfx('cheer', 0.5);
     this.shake = 10;
     this.excite = 4000;
+    this.hats(10);
     const up = d.getUp[op.kdT - 1];
     f.count = { who: 'op', t0: this.lt, n: 0, tko: op.kd >= 3, up: up == null ? null : up + (Math.random() < 0.4 ? 1 : 0) };
     this.setPhase('kd');
@@ -1165,6 +1626,7 @@ export class BagarreScene extends MiniScene {
     sfx('aww', 0.1);
     sfx('bodyfall', 0.3);
     this.shake = 10;
+    this.trash(6);
     this.say('win');
     f.count = { who: 'me', t0: this.lt, n: 0, tko: me.kd >= 3 };
     this.setPhase('kd');
@@ -1193,6 +1655,7 @@ export class BagarreScene extends MiniScene {
     if (me.down.mash >= me.down.need && n >= 2) {
       me.hp = Math.round(100 * ([0.6, 0.45, 0.3][me.kdT - 1] ?? 0.25));
       me.down = null;
+      me.upAt = this.lt; // (rendu) il remonte dans l'image au lieu d'y réapparaître d'un coup
       me.hurtUntil = 0;
       me.hearts = Math.max(me.hearts, 10);
       me.tiredUntil = 0;
@@ -1216,7 +1679,8 @@ export class BagarreScene extends MiniScene {
     if (this.t < 0 || this.over) return;
     const run = this.run, el = this.lt - run.at;
     // sprites de l'adversaire préparés pendant sa présentation (quelques-uns par image)
-    if (this.warm?.length && this.f) for (let k = 0; k < 3 && this.warm.length; k++) { const [n, fr] = this.warm.shift(); oppSprite(this.f.def, n, fr); }
+    if (this.warm?.length && this.f) for (let k = 0; k < 3 && this.warm.length; k++) { const [n, fr, dmg] = this.warm.shift(); oppSprite(this.f.def, n, fr, dmg); }
+    if (this.f) this.refTick(dt);
     switch (run.phase) {
       case 'wait': this.startBout(); break;
       case 'intro': if (el >= INTRO_MS) this.ringBell(); break;
@@ -1227,7 +1691,8 @@ export class BagarreScene extends MiniScene {
       case 'over': if (el >= OVER_MS) this.setPhase('result'); break;
       case 'result': if (el >= RESULT_MS) this.afterResult(); break;
       case 'champ':
-        if (Math.random() < 0.35) this.confetti();
+        // un confetti toutes les 48 ms, quelle que soit la cadence d'affichage
+        for (this.confT = (this.confT || 0) + dt; this.confT >= 48; this.confT -= 48) this.confetti();
         if (el >= CHAMP_MS) { this.sendBout(); this.setPhase('done'); bossMusic('mini-bagarre', false); }
         break;
     }
@@ -1254,6 +1719,40 @@ export class BagarreScene extends MiniScene {
     if (f.clock >= BAGARRE.round) this.roundEnd();
   }
 
+  // L'arbitre : au fond du ring pendant le combat ; il vient compter à côté de l'adversaire au tapis, se penche sur toi
+  // quand c'est toi (en gros plan, il monte du bas de l'image) et agite les bras à la fin du combat.
+  refTick(dt) {
+    const r = this.ref, f = this.f, c = f.count, ph = this.run.phase, lt = this.lt, el = lt - this.run.at;
+    let tx = 316 + Math.round(Math.sin(lt / 2400) * 12), pose = 'stand', near = false;
+    if (ph === 'bell') { tx = el < 700 ? 262 : 316; pose = el < 700 ? 'point' : 'stand'; }
+    else if (ph === 'kd' && c) {
+      near = c.who === 'me';
+      tx = near ? ME_X : 296;
+      const ce = lt - c.t0;
+      if (c.tko) pose = 'wave';
+      else if (ce < COUNT_START) pose = 'point'; // au coin neutre !
+      else pose = (ce - COUNT_START) % COUNT_MS < 260 ? 'chop' : 'count'; // le bras s'abat sur chaque chiffre
+    } else if (ph === 'over') { tx = 296; pose = f.res?.how === 'DEC' ? 'point' : 'wave'; }
+    if (near !== r.near) { r.near = near; r.enter = lt; r.x = tx; }
+    const dx = tx - r.x, step = dt * 0.14;
+    r.walk = Math.abs(dx) > 1;
+    r.x = Math.abs(dx) <= step ? tx : r.x + Math.sign(dx) * step;
+    r.pose = r.walk && !near ? 'stand' : pose;
+  }
+
+  drawRef(ctx, near) {
+    const r = this.ref;
+    if (!this.f || !r.pose || r.near !== near) return;
+    const spr = refSprite(r.pose, Math.floor(this.now / 220) % 2);
+    if (near) {
+      const k = Math.min(1, (this.lt - r.enter) / 380), y = Math.round(lerp(H + 140, 238, 1 - (1 - k) ** 3));
+      ctx.drawImage(spr, Math.round(r.x - spr.ox * 2), y - spr.oy * 2, spr.width * 2, spr.height * 2);
+    } else {
+      const bob = r.walk && Math.floor(this.now / 130) % 2 ? -1 : 0;
+      ctx.drawImage(spr, Math.round(r.x - spr.ox), r.y + bob - spr.oy);
+    }
+  }
+
   // à plusieurs : où en est chacun (round, forces), pour le tableau des autres
   sendProgress() {
     if (this.n < 2 || this.lt - (this.lastProg || 0) < 1000) return;
@@ -1276,18 +1775,64 @@ export class BagarreScene extends MiniScene {
     const cols = [GOLD, SALMON, '#7ab0f0', GREEN, CREAM];
     this.fx.push({ kind: 'bit', x: rnd(0, W), y: -4, vx: rnd(-0.02, 0.02), vy: rnd(0.05, 0.11), t: 0, max: 4000, col: pick(cols), hat: Math.random() < 0.12 });
   }
+  // gouttes de sueur (et une dent, sur le spécial) qui giclent de son visage
+  drops(x, y, n, tooth = false) {
+    for (let i = 0; i < n; i++) {
+      const a = rnd(-Math.PI * 0.95, -Math.PI * 0.05), v = rnd(0.06, 0.16);
+      this.fx.push({ kind: 'drop', x: x + rnd(-6, 6), y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 0.0005, t: 0, max: 700, col: i % 3 ? '#d8eef8' : '#fdf6e0' });
+    }
+    if (tooth) this.fx.push({ kind: 'drop', x, y, vx: rnd(-0.05, 0.05), vy: -0.2, g: 0.0006, t: 0, max: 1100, col: '#fdf6e0', big: true });
+  }
+  // la foule jette ses chapeaux en l'air (ils retombent dans les gradins)
+  hats(n) {
+    const st = ARENA?.st || STAGES.pierrot;
+    for (let i = 0; i < n; i++) {
+      const y = rnd(52, 80);
+      this.fx.push({ kind: 'hat', x: rnd(24, W - 24), y, y0: y + 4, vx: rnd(-0.03, 0.03), vy: rnd(-0.2, -0.13), g: 0.0004, t: rnd(-300, 0), max: 1800, col: pick(st.hats), som: Math.random() < (st.sombrero || 0) });
+    }
+  }
+  // elle hue : trognons et papiers volent vers le ring
+  trash(n) {
+    for (let i = 0; i < n; i++) {
+      const x = rnd(30, W - 30);
+      this.fx.push({ kind: 'trash', x, y: rnd(56, 76), vx: (OPP_X - x) * 0.0004, vy: rnd(-0.08, -0.04), g: 0.0003, t: rnd(-500, 0), max: 1400, col: pick(['#d8d0b8', '#8aa040', '#c8a050']) });
+    }
+  }
+  // poussière soulevée par l'onde du Bison
+  dust(x, y, n) {
+    for (let i = 0; i < n; i++) this.fx.push({ kind: 'drop', x: x + rnd(-40, 40), y: y + rnd(-6, 6), vx: rnd(-0.04, 0.04), vy: rnd(-0.08, -0.02), g: 0.0001, t: 0, max: 600, col: '#e8d8b0' });
+  }
   updateFx(dt) {
     let n = 0;
     for (const p of this.fx) {
       p.t += dt;
+      if (p.t < 0) { this.fx[n++] = p; continue; } // (départ décalé)
       if (p.vx != null) { p.x += p.vx * dt; p.y += p.vy * dt; }
+      if (p.g) p.vy += p.g * dt;
+      if (p.kind === 'hat' && p.vy > 0 && p.y > p.y0) continue; // retombé dans la foule
       if (p.t < p.max && p.y < H + 10) this.fx[n++] = p;
     }
     this.fx.length = n;
   }
   drawFx(ctx) {
     for (const p of this.fx) {
-      if (p.kind === 'spark') {
+      if (p.t < 0) continue;
+      if (p.kind === 'drop') {
+        ctx.fillStyle = p.col;
+        ctx.globalAlpha = Math.min(1, 2 * (1 - p.t / p.max));
+        if (p.big) { ctx.fillStyle = OUT; ctx.fillRect(Math.round(p.x) - 2, Math.round(p.y) - 2, 5, 6); ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 1, 3, 4); }
+        else ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
+        ctx.globalAlpha = 1;
+      } else if (p.kind === 'hat') {
+        const x = Math.round(p.x), y = Math.round(p.y), flip = Math.floor(p.t / 110) % 2, bw = p.som ? 8 : 5;
+        ctx.fillStyle = OUT; ctx.fillRect(x - bw - 1, y - 4, bw * 2 + 3, flip ? 7 : 5);
+        ctx.fillStyle = p.col;
+        if (flip) { ctx.fillRect(x - bw, y - 3, bw * 2 + 1, 2); ctx.fillRect(x - 2, y - 1, 5, 3); } // retourné
+        else { ctx.fillRect(x - 2, y - 3, 5, 2); ctx.fillRect(x - bw, y - 1, bw * 2 + 1, 2); }
+      } else if (p.kind === 'trash') {
+        ctx.fillStyle = OUT; ctx.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 1, 4, 4);
+        ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
+      } else if (p.kind === 'spark') {
         const k = p.t / p.max, r = Math.round(p.r * (0.5 + k)), a = 1 - k;
         ctx.globalAlpha = a;
         ctx.fillStyle = p.col;
@@ -1310,33 +1855,46 @@ export class BagarreScene extends MiniScene {
   // ---------------------------------------------------------- rendu
   render(ctx) {
     if (!this.state || !this.run) return;
-    const A = arena(), ph = this.run.phase, el = this.lt - this.run.at, f = this.f;
-    ctx.drawImage(A.wall, 0, 0);
-    ctx.drawImage(A.crowd[Math.floor(this.now / (this.excite > 0 ? 130 : 600)) % 2], 0, 0);
-    ctx.drawImage(A.ring, 0, 0);
+    const ph = this.run.phase, el = this.lt - this.run.at, f = this.f;
     const def = f?.def || ROSTER[Math.min(this.run.n, F - 1)];
+    const A = arena(def.id), sd = this.sd;
+    const poisoned = f && this.lt < f.me.poisonUntil;
+    ctx.save();
+    if (poisoned) ctx.translate(Math.round(Math.sin(this.now / 170) * 3), Math.round(Math.sin(this.now / 230))); // la salle tangue
+    ctx.drawImage(sd ? sd.wall : A.wall, 0, 0);
+    sd?.torches(ctx, this.now);
+    // la foule : en délire sur les gros coups, elle hue quand tu es au tapis, sinon elle remue tranquillement
+    const hype = this.excite > 0 || ph === 'champ';
+    const boo = (ph === 'kd' && f?.count?.who === 'me') || (ph === 'over' && f?.res && !f.res.win);
+    ctx.drawImage(A.crowd[hype ? 2 + (Math.floor(this.now / 130) % 2) : Math.floor(this.now / (boo ? 180 : 600)) % 2], 0, 0);
+    if (sd) ctx.drawImage(sd.front, 0, 0); // les ardoises des parieurs
+    ctx.drawImage(A.ring, 0, 0);
     // la bannière au-dessus du ring
     ctx.fillStyle = def.champ ? '#6a1a14' : '#3a2418';
     ctx.fillRect(96, 27, 192, 14);
     ctx.fillStyle = OUT;
     ctx.fillRect(96, 41, 192, 1);
-    canvasText(ctx, def.champ ? 'CHAMPIONNAT DES TERRITOIRES' : 'BAGARRE DU SAMEDI SOIR', W / 2, 30, { color: def.champ ? GOLD : '#e2d2a6' });
-    if (ph === 'champ') { this.drawChamp(ctx, el); return; }
-    if (ph === 'done') { this.drawDone(ctx); return; }
-    // le spécial : léger zoom quand il s'arme, à-coup à l'impact
-    const sa = f?.me.act?.kind === 'special' ? this.lt - f.me.act.t0 : -1, ie = this.lt - (this.spImpact ?? -1e9);
-    const zoom = sa >= 0 && sa < SPECIAL_HIT ? 1 + 0.04 * (sa / SPECIAL_HIT) : ie >= 0 && ie < 200 ? 1 + 0.07 * (1 - ie / 200) : 1;
-    ctx.save();
-    if (zoom > 1) { ctx.translate(OPP_X, 110); ctx.scale(zoom, zoom); ctx.translate(-OPP_X, -110); }
+    // son titre s'efface quand les signes de parade ou le compte de l'arbitre prennent sa place
+    const busy = (f?.op.st === 'tell' && f.op.guide && !poisoned && f.op.atk?.beat) || (ph === 'kd' && f?.count?.n && !f.count.tko);
+    if (!busy) canvasText(ctx, def.champ ? sd?.champ || A.st.banner : sd?.banner || A.st.banner, W / 2, 30, { color: def.champ ? GOLD : '#e2d2a6' });
+    if (ph === 'champ') { ctx.restore(); this.drawChamp(ctx, el); return; }
+    if (ph === 'done') { ctx.restore(); this.drawDone(ctx); return; }
+    // le spécial s'arme : la salle s'assombrit (pas de zoom : une échelle non entière brouille les pixels)
+    const sa = f?.me.act?.kind === 'special' ? this.lt - f.me.act.t0 : -1;
+    this.drawRef(ctx, false);
+    this.drawWave(ctx);
     this.drawOpp(ctx, def);
     this.drawProjectile(ctx);
     if (sa >= 0 && sa < SPECIAL_HIT) { ctx.fillStyle = `rgba(14,6,20,${0.5 * Math.min(1, sa / 120)})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
+    this.drawRef(ctx, true);
     this.drawMe(ctx);
     this.drawFx(ctx);
+    if (poisoned) { ctx.fillStyle = `rgba(90,200,110,${0.14 + 0.06 * Math.sin(this.now / 140)})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
     ctx.restore();
     this.drawImpact(ctx);
     this.drawBubble(ctx);
     this.drawGuide(ctx);
+    this.drawAim(ctx);
     if (this.redFlash > 0) { ctx.fillStyle = `rgba(200,30,20,${(0.35 * this.redFlash) / 160})`; ctx.fillRect(0, 0, W, H); }
     if (f && ph !== 'intro' && ph !== 'wait') this.drawHud(ctx);
     if (ph === 'bell') this.drawBell(ctx, el);
@@ -1348,14 +1906,15 @@ export class BagarreScene extends MiniScene {
     this.drawTicker(ctx);
   }
 
+  // [pose, image, décalage x, décalage y, inclinaison (il bascule en arrière : 0 à 3)]
   oppPoseName() {
     const f = this.f, lt = this.lt;
-    if (!f) return ['g_none', Math.floor(lt / 420) % 2, 0, 0];
+    if (!f) return ['g_none', Math.floor(lt / 420) % 2, 0, 0, 0];
     const op = f.op, el = lt - op.at, a = op.atk;
     const hitName = op.hitHigh ? (op.hitSide < 0 ? 'hhL' : 'hhR') : 'hb';
     const recent = lt - op.hitAt < 200;
     const swing = (p) => (a && (a.kind === 'jab' || a.kind === 'hook') ? `${p}${a.kind}${a.side}` : a ? `${p}${a.kind}` : 'g_none');
-    let fr = Math.floor(lt / 420) % 2, dx = 0, dy = 0, name = `g_${op.guard}`;
+    let fr = Math.floor(lt / 420) % 2, dx = 0, dy = 0, lean = 0, name = `g_${op.guard}`;
     switch (op.st) {
       case 'tell':
         name = swing('w_');
@@ -1368,20 +1927,29 @@ export class BagarreScene extends MiniScene {
       case 'open': name = recent ? hitName : el < 140 ? swing('s_') : 'open'; break;
       case 'stun': name = recent ? hitName : 'stun'; fr = Math.floor(lt / 180) % 2; break;
       case 'hit': name = hitName; break;
-      case 'block': name = 'block'; break;
-      case 'taunt': name = `t_${op.tauntKind}`; fr = Math.floor(lt / 260) % 2; break;
-      case 'win': name = f.def.taunt === 'drink' ? 't_drink' : 't_flex'; fr = Math.floor(lt / 300) % 2; break;
-      case 'down': name = 'stun'; dy = Math.round(Math.min(1, el / 420) ** 2 * 96); break;
-      case 'ko': name = 'stun'; dy = 96; break;
-      case 'getup': name = 'stun'; dy = Math.round((1 - Math.min(1, el / 700)) * 96); break;
+      case 'block': name = recent ? hitName : 'block'; break;
+      case 'bounce': name = 's_belly'; dy = el < 120 ? -3 : 0; break; // la bedaine renvoie le coup
+      case 'taunt': name = `t_${op.tauntKind}`; fr = Math.floor(lt / (op.tauntKind === 'doze' ? 600 : 260)) % 2; break;
+      case 'win': name = `t_${f.def.taunt}`; fr = Math.floor(lt / 300) % 2; break; // chacun fête ça à sa façon
+      case 'down': // il bascule en arrière, puis s'étale sur le dos (un petit rebond)
+        if (el < 420) { name = 'stun'; lean = Math.round((el / 420) * 3); dy = Math.round((el / 420) ** 2 * 24); }
+        else { name = 'lying'; dy = el < 520 ? -3 : 0; }
+        break;
+      case 'ko': name = 'lying'; break;
+      case 'getup':
+        if (el < 260) name = 'lying';
+        else { const k = Math.min(1, (el - 260) / 640); name = 'stun'; lean = Math.round((1 - k) * 3); dy = Math.round((1 - k) * 24); }
+        break;
     }
-    return [name, fr, dx, dy];
+    // Pierrot tangue
+    if (f.def.drunk && (op.st === 'idle' || op.st === 'tell' || op.st === 'taunt')) dx += Math.round(Math.sin(lt / 260) * 3);
+    return [name, fr, dx, dy, lean];
   }
 
   drawOpp(ctx, def) {
-    const [name, fr, dx, dy] = this.oppPoseName();
-    const spr = oppSprite(def, name, fr);
+    const [name, fr, dx, dy, lean] = this.oppPoseName();
     const op = this.f?.op;
+    const spr = oppSprite(def, name, fr, op?.dmg || 0);
     let kx = 0, ky = 0;
     if (op?.knockAt && this.lt - op.knockAt < 360) { // projeté en arrière par le spécial
       const k = (this.lt - op.knockAt) / 360;
@@ -1390,28 +1958,43 @@ export class BagarreScene extends MiniScene {
     }
     const x = OPP_X + dx + kx - spr.ox * 2, y = OPP_Y + dy + ky - spr.oy * 2;
     this.eyeAt = spr.eye ? [x + (spr.ox + spr.eye[0]) * 2, y + (spr.oy + spr.eye[1]) * 2] : null;
-    const down = op && (op.st === 'down' || op.st === 'ko' || op.st === 'getup');
-    if (down) { // il tombe à la renverse sur le tapis
-      ctx.save();
-      ctx.translate(OPP_X + dx, OPP_Y + dy);
-      ctx.rotate((op.st === 'getup' ? 1 - Math.min(1, (this.lt - op.at) / 700) : Math.min(1, (this.lt - op.at) / 420)) * -0.18);
-      ctx.drawImage(spr, -spr.ox * 2, -spr.oy * 2, spr.width * 2, spr.height * 2);
-      ctx.restore();
+    const lying = name === 'lying';
+    if (lean) {
+      const l = leanOf(spr, lean);
+      ctx.drawImage(l, OPP_X + dx - l.ox * 2, y, l.width * 2, l.height * 2);
+      if (spr.eye) this.eyeAt[0] += Math.round(spr.eye[1] * lean * LEAN) * 2;
     } else ctx.drawImage(spr, x, y, spr.width * 2, spr.height * 2);
-    if (op && this.lt - op.flash < 70 && this.lt >= op.flash - 200 && !down) {
+    if (!lean && !lying && this.eyeAt) this.chinY = this.eyeAt[1] + 24; // la ligne tête / corps suit son menton
+    if (op && this.lt - op.flash < 70 && this.lt >= op.flash - 200 && !lean && !lying) {
       ctx.globalAlpha = 0.7;
       ctx.drawImage(whiteOf(spr), x, y, spr.width * 2, spr.height * 2);
       ctx.globalAlpha = 1;
     }
+    if (!this.eyeAt) return;
+    const [ex, ey] = this.eyeAt;
     // l'éclair dans l'œil : son coup part
-    if (op?.st === 'tell' && op.dur - (this.lt - op.at) < 220 && spr.eye) {
-      const ex = x + (spr.ox + spr.eye[0]) * 2, ey = y + (spr.oy + spr.eye[1]) * 2;
+    if (op?.st === 'tell' && op.dur - (this.lt - op.at) < 220) {
       ctx.fillStyle = '#fffbe8';
       ctx.fillRect(ex - 1, ey - 5, 2, 12);
       ctx.fillRect(ex - 5, ey - 1, 12, 2);
       ctx.fillRect(ex - 2, ey - 2, 4, 4);
     }
-    if (op?.rage && !down) { // la vapeur du champion enragé
+    if (lying) { // les étoiles qui lui tournent autour de la tête
+      for (let i = 0; i < 3; i++) {
+        const ang = this.now / 280 + i * 2.094, sx = Math.round(ex + Math.cos(ang) * 26), sy = Math.round(ey - 8 + Math.sin(ang) * 7);
+        ctx.fillStyle = OUT; ctx.fillRect(sx - 3, sy - 1, 7, 3); ctx.fillRect(sx - 1, sy - 3, 3, 7);
+        ctx.fillStyle = GOLD; ctx.fillRect(sx - 2, sy, 5, 1); ctx.fillRect(sx, sy - 2, 1, 5);
+      }
+    }
+    if (op?.st === 'taunt' && op.tauntKind === 'doze') { // ZZZ
+      for (let i = 0; i < 3; i++) {
+        const k = (this.now / 1400 + i / 3) % 1;
+        ctx.globalAlpha = 1 - k;
+        canvasText(ctx, 'Z', Math.round(ex + 12 + k * 16), Math.round(ey - 14 - k * 28), { color: CREAM });
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (op?.rage && !lean && !lying) { // la vapeur du champion enragé
       const k = (this.lt % 600) / 600;
       ctx.globalAlpha = 0.5 * (1 - k);
       ctx.fillStyle = CREAM;
@@ -1421,25 +2004,49 @@ export class BagarreScene extends MiniScene {
     }
   }
 
-  // la fiole de Doc Vipère, lancée vers nous
+  // l'onde du coup de pied du Bison : elle part de ses pieds et s'élargit sur le tapis jusqu'à toi
+  drawWave(ctx) {
+    const op = this.f?.op;
+    if (!op || op.st !== 'strike' || !op.atk?.wave) return;
+    const k = (this.lt - op.at) / op.atk.wave;
+    if (k > 1.25) return;
+    const rx = Math.round(lerp(24, 250, k)), ry = Math.round(lerp(8, 72, k));
+    ctx.globalAlpha = k > 1 ? (1.25 - k) * 4 : 1;
+    // un bourrelet de poussière épais de 3 pixels, une traîne dorée derrière
+    for (let i = 0; i < 3; i++) ring(ctx, OPP_X, 236 - i, rx + i, ry + i, i === 1 ? '#fdf6e0' : '#e8d8b0');
+    ring(ctx, OPP_X, 236, rx + 3, ry + 3, '#8a7650');
+    ring(ctx, OPP_X, 236, Math.max(4, rx - 12), Math.max(2, ry - 5), GOLD, 3, this.now / 50);
+    ring(ctx, OPP_X, 236, Math.max(4, rx - 24), Math.max(2, ry - 10), GOLD, 2, this.now / 40);
+    ctx.globalAlpha = 1;
+  }
+
+  // la fiole de Doc Vipère (ou la chope de Gros Bill), lancée vers nous
   drawProjectile(ctx) {
     const op = this.f?.op;
     if (!op || op.st !== 'strike' || op.atk?.kind !== 'throw') return;
     const k = Math.min(1, (this.lt - op.at) / STRIKE_MS);
     const res = op.res;
     const x = Math.round(lerp(OPP_X + 18, ME_X, k)), y = Math.round(lerp(78, res === 'hit' ? 150 : 118, k) - Math.sin(k * Math.PI) * 10);
-    const s = Math.round(lerp(4, 12, k));
+    const s = Math.round(lerp(4, 12, k)), hs = s >> 1; // demi-largeur entière : pas de bord flou
     if (res === 'hit' && k > 0.85) return;
-    ctx.fillStyle = OUT; ctx.fillRect(x - s / 2 - 1, y - s - 1, s + 2, s * 2 + 2);
-    ctx.fillStyle = '#3a8a4a'; ctx.fillRect(x - s / 2, y - s, s, s * 2);
-    ctx.fillStyle = '#7ad08a'; ctx.fillRect(x - s / 2 + 1, y - s + 1, 1, s * 2 - 2);
+    ctx.fillStyle = OUT; ctx.fillRect(x - hs - 1, y - s - 1, s + 2, s * 2 + 2);
+    if (op.atk.item === 'mug') {
+      ctx.fillRect(x + hs, y - hs, hs + 2, s);
+      ctx.fillStyle = '#c8c0b0'; ctx.fillRect(x + hs, y - hs + 1, hs + 1, s - 2);
+      ctx.fillStyle = '#e0a030'; ctx.fillRect(x - hs, y - s, s, s * 2);
+      ctx.fillStyle = '#fdf6e0'; ctx.fillRect(x - hs, y - s, s, Math.max(2, hs));
+      ctx.fillStyle = '#f8d070'; ctx.fillRect(x - hs + 1, y - s + hs + 1, 1, s);
+    } else {
+      ctx.fillStyle = '#3a8a4a'; ctx.fillRect(x - hs, y - s, s, s * 2);
+      ctx.fillStyle = '#7ad08a'; ctx.fillRect(x - hs + 1, y - s + 1, 1, s * 2 - 2);
+    }
   }
 
   drawMe(ctx) {
-    const f = this.f, lt = this.lt;
+    const f = this.f, lt = this.lt, ph = this.run.phase;
     let pose = Math.floor(lt / 420) % 2 ? 'idle1' : 'idle0', x = ME_X, y = ME_Y;
     if (f) {
-      const me = f.me, a = me.act, el = a ? lt - a.t0 : 0, ph = this.run.phase;
+      const me = f.me, a = me.act, el = a ? lt - a.t0 : 0;
       if (me.down) { pose = 'hurt'; y += Math.round(Math.min(1, (lt - me.downAt) / 500) * 130); }
       else if (ph === 'kd' && f.count?.who === 'op') { // dans le coin neutre, il reprend son souffle en sautillant
         x += Math.round(Math.min(1, (lt - f.count.t0) / 500) * 128);
@@ -1457,7 +2064,15 @@ export class BagarreScene extends MiniScene {
       } else if (this.blocking && ph === 'fight') pose = 'block';
       else if (lt < me.tiredUntil) pose = 'tired';
       if (ph === 'over' && f.res?.win) pose = 'win';
+      const up = lt - (me.upAt ?? -1e9);
+      if (!me.down && up < 350) y += Math.round((1 - up / 350) * 130); // relevé : il remonte du bas de l'image
     }
+    // au repos, au milieu, il s'efface à moitié : on voit le corps de l'adversaire (et où frapper) à travers
+    const still = (pose === 'idle0' || pose === 'idle1' || pose === 'block' || pose === 'tired') && x === ME_X && y === ME_Y;
+    const target = f && still && (ph === 'fight' || ph === 'bell') ? GHOST : 1;
+    const dtA = Math.min(50, Math.max(0, this.now - (this.meAT ?? this.now)));
+    this.meAT = this.now;
+    this.meA += (target - this.meA) * Math.min(1, dtA / 70);
     const spr = backSprite(this.look, pose);
     // le spécial lancé : deux images rémanentes sous les poings
     const a = f?.me.act, el = a ? lt - a.t0 : 0;
@@ -1466,10 +2081,27 @@ export class BagarreScene extends MiniScene {
         ctx.globalAlpha = al;
         ctx.drawImage(spr, x - spr.ox * 2, y + off - spr.oy * 2, spr.width * 2, spr.height * 2);
       }
-      ctx.globalAlpha = 1;
     }
+    ctx.globalAlpha = this.meA;
     ctx.drawImage(spr, x - spr.ox * 2, y - spr.oy * 2, spr.width * 2, spr.height * 2);
+    ctx.globalAlpha = 1;
     if (pose === 'sw') this.drawCharge(ctx, x, y, el);
+  }
+
+  // la souris vise sa tête ou son corps : quatre coins dorés encadrent la zone visée
+  drawAim(ctx) {
+    if (this.touch || !this.mouse?.in || this.run.phase !== 'fight' || !this.eyeAt || this.chinY == null) return;
+    const st = this.f.op.st;
+    if (st === 'down' || st === 'getup' || st === 'ko') return;
+    const high = this.mouse.y < this.headLine || this.high, cx = this.eyeAt[0] - 8, c = this.chinY;
+    const [x0, y0, x1, y1] = high ? [cx - 26, this.eyeAt[1] - 30, cx + 26, c] : [cx - 40, c + 4, cx + 40, c + 72];
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = GOLD;
+    for (const [px, py, sx, sy] of [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]]) {
+      ctx.fillRect(sx > 0 ? px : px - 5, sy > 0 ? py : py - 1, 6, 2);
+      ctx.fillRect(sx > 0 ? px : px - 1, sy > 0 ? py : py - 5, 2, 6);
+    }
+    ctx.globalAlpha = 1;
   }
 
   // le spécial s'arme : les poings s'embrasent, l'énergie converge en spirale
@@ -1509,8 +2141,9 @@ export class BagarreScene extends MiniScene {
       ctx.globalAlpha = 1;
     }
     if (e < 850) {
-      const z = e < 120 ? 2 - e / 120 : 1;
-      const t = this.stamp ||= textSprite('COUP SPÉCIAL !', 24, GOLD, '#6a1a14');
+      // redemandé à chaque fois (cache de scene.js) : une référence gardée peut être libérée par ce cache
+      const t = textSprite('COUP SPÉCIAL !', 24, GOLD, '#6a1a14');
+      const zm = Math.min(2, (W - 8) / t.c.width), z = e < 120 ? zm - ((zm - 1) * e) / 120 : 1; // tient dans l'image
       ctx.globalAlpha = e > 650 ? (850 - e) / 200 : 1;
       this.band(ctx, 124, 34);
       ctx.drawImage(t.c, Math.round(W / 2 - (t.c.width * z) / 2), Math.round(130 - ((z - 1) * t.c.height) / 2), Math.round(t.c.width * z), Math.round(t.c.height * z));
@@ -1521,7 +2154,7 @@ export class BagarreScene extends MiniScene {
   // pendant qu'il prépare son coup, les parades qui marchent : flèches (esquive), flèche vers le bas (se baisser), bouclier (garde)
   drawGuide(ctx) {
     const op = this.f?.op;
-    if (!op || op.st !== 'tell' || !op.atk?.beat) return;
+    if (!op || op.st !== 'tell' || !op.atk?.beat || !op.guide || this.lt < this.f.me.poisonUntil) return; // (plus de signes : à toi de lire ses gestes)
     const beat = op.atk.beat, n = beat.length, el = this.lt - op.at;
     const hot = op.dur - el < 220;
     let x = Math.round(OPP_X - (n * 16 - 2) / 2);
@@ -1667,7 +2300,7 @@ export class BagarreScene extends MiniScene {
     ctx.fillStyle = '#120a06';
     ctx.fillRect(0, 0, W, H);
     for (let y = 0; y < H; y += 6) { ctx.fillStyle = '#1a0f0a'; ctx.fillRect(0, y, W, 2); }
-    const head = d.champ ? 'COMBAT POUR LE TITRE' : this.run.lost ? 'REVANCHE !' : `COMBAT ${f.n + 1} SUR ${F}`;
+    const head = `${d.champ ? 'COMBAT POUR LE TITRE' : this.run.lost ? 'REVANCHE !' : `COMBAT ${f.n + 1} SUR ${F}`} - ${this.sd ? 'L\'ARÈNE DE RED ROCK' : STAGES[d.id].place}`;
     canvasText(ctx, head, W / 2, 6, { color: d.champ ? GOLD : this.run.lost ? SALMON : '#c8b8a0' });
     canvasText(ctx, d.name, W / 2, 18, { size: 16, color: d.champ ? GOLD : SALMON });
     canvasText(ctx, `${d.from} - BILAN ${d.record}`, W / 2, 38, { color: CREAM });

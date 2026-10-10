@@ -9,6 +9,7 @@ import { Bot, botPlayer } from './bot.js';
 import { variantOk } from './variants.js';
 import { MODES, MAX_PLAYERS } from './worlds.js';
 import { CHAR_PARTS, CHAR_COLORS } from './data.js';
+import { placesOf } from './places.js';
 
 const RECONNECT_GRACE = 45000;
 const HOST_GRACE = 8000;
@@ -18,7 +19,7 @@ const MINI_TICK = 100;
 const SOLO_BOTS = 3; // adversaires bots dans un mini-jeu solo
 const SPIN_MS = 4300; // roue des jeux : animation (main.js) puis annonce, avant le début de la partie
 const CHAMP_PTS = [5, 3, 2, 1]; // points du championnat selon la place
-const FORMATS = ['single', 'wheel', 'champ']; // un jeu choisi, la roue (jeu au hasard), le championnat
+const FORMATS = ['single', 'wheel', 'champ', 'story']; // un jeu choisi, la roue (jeu au hasard), le championnat, le mode histoire
 const ROUNDS = [3, 5, 7, 10];
 const TOURNEY_PAUSE = 6000; // tournoi : pause entre deux tours (résultats, puis tirage du tour suivant)
 
@@ -56,6 +57,7 @@ const REFEREES = {
   bagarre: [() => import('./bagarregame.js'), (m, players) => new m.BagarreGame(players)],
   // « La mêlée » en vue de dessus : un arbitre pour ses cinq modes (la variante dit le mode)
   melee: [() => import('./brawlgame.js'), (m, players, v) => new m.BrawlGame(players, v)],
+  piste: [() => import('./pistegame.js'), (m, players) => new m.PisteGame(players)],
 };
 const MINI_REF = [() => import('./mini.js'), (m, players, v, mode) => new m.MiniGame(mode, players, v)];
 const refLoaded = {}; // mode -> module de l'arbitre, une fois chargé
@@ -126,6 +128,8 @@ function lobbyBase(code, host) {
     format: 'single', pool: Object.keys(MODES), rounds: 5, locked: false, banned: new Set(),
     variants: {}, // mode -> variante imposée par l'hôte (format « Un jeu » ; voir variants.js)
     champ: null, spinning: false, spinTimer: 0, lastPick: null, formerHost: null,
+    story: null, // mode histoire en cours (story/host.js)
+    storyPrep: null, // mode histoire choisi dans le lobby, pas encore commencé : { slot, name, act, place }
   };
 }
 
@@ -133,22 +137,6 @@ function lobbyBase(code, host) {
 function spectate(ev) {
   const { states, private: priv, ...rest } = ev;
   return { ...rest, state: states[0], ...(priv ? { hidden: true } : {}) };
-}
-
-// Classement d'une partie terminée : place de chaque joueur (ex aequo possibles).
-function placesOf(g, end) {
-  if (end.places) return end.places; // tournoi : places calculées par l'arbitre (voir finishTourney)
-  if (!g.kind) return g.p.map((_, i) => (i === end.winner ? 1 : 2));
-  if (end.winners) return g.p.map((_, i) => (end.tie || end.winners.includes(i) ? 1 : end.winners.length + 1));
-  const order = end.ranking?.length ? end.ranking : g.p.map((_, i) => i).sort((a, b) => g.p[b].score - g.p[a].score);
-  const places = [];
-  order.forEach((i, k) => {
-    const prev = order[k - 1];
-    // même score = même place, sauf dans les courses (classées au temps) et pour ceux qui sont partis
-    const same = k > 0 && g.p[i].time === undefined && !g.p[i].left && !g.p[prev].left && g.p[i].score === g.p[prev].score;
-    places[i] = same ? places[prev] : k + 1;
-  });
-  return places;
 }
 
 function newCode() {
@@ -204,6 +192,8 @@ export class Net {
       case 'rename': return this.rename(m.username);
       case 'createLobby': return this.createLobby(false);
       case 'createSolo': return this.createLobby(true, MODES[m.mode] ? m.mode : 'roulette');
+      // mode histoire : seul (table sans bots ni canal) ou à une table ouverte (l'aventure attend le lancement)
+      case 'createStory': return this.createStory(String(m.slot || ''), !!m.table);
       case 'joinLobby': return this.joinLobby(m.code);
       case 'leaveLobby':
         await this.leave();
@@ -445,6 +435,7 @@ export class Net {
       if (this.rejoining) { this.rejoining = false; this.local({ t: 'left' }); }
     }
     if (msg.t === 'closed') return this.hostClosed(msg.text);
+    if (msg.t === 'story') this.lastStory = msg.s.snap ? { state: msg.s.snap, name: msg.s.slot } : null; // pour reprendre l'aventure si l'hôte disparaît
     if (msg.t === 'renamed') return this.renaming?.done?.(msg);
     // état complet (retour en cours de partie) : noms et personnages pour les lots qui suivront (unpackEvents)
     if (msg.t === 'sync' && Array.isArray(msg.state?.players)) {
@@ -498,6 +489,9 @@ export class Net {
     l.banned = new Set(Array.isArray(v.banned) ? v.banned : []);
     l.champ = v.champ && typeof v.champ === 'object' ? v.champ : null;
     l.formerHost = formerHost;
+    // l'aventure continue chez le nouvel hôte (chargée à la demande : elle démarre une fois la table reprise)
+    const snap = v.storySnap || (why === 'gone' ? this.lastStory : null);
+    if (l.format === 'story' && snap?.state) this.resumeStory(l, snap);
     l.players = (v.players || []).filter((p) => p && p.key).map((p) => ({
       key: p.key, name: p.name, character: sanitizeCharacter(p.character), bot: !!p.bot, connected: true,
     }));
@@ -569,6 +563,8 @@ export class Net {
       const heir = this.heirOf(l);
       if (heir) this.handOver(l, heir.key, { leaving: true, aborted: playing && !!l.game.kind });
       else this.deliverAll(l, { t: 'closed', text: 'L’hôte a fermé la table.' }, l.players.map((p) => p.key).filter((k) => k !== l.host));
+      l.story?.stop(); // dernière sauvegarde de l'aventure (handOver l'a déjà confiée à l'héritier)
+      l.story = null;
       this.hosting = null;
       if (this.chan) await sleep(300); // laisse partir les derniers messages
     } else if (this.code && this.hostKey) {
@@ -582,17 +578,22 @@ export class Net {
   }
 
   // ---------------------------------------------------------------- côté hôte
-  async createLobby(solo, mode = 'roulette') {
+  async createLobby(solo, mode = 'roulette', { story = false } = {}) {
     await this.leave();
     const code = newCode();
     const me = { key: this.user.key, name: this.user.name, character: this.character, connected: true };
     const l = Object.assign(lobbyBase(code, me.key), { solo, mode, players: [me] });
+    if (story) l.format = 'story';
+    if (solo && story) { // mode histoire en solo : pas de bots assis, les rivaux viennent de l'aventure
+      this.hosting = l;
+      return;
+    }
     if (solo) {
       // ?variant=canyon dans l'adresse : impose la variante du jeu solo (pour l'essayer)
       const v = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('variant') : null;
       if (variantOk(mode, v)) l.variants[mode] = v;
       // Le jeu solo se joue entièrement dans ce navigateur.
-      const n = Math.min(MODES[mode].soloBots ?? SOLO_BOTS, MODES[mode].max - 1); // la bagarre se joue seul
+      const n = Math.min(MODES[mode].soloBots ?? SOLO_BOTS, MODES[mode].max - 1); // la bagarre et la piste se jouent seul
       for (let k = 0; k < n; k++) {
         let b;
         do b = botPlayer(n > 1 ? `${code}:${k}` : code); while (l.players.some((p) => p.name === b.name));
@@ -604,6 +605,86 @@ export class Net {
     await this.openChannel(code);
     this.hosting = l;
     this.broadcastLobby(l);
+  }
+
+  // ---------------------------------------------------------------- mode histoire (story/host.js)
+  // L'aventure se lit dans la sauvegarde de ce navigateur (story/save.js) ; seul, elle commence tout de suite,
+  // à une table, elle attend que l'hôte la lance (les joueurs s'assoient d'abord).
+  async createStory(slotId, table) {
+    const SAVE = await import('./story/save.js');
+    const r = SAVE.loadSlot(slotId);
+    if (!r.ok) return this.local({ t: 'error', text: `Cette sauvegarde ne peut pas être chargée (${r.why}).` });
+    await this.createLobby(!table, 'roulette', { story: true });
+    const l = this.hosting;
+    if (!l) return;
+    if (table) return this.pickStory(l, slotId);
+    await this.startStory(l, r.slot);
+  }
+
+  async pickStory(l, slotId) {
+    const [SAVE, { DATA }] = await Promise.all([import('./story/save.js'), import('./story/data.js')]);
+    if (this.hosting !== l || l.story) return;
+    const r = SAVE.loadSlot(slotId);
+    if (!r.ok) return this.deliver(l.host, { t: 'error', text: `Cette sauvegarde ne peut pas être chargée (${r.why}).` });
+    const sum = SAVE.summarize(r.slot, DATA);
+    l.format = 'story';
+    l.storyPrep = { slot: slotId, name: sum.name, act: sum.act, place: sum.place, ending: sum.ending, allies: sum.allies.length, fresh: !r.slot.state.seq };
+    this.broadcastLobby(l);
+  }
+
+  async beginStory(l) {
+    const SAVE = await import('./story/save.js');
+    if (this.hosting !== l || l.story || !l.storyPrep) return;
+    const r = SAVE.loadSlot(l.storyPrep.slot);
+    if (!r.ok) return this.deliver(l.host, { t: 'error', text: `Cette sauvegarde ne peut pas être chargée (${r.why}).` });
+    await this.startStory(l, r.slot);
+  }
+
+  async startStory(l, slot) {
+    const { StoryHost } = await import('./story/host.js');
+    if (this.hosting !== l || l.story) return;
+    l.game = null;
+    l.story = new StoryHost(this, l, { slot, state: slot.state });
+    this.broadcastLobby(l);
+    l.story.begin();
+  }
+
+  // Table reprise d'un autre hôte en pleine aventure : elle continue ici, dans une nouvelle sauvegarde
+  async resumeStory(l, snap) {
+    const { StoryHost } = await import('./story/host.js');
+    if (this.hosting !== l || l.story) return;
+    l.story = new StoryHost(this, l, { slot: null, state: snap.state });
+    this.broadcastLobby(l);
+    l.story.begin();
+  }
+
+  // L'hôte quitte l'aventure : retour au lobby (sauvegarde faite) ; seul, retour au menu
+  quitStory(l) {
+    clearInterval(l.miniTimer);
+    l.story?.stop();
+    l.story = null;
+    l.game = null;
+    if (l.solo) return this.leave().then(() => this.local({ t: 'left' }));
+    this.deliverAll(l, { t: 'storyEnd' });
+    this.broadcastLobby(l);
+  }
+
+  // Un épisode de l'aventure : le mini-jeu, avec les joueurs (humains et rivaux) choisis par l'aventure.
+  // Pas de tournoi : les jeux à deux se jouent avec un champion, les autres regardent (meta.watchers).
+  async playStory(l, mode, players, variant, meta) {
+    if (mode !== 'roulette' && !refLoaded[mode]) {
+      l.loading = mode;
+      try { await loadReferee(mode); } catch (e) { console.error(e); l.loading = null; return false; }
+      l.loading = null;
+      if (this.hosting !== l || !l.story) return true;
+    }
+    l.rematch.clear();
+    l.mode = mode;
+    this.runGame(l, l, mode, players, variantOk(mode, variant) ? variant : null);
+    l.game.story = meta;
+    this.broadcastLobby(l);
+    this.sendEvents(l, l.game.start());
+    return true;
   }
 
   stopTimers(l) {
@@ -628,6 +709,7 @@ export class Net {
     const v = this.lobbyView(l);
     if (leaving) v.players = v.players.filter((p) => p.key !== l.host);
     Object.assign(v, { host: heirKey, game: null, tourney: null, inGame: false, over: false, rematch: [], spinning: false });
+    if (l.story) { v.storySnap = l.story.snapshot(); l.story.stop(); l.story = null; }
     this.wire(heirKey, { t: 'host', lobby: v, why: leaving ? 'leave' : 'give', prev: this.user.name, aborted });
     this.hosting = null;
     this.hostKey = leaving ? null : heirKey;
@@ -686,6 +768,9 @@ export class Net {
       over: !!l.game && l.game.phase === 'over',
       rematch: [...l.rematch],
       tourney: l.game?.tourney ? this.tourneyView(l.game) : null,
+      // mode histoire : l'aventure en cours (et l'épisode joué : titres et ambiance de son ouverture), ou celle choisie
+      story: l.story ? { slot: l.story.slot?.name || '', ep: l.game?.story && l.game.phase === 'playing' ? l.game.story : null } : null,
+      storyPrep: l.storyPrep,
     };
   }
 
@@ -717,7 +802,10 @@ export class Net {
         }, RECONNECT_GRACE);
       }
     }
-    if (changed) this.broadcastLobby(l);
+    if (changed) {
+      this.broadcastLobby(l);
+      l.story?.recount();
+    }
   }
 
   hostJoin(l, key, name, character) {
@@ -747,6 +835,7 @@ export class Net {
     const s = l.game?.tourney ? this.matchOf(l.game, key) : l;
     const j = s ? this.gameIdx(s, key) : -1;
     if (j >= 0) this.deliver(key, { t: 'sync', state: s.game.syncView ? s.game.syncView(j) : s.game.view(j), ...(s === l ? {} : { match: s.id }) });
+    else if (l.story) this.deliver(key, { t: 'story', s: l.story.view() }); // arrivé en pleine aventure : où on en est
   }
 
   hostHandle(from, m, name) {
@@ -759,6 +848,19 @@ export class Net {
     const isHost = l.host === from;
     const busy = (l.game && l.game.phase === 'playing') || l.spinning || !!l.loading;
     switch (m.t) {
+      // mode histoire : prêt, vote, l'hôte passe pour tous (story/host.js)
+      case 'storyReady':
+      case 'storyVote':
+      case 'storySkip':
+        l.story?.handle(from, m, isHost);
+        break;
+      // l'hôte choisit l'aventure (un emplacement de sa sauvegarde) ou la quitte
+      case 'storyPick':
+        if (!isHost || busy || l.story) return;
+        return this.pickStory(l, String(m.slot || ''));
+      case 'storyQuit':
+        if (!isHost || !l.story) return;
+        return this.quitStory(l);
       case 'char':
         l.players[idx].character = sanitizeCharacter(m.character);
         if (!busy) this.broadcastLobby(l);
@@ -782,8 +884,10 @@ export class Net {
         break;
       // déroulé : un jeu choisi, la roue, ou un championnat (qui repart de zéro)
       case 'format':
-        if (!isHost || busy || !FORMATS.includes(m.format) || m.format === l.format) return;
+        if (!isHost || busy || l.story || !FORMATS.includes(m.format) || m.format === l.format) return;
+        if (m.format === 'story' && l.players.some((p) => p.bot)) return err('Le mode histoire se joue entre humains : retire d’abord les bots.');
         l.format = m.format;
+        l.storyPrep = null;
         l.champ = null;
         l.rematch.clear();
         this.broadcastLobby(l);
@@ -828,6 +932,7 @@ export class Net {
         break;
       case 'addBot': {
         if (!isHost || busy) return;
+        if (l.format === 'story') return err('Le mode histoire se joue entre humains : les rivaux viennent de l’aventure.');
         if (l.players.length >= MAX_PLAYERS) return err('La table est complète.');
         let b, k = 0;
         do b = botPlayer(`${l.code}:${Date.now().toString(36)}:${k++}`); while (l.players.some((p) => p.name === b.name || p.key === b.key));
@@ -886,7 +991,7 @@ export class Net {
         if (l.game?.tourney) this.watchMatch(l, l.game, from, m.id ?? null);
         break;
       case 'rematch':
-        if (!l.game || l.game.phase !== 'over' || l.spinning) return;
+        if (!l.game || l.game.phase !== 'over' || l.spinning || l.story) return;
         if (l.solo) return this.startGame(l);
         l.rematch.add(l.players[idx].name);
         // revanche, nouveau tour de roue ou jeu suivant du championnat : dès que tous les humains sont prêts
@@ -917,8 +1022,9 @@ export class Net {
     const gi = this.gameIdx(l, p.key);
     const playing = !!l.game && l.game.phase === 'playing';
     // Dans un mini-jeu à plusieurs, les autres continuent : le score du partant est figé.
-    const keepGame = playing && !!l.game.kind && l.players.length > 2;
-    if (keepGame) this.sendEvents(l, l.game.leave(gi));
+    // Mode histoire : les rivaux sont des bots hors de la table ; un spectateur qui part n'arrête rien.
+    const keepGame = playing && (l.story ? gi < 0 || (!!l.game.kind && l.game.p.length > 2) : !!l.game.kind && l.players.length > 2);
+    if (keepGame && gi >= 0) this.sendEvents(l, l.game.leave(gi));
     else if (playing && forfeit && gi >= 0) this.sendEvents(l, l.game.forfeit(gi));
     l.players.splice(idx, 1);
     l.rematch.delete(p.name);
@@ -928,6 +1034,10 @@ export class Net {
     }
     this.sysChat(l, text || `${p.name} a quitté la table.`);
     this.broadcastLobby(l);
+    if (l.story) {
+      if (l.story.playing && !l.game) l.story.replay(); // l'épisode s'est arrêté sans résultat : on le relance
+      l.story.recount();
+    }
   }
 
   // Pourquoi le joueur `key` ne peut pas prendre ce pseudo à la table (null : il peut).
@@ -980,6 +1090,7 @@ export class Net {
 
   cantLaunch(l) {
     if (l.format === 'single') return this.cantStart(l);
+    if (l.format === 'story') return l.story ? 'L’aventure est déjà en cours.' : l.storyPrep ? null : 'Choisis d’abord une aventure.';
     if (l.players.length < 2) return 'Il faut un adversaire !';
     if (!this.compatPool(l).length) return `Aucun jeu de la sélection ne se joue à ${l.players.length}.`;
     return null;
@@ -989,6 +1100,7 @@ export class Net {
   launch(l) {
     l.rematch.clear();
     if (l.format === 'single') return this.startGame(l);
+    if (l.format === 'story') return this.beginStory(l);
     if (l.format === 'champ' && (!l.champ || l.champ.done)) {
       l.champ = { rounds: l.rounds, n: 0, done: false, scores: {}, firsts: {}, played: [], last: null };
     }
@@ -1128,6 +1240,8 @@ export class Net {
       const eyes = this.watchersOf(l.game, s);
       if (eyes.length) this.deliverAll(l, { t: 'events', events: events.map(spectate), ...tag, watch: true }, eyes);
     }
+    // mode histoire : les humains qui ne jouent pas l'épisode (jeu à deux : un champion) le regardent
+    if (s === l && g.story?.watchers?.length) this.deliverAll(l, { t: 'events', events: events.map(spectate), watch: true }, g.story.watchers);
     const end = events.find((e) => e.type === 'matchEnd');
     if (end) {
       if (s !== l) this.matchEnd(l, l.game, s, end);
@@ -1135,6 +1249,7 @@ export class Net {
         if (g.champ) this.champRecord(l, end);
         if (g.kind) this.recordMini(l, end);
         else this.recordMatch(l, end);
+        if (g.story) l.story?.onMatchEnd(g, end);
       }
     }
     if (s.bot) {
@@ -1146,7 +1261,8 @@ export class Net {
           if (s.game !== g || this.hosting !== l) return;
           // la réplique du bot : pour ceux qui sont à sa table (et ses spectateurs)
           const keys = s === l ? undefined : [...s.players.map((p) => p.key), ...this.watchersOf(l.game, s)];
-          this.deliverAll(l, { t: 'chat', from: s.players[bot.idx].name, text: line.text }, keys);
+          // (le nom vient de la partie : en mode histoire, le bot rival n'est pas assis à la table)
+          this.deliverAll(l, { t: 'chat', from: g.p[bot.idx].name, text: line.text }, keys);
         }, line.delay);
       }
       this.scheduleBot(l, s);

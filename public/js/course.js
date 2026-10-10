@@ -8,13 +8,13 @@ import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText } from './scene.js';
 import { MiniScene, pixelSprite } from './miniscene.js';
-import { riderLook, horseSprite, forgetRiders } from './lasso.js';
+import { riderLook, horseSprite, forgetRiders, STAND } from './lasso.js';
 import { W, H } from './worlds.js';
 import { desertOpts } from './env.js';
 import {
   COURSE, OBSTACLES, WILD, baseSpeed, horseSpeed, courseWorld, newHorse, startY, obsY, inAir, tired, airH, jump, whip, stepHorse, horseLive,
 } from './coursegame.js';
-import { drawField, drawFlat, drawStanding, sortY } from './coursewild.js';
+import { drawField, drawFlat, drawStanding, sortY, waterCol } from './coursewild.js';
 
 const OUT = S.OUT;
 const rd = Math.round;
@@ -116,7 +116,7 @@ export class CourseScene extends MiniScene {
         this.touch ? 'BOUTON SAUTER : BUISSONS, TRONCS, TERRIERS, RUISSEAUX' : 'ESPACE (OU CLIC) : SAUTER BUISSONS, TRONCS, RUISSEAUX',
         'ROCHERS ET CACTUS SONT TROP HAUTS : CONTOURNE-LES',
         this.touch ? 'CRAVACHE : PLUS VITE, MAIS ELLE VIDE LA RÉSILIENCE' : 'X / DROITE (OU CLIC DROIT) : CRAVACHE (VIDE LA RÉSILIENCE)',
-        `${this.world.len / M} M JUSQU'AU RANCH - 1ER : +${COURSE.arrival[0]}, 2E : +${COURSE.arrival[1]}`,
+        `${this.world.len / M} M ${this.sd?.goal || 'JUSQU\'AU RANCH'} - 1ER : +${COURSE.arrival[0]}, 2E : +${COURSE.arrival[1]}`,
       ];
     }
     return [
@@ -141,6 +141,8 @@ export class CourseScene extends MiniScene {
     this.crashN = 0;
     this.horse = newHorse(this.wild ? startY(this.me, this.n) : 0);
     this.coast = { x: 0, v: 0 }; // après le poteau, le cheval finit sa course sur son élan
+    this.run = 0; // chemin parcouru à l'image précédente, et vitesse qui en découle (cadence des pattes)
+    this.myV = 0;
     this.finishT = null;
     this.finishNow = null;
     this.remote = {};
@@ -152,6 +154,18 @@ export class CourseScene extends MiniScene {
     this.fx = [];
     this.wasAir = false;
     this.bg = null;
+    this.loadDeco();
+  }
+
+  // Mode histoire : un épisode peut imposer son décor (hooks.story.deco : l'hippodrome de Red Rock, la Grande Prairie,
+  // les gorges du canyon), chargé à la demande pendant la cinématique (routesdeco.js). Sans deco, rien ne change.
+  loadDeco() {
+    this.sd = null;
+    const deco = this.hooks.story?.deco;
+    if (!deco?.set) return;
+    const world = this.world;
+    import('./routesdeco.js').then((m) => m.courseDeco(deco, this.env)).then((d) => { if (this.world === world) this.sd = d; })
+      .catch((e) => console.warn('décor de l’épisode', e));
   }
 
   applySync(st) {
@@ -165,6 +179,7 @@ export class CourseScene extends MiniScene {
     const me = st.players[this.me];
     if (me?.rank) { h.done = true; h.wx = this.world.len; this.finishT = me.time; this.finishNow = -1e9; }
     st.players.forEach((p, i) => { const r = this.remote[i]; if (r && p.rank) { r.x = r.tx = this.world.len + 90; r.outAt = -1e9; } });
+    this.run = h.wx + this.coast.x; // une reprise n'est pas un galop
   }
 
   // ---------------------------------------------------------- entrées
@@ -219,8 +234,16 @@ export class CourseScene extends MiniScene {
     const r = this.remote[i];
     if (!r) return;
     if (typeof d.x === 'number' && r.outAt == null) {
+      // allure mesurée entre deux nouvelles (cravache, chute et boue comprises) : entre deux, on prolonge la course
+      // à cette allure plutôt qu'à l'allure de base, sinon le cheval avance par à-coups à chaque nouvelle
+      // (après un long silence, comme au départ, la mesure ne vaut rien : retour à l'allure de base)
+      if (r.at == null || this.now - r.at > 40) {
+        r.v = r.at != null && this.now - r.at < 500 ? clamp((d.x - r.lx) / (this.now - r.at), 0, 0.4) : null;
+        r.lx = d.x;
+        r.at = this.now;
+      }
       r.tx = d.x;
-      if (Math.abs(r.x - d.x) > 300) r.x = d.x;
+      if (Math.abs(r.x - d.x) > 300) { r.x = d.x; r.v = null; }
     }
     if (typeof d.y === 'number') r.ty = d.y;
     if (d.a && !r.air) r.airAt = this.now;
@@ -306,17 +329,19 @@ export class CourseScene extends MiniScene {
     }
     // les autres chevaux : on prolonge leur course entre deux nouvelles
     for (const [i, r] of Object.entries(this.remote)) {
-      if (t >= 0 && r.outAt == null && !this.over && !r.left) r.tx = Math.min(this.world.len, r.tx + baseSpeed(r.tx) * (r.tired ? COURSE.tired.mult : 1) * dt);
+      if (t >= 0 && r.outAt == null && !this.over && !r.left) r.tx = Math.min(this.world.len, r.tx + (r.v ?? baseSpeed(r.tx) * (r.tired ? COURSE.tired.mult : 1)) * dt);
       r.px = r.x;
       r.x += (r.tx - r.x) * Math.min(1, dt * 0.01);
       r.y += (r.ty - r.y) * Math.min(1, dt * 0.012);
       const v = dt > 0 ? clamp((r.x - r.px) / dt, 0, 0.4) : 0;
       if (t >= 0) this.gait[i] += v * dt / 13;
     }
-    if (t >= 0) {
-      const v = h.done ? this.coast.v : horseSpeed(h, t);
-      this.gait[this.me] += v * dt / 13;
-    }
+    // les pattes de ton cheval suivent le chemin vraiment parcouru : il ne galope plus sur place quand le temps
+    // est écoulé, et s'arrête net au bout de son élan après le poteau
+    const run = h.wx + this.coast.x;
+    this.myV = t >= 0 && dt > 0 ? clamp((run - this.run) / dt, 0, 0.4) : 0;
+    this.run = run;
+    this.gait[this.me] += this.myV * dt / 13;
     // poussière soulevée par les sabots
     const cam = this.cam();
     for (let i = 0; i < this.n; i++) {
@@ -338,7 +363,7 @@ export class CourseScene extends MiniScene {
     const t = this.t, now = this.now, y = this.wild ? rd(i === this.me ? this.horse.y : this.remote[i]?.y ?? 0) : this.laneY(i);
     if (i === this.me) {
       const h = this.horse;
-      return { x: rd(this.hx), y, air: airH(h, Math.max(0, t)), moving: t >= 0 && (h.done ? this.coast.v > 0.02 : true), whipK: (t - h.whipAt) / 300, tired: tired(h, t), stun: t < h.stunUntil };
+      return { x: rd(this.hx), y, air: airH(h, Math.max(0, t)), moving: this.myV > 0.005, whipK: (t - h.whipAt) / 300, tired: tired(h, t), stun: t < h.stunUntil };
     }
     const r = this.remote[i];
     if (!r || r.left) return null;
@@ -356,16 +381,27 @@ export class CourseScene extends MiniScene {
     }
   }
 
+  // poussière et éclaboussures gardent la profondeur (z) des sabots qui les soulèvent : elles passent derrière
+  // les chevaux plus proches
   dust(x, y, n) {
     for (let i = 0; i < n; i++) {
-      this.fx.push({ x: x + (Math.random() - 0.5) * 6, y: y - Math.random() * 3, vx: -0.03 - Math.random() * 0.04, vy: -0.01 - Math.random() * 0.01, t: 0, max: 400 + Math.random() * 300, col: 'rgba(214,170,120,0.5)', puff: true });
+      this.fx.push({ x: x + (Math.random() - 0.5) * 6, y: y - Math.random() * 3, z: y, vx: -0.03 - Math.random() * 0.04, vy: -0.01 - Math.random() * 0.01, t: 0, max: 400 + Math.random() * 300, col: 'rgba(214,170,120,0.5)', puff: true });
     }
   }
 
   splash(x, y, cols = ['#4a2e18', '#6a4428']) {
     for (let i = 0; i < 12; i++) {
       const a = -Math.PI * (0.15 + Math.random() * 0.7), v = 0.04 + Math.random() * 0.05;
-      this.fx.push({ x: x + (Math.random() - 0.5) * 14, y: y - 2, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 0.0003, t: 0, max: 500, col: cols[i % 2] });
+      this.fx.push({ x: x + (Math.random() - 0.5) * 14, y: y - 2, z: y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 0.0003, t: 0, max: 500, col: cols[i % 2] });
+    }
+  }
+
+  // particules de profondeur z0 < z <= z1 ; z0 = null : celles qui n'en ont pas (étincelles)
+  drawFx(ctx, z0, z1) {
+    for (const p of this.fx) {
+      if (z0 == null ? p.z != null : !(p.z > z0 && p.z <= z1)) continue;
+      if (p.puff) S.disc(ctx, p.x, p.y, rd(1 + p.t / 250), p.col);
+      else { ctx.fillStyle = p.col; ctx.fillRect(rd(p.x), rd(p.y), 1, 1); }
     }
   }
 
@@ -373,7 +409,8 @@ export class CourseScene extends MiniScene {
   render(ctx) {
     if (!this.world) return;
     const now = this.now, cam = this.cam();
-    if (!this.bg) {
+    if (this.sd) this.bg = this.sd.sky; // le ciel seul : le lointain du lieu est peint par-dessus
+    else if (!this.bg) {
       this.bg = S.makeCanvas(W, 110);
       S.drawDesert(this.bg.getContext('2d'), 0, 0, W, 110, { ...desertOpts(this.env, { sunX: 0.75, sunY: 0.3 }), cacti: false });
     }
@@ -388,10 +425,7 @@ export class CourseScene extends MiniScene {
       this.drawTrack(l, cam, now);
       for (let i = 0; i < this.n; i++) this.drawLane(l, i, cam, now);
     }
-    for (const p of this.fx) {
-      if (p.puff) S.disc(l, p.x, p.y, rd(1 + p.t / 250), p.col);
-      else { l.fillStyle = p.col; l.fillRect(rd(p.x), rd(p.y), 1, 1); }
-    }
+    this.drawFx(l, null); // étincelles : par-dessus tout (la poussière est dessinée avec son couloir)
     this.amb.end(ctx, now);
     this.amb.weather(ctx, now);
     this.drawNames(ctx, cam);
@@ -401,8 +435,9 @@ export class CourseScene extends MiniScene {
 
   // le lointain (cactus, poteaux télégraphiques), l'herbe du bord, les tribunes et la lisse
   drawScenery(ctx, cam, now) {
-    const far = cam * 0.3;
-    for (let x = Math.floor(far / 70) * 70; x < far + W + 70; x += 70) {
+    const far = cam * 0.3, sd = this.sd;
+    if (sd) sd.far(ctx, cam / this.world.len, now); // les buttes et la ville de Red Rock, qui défilent pendant la course
+    else for (let x = Math.floor(far / 70) * 70; x < far + W + 70; x += 70) {
       const k = Math.floor(x / 70), sx = rd(x - far + hash(k) * 40);
       if (hash(k + 3) < 0.45) farCactus(ctx, sx, 96, 6 + rd(hash(k + 5) * 6));
       else if (hash(k + 3) < 0.6) { ctx.fillStyle = '#6a5a3a'; ctx.fillRect(sx, 80, 1, 16); ctx.fillRect(sx - 3, 82, 7, 1); }
@@ -418,6 +453,7 @@ export class CourseScene extends MiniScene {
     }
     // tribunes au départ et à l'arrivée
     const rail = this.skew(TOP);
+    if (sd?.ads) this.drawAds(ctx, cam, rail);
     this.stand(ctx, -330 - cam + rail, now, false);
     this.stand(ctx, this.world.len - 230 - cam + rail, now, true);
     // lisse blanche, avec les poteaux de distance (mètres restants)
@@ -438,15 +474,15 @@ export class CourseScene extends MiniScene {
       ctx.fillStyle = '#f4ecd8'; ctx.fillRect(sx - 11, TOP - 38, 23, 9);
       canvasText(ctx, `${(len - x) / M}`, sx + 1, TOP - 38, { color: '#7a1a14', shadow: '' });
     }
-    // poteau d'arrivée
+    // poteau d'arrivée (son écriteau reste sous le HUD : il passe à gauche de l'écran pile quand on franchit la ligne)
     const fx = rd(len - cam + rail);
     if (fx > -40 && fx < W + 40) {
-      ctx.fillStyle = OUT; ctx.fillRect(fx - 2, TOP - 54, 5, 58);
-      ctx.fillStyle = '#f4ecd8'; ctx.fillRect(fx - 1, TOP - 53, 3, 56);
-      S.disc(ctx, fx, TOP - 58, 9, OUT);
-      S.disc(ctx, fx, TOP - 58, 8, '#c0392b');
-      S.disc(ctx, fx, TOP - 58, 5, '#f4ecd8');
-      canvasText(ctx, 'ARRIVÉE', fx, TOP - 76, { color: '#f8d070' });
+      ctx.fillStyle = OUT; ctx.fillRect(fx - 2, TOP - 44, 5, 48);
+      ctx.fillStyle = '#f4ecd8'; ctx.fillRect(fx - 1, TOP - 43, 3, 46);
+      S.disc(ctx, fx, TOP - 48, 9, OUT);
+      S.disc(ctx, fx, TOP - 48, 8, '#c0392b');
+      S.disc(ctx, fx, TOP - 48, 5, '#f4ecd8');
+      canvasText(ctx, 'ARRIVÉE', fx, TOP - 66, { color: '#f8d070' });
     }
   }
 
@@ -484,6 +520,22 @@ export class CourseScene extends MiniScene {
       const f = Math.floor(now / 200 + x) % 2;
       ctx.fillStyle = OUT; ctx.fillRect(sx + x, y - 60, 1, 8);
       ctx.fillStyle = finish ? '#f8d070' : '#7ab0f0'; ctx.fillRect(sx + x + 1, y - 60 + f, 4, 3);
+    }
+    // mode histoire : l'enseigne de l'hippodrome de Red Rock sur la tribune du départ, celle du Grand Prix à l'arrivée
+    const signs = this.sd?.signs;
+    if (signs) {
+      const c = finish ? signs.finish : signs.start; // clouée sur le lambrequin du toit
+      ctx.drawImage(c, rd(sx + (finish ? 130 : 190) - c.width / 2), y - 56);
+    }
+  }
+
+  // mode histoire : panneaux peints plantés derrière la lice (le saloon, la banque, l'arène de Red Rock…)
+  drawAds(ctx, cam, rail) {
+    const ads = this.sd.ads, len = this.world.len;
+    for (let k = 0, x = 640; x < len - 300; k++, x += 1450) {
+      const sx = rd(x - cam + rail), c = ads[k % ads.length];
+      if (sx + c.width < 0 || sx - c.width > W) continue;
+      ctx.drawImage(c, rd(sx - c.width / 2), TOP - 12 - c.height);
     }
   }
 
@@ -533,7 +585,7 @@ export class CourseScene extends MiniScene {
   // sépare du couloir du fond jusqu'à son bord proche), pour que les chevaux passent devant ou derrière.
   drawLane(ctx, i, cam, now) {
     const y = this.laneY(i), [top, bot] = this.band(i), dx = this.skew(y);
-    const y1 = i ? top - 1 : top, last = i === this.n - 1; // tranche [y1, bot[ de la piste
+    const y1 = i ? top - 1 : top; // tranche [y1, bot[ de la piste
     const T0 = TOP + 4; // bord lointain de la piste
     const on = (x, m = 30) => x - cam + dx > -m && x - cam + dx < W + m;
     // fossés et boue, à plat sur la piste
@@ -543,7 +595,7 @@ export class CourseScene extends MiniScene {
       for (let yy = y1; yy < bot; yy++) {
         const off = this.skew(yy);
         if (o.kind === 'ditch') {
-          ctx.fillStyle = yy === T0 ? '#5a3a20' : S.mix('#2a5a8a', '#7ab0f0', 0.3 + 0.25 * Math.sin(now / 250 + yy * 0.8));
+          ctx.fillStyle = yy === T0 ? '#5a3a20' : waterCol(0.3 + 0.25 * Math.sin(now / 250 + yy * 0.8));
           ctx.fillRect(rd(sx + off), yy, o.w, 1);
           ctx.fillStyle = '#6a4428'; ctx.fillRect(rd(sx + off) - 1, yy, 1, 1); ctx.fillRect(rd(sx + off) + o.w, yy, 1, 1);
         } else {
@@ -558,45 +610,61 @@ export class CourseScene extends MiniScene {
         }
       }
     }
-    // carottes du couloir (celles que ce cheval a déjà mangées ont disparu)
+    // carottes du couloir (celles que ce cheval a déjà mangées ont disparu) ; celles du sol (h = 4) y sont
+    // plantées, seules celles en l'air flottent, avec leur ombre, comme dans la prairie
     const got = this.gotBy[i] || new Set();
     const spr = carrotSprite();
     for (const c of this.world.carrots) {
       if (got.has(c.id) || !on(c.x)) continue;
-      const cx = rd(c.x - cam + dx);
-      const bob = c.h ? rd(Math.sin(now / 220 + c.id) * 1.5) : 0;
-      ctx.drawImage(spr, cx - spr.ox, y - c.h - (c.h ? 8 : 0) + bob - spr.oy);
-      if (c.h && Math.floor(now / 140 + c.id) % 5 === 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(cx + 3, y - c.h - 20 + bob, 1, 1); }
+      const cx = rd(c.x - cam + dx), air = c.h > 10;
+      const bob = air ? rd(Math.sin(now / 220 + c.id) * 1.5) : 0;
+      if (air) { ctx.fillStyle = 'rgba(40,20,10,0.2)'; ctx.fillRect(cx - 2, y - 1, 5, 1); }
+      ctx.drawImage(spr, cx - spr.ox, y - c.h - (air ? 8 : 0) + bob - spr.oy);
+      if (air && Math.floor(now / 140 + c.id) % 5 === 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(cx + 3, y - c.h - 20 + bob, 1, 1); }
     }
-    // obstacles debout (un obstacle renversé par ton cheval reste à moitié effacé)
+    // obstacles debout : ce qui est plus au fond que les sabots, la poussière et le cheval, puis ce qui est devant
+    // lui (le cheval passe derrière les tonneaux et les barres du bord proche de son couloir)
+    this.drawStanding(ctx, i, cam, y1, y, top, bot, false);
+    this.drawFx(ctx, y1 - 1, bot - 1);
+    this.drawHorse(ctx, i, cam, now);
+    this.drawStanding(ctx, i, cam, y1, y, top, bot, true);
+  }
+
+  // obstacles debout d'un couloir, du côté du fond (front = false) ou du bord proche (front = true) de ses sabots
+  // (un obstacle renversé par ton cheval reste à moitié effacé)
+  drawStanding(ctx, i, cam, y1, y, top, bot, front) {
+    const T0 = TOP + 4, last = i === this.n - 1, dx = this.skew(y);
+    const far = i ? y1 : top + 2, near = last ? bot - 2 : bot - 1;
     for (const o of this.world.obstacles) {
-      if (!on(o.x, 120)) continue;
+      const sx = o.x - cam + dx;
+      if (sx < -120 || sx > W + 120) continue;
       const down = i === this.me && this.crashed.has(o.id);
       ctx.globalAlpha = down ? 0.45 : 1;
-      if (RAILS[o.kind]) this.drawRails(ctx, o, cam, i ? y1 : top + 2, last ? bot - 2 : bot - 1, last);
-      else if (PROP_DRAW[o.kind]) {
+      if (RAILS[o.kind]) {
+        if (!front) this.drawRails(ctx, o, cam, far, Math.min(y, near), false, true);
+        else if (near > y) this.drawRails(ctx, o, cam, y + 1, near, last, false);
+      } else if (PROP_DRAW[o.kind]) {
         // en rang serré, du fond vers le bord proche, sur une grille commune à toute la piste
         const s = propSprite(o.kind), step = o.kind === 'hay' ? 8 : 6;
         for (let yy = T0 + 3; yy < bot; yy += step) {
-          if (yy < y1) continue;
+          if (yy < y1 || (yy > y) !== front) continue;
           ctx.drawImage(s, rd(o.x - cam + this.skew(yy) + (o.w - s.width + 4) / 2) - s.ox, yy - s.oy);
         }
       }
       ctx.globalAlpha = 1;
     }
-    this.drawHorse(ctx, i, cam, now);
   }
 
-  // tranche d'une haie ou d'une barrière entre les profondeurs y1 (fond) et y0 (proche) : un poteau au fond,
-  // les barres, et le poteau du bord proche seulement pour le dernier couloir (les autres sont ceux du suivant)
-  drawRails(ctx, o, cam, y1, y0, near) {
+  // tranche d'une haie ou d'une barrière entre les profondeurs y1 (fond) et y0 (proche) : les barres, le poteau
+  // du fond (farPost) et celui du bord proche (near : seulement pour le dernier couloir, les autres sont ceux du suivant)
+  drawRails(ctx, o, cam, y1, y0, near, farPost = true) {
     const R = RAILS[o.kind];
     const x0 = o.x - cam + this.skew(y0) + o.w / 2, x1 = o.x - cam + this.skew(y1) + o.w / 2;
     const post = (px, py, col) => {
       ctx.fillStyle = OUT; ctx.fillRect(rd(px) - 1, py - R.h - 1, 4, R.h + 2);
       ctx.fillStyle = col; ctx.fillRect(rd(px), py - R.h, 2, R.h);
     };
-    post(x1, y1, R.post[1]);
+    if (farPost) post(x1, y1, R.post[1]);
     const n = Math.max(1, y0 - y1);
     for (const bh of R.bars) {
       for (let s = 0; s <= n; s++) {
@@ -611,18 +679,19 @@ export class CourseScene extends MiniScene {
   drawHorse(ctx, i, cam, now) {
     const p = this.horsePos(i, cam);
     if (!p || p.x < -40 || p.x > W + 40) return;
-    const t = this.t;
     const [coat, mane] = COATS[i % COATS.length];
-    const f = t < 0 ? 1 : p.air > 0 ? 2 : Math.floor(this.gait[i]) % 4;
+    // à l'arrêt (avant le départ, après l'arrivée), le cheval se tient les quatre fers sous lui
+    const f = p.air > 0 ? 2 : !p.moving ? STAND : Math.floor(this.gait[i]) % 4;
     const spr = horseSprite(coat, mane, f, this.riders[i]);
     const x = rd(p.x), y = rd(p.y - p.air);
     // ombre au sol pendant le saut
     if (p.air > 0) { ctx.fillStyle = 'rgba(40,20,10,0.35)'; ctx.fillRect(x - 14 + rd(p.air / 6), p.y - 1, 30 - rd(p.air / 3), 2); }
-    const wob = p.stun ? rd(Math.sin(now / 30) * 2) : 0;
+    // trébuche : le cheval tangue et pique du nez d'un pixel (la cravache reste dans la main du cavalier)
+    const wob = p.stun ? rd(Math.sin(now / 30) * 2) : 0, dip = p.stun ? 1 : 0;
     ctx.globalAlpha = p.stun && Math.floor(now / 80) % 2 ? 0.55 : 1;
-    ctx.drawImage(spr, x - spr.ox + wob, y - spr.oy + (p.stun ? 1 : 0));
+    ctx.drawImage(spr, x - spr.ox + wob, y - spr.oy + dip);
     ctx.globalAlpha = 1;
-    this.drawCrop(ctx, x + wob, y, p.whipK, f === 2 ? -1 : 0);
+    this.drawCrop(ctx, x + wob, y + dip, p.whipK, f === 2 ? -1 : 0);
     // épuisé : gouttes de sueur et naseaux qui fument
     if (p.tired) {
       for (let k = 0; k < 3; k++) {
@@ -647,7 +716,7 @@ export class CourseScene extends MiniScene {
   // ton cheval ont disparu (celles des autres restent : chacun a les siennes).
   drawWild(ctx, cam, now) {
     const t = Math.max(0, this.t);
-    drawField(ctx, cam, now, this.world.len);
+    drawField(ctx, cam, now, this.world.len, this.sd);
     const on = (x, m = 40) => x - cam > -m && x - cam < W + m;
     const list = [];
     for (const o of this.world.obstacles) {
@@ -676,7 +745,10 @@ export class CourseScene extends MiniScene {
       if (p) list.push([p.y + (i === this.me ? 0.5 : 0), () => this.drawHorse(ctx, i, cam, now)]);
     }
     list.sort((a, b) => a[0] - b[0]);
-    for (const [, draw] of list) draw();
+    // la poussière d'un cheval passe juste avant lui (derrière ses sabots, devant ce qui est plus au fond)
+    let z = -Infinity;
+    for (const [k, draw] of list) { this.drawFx(ctx, z, k); z = k; draw(); }
+    this.drawFx(ctx, z, Infinity);
     // ta trajectoire : un petit repère sous ton cheval, à ta couleur
     const me = this.horsePos(this.me, cam);
     if (me && !this.horse.done) {
@@ -715,12 +787,14 @@ export class CourseScene extends MiniScene {
         const ahead = p.x > W, used = edge[ahead];
         let ey = p.y - 20;
         if (used.length && ey < used[used.length - 1].ey + 11) ey = used[used.length - 1].ey + 11;
-        used.push({ i, ey, label, gap: rd(Math.abs(p.x - this.skew(p.y) - this.hx) / M) });
+        // écart arrondi à 5 m : l'étiquette ne change pas (et n'est pas refaite) à chaque image
+        used.push({ i, ey, label, gap: 5 * rd(Math.abs(p.x - this.skew(p.y) - this.hx) / M / 5) });
         continue;
       }
       // deux chevaux côte à côte : le nom du plus proche descend d'un cran
       const lx = rd(p.x) - 2;
-      let ly = rd(p.y - p.air) - 64;
+      // jamais dans le HUD (barres de résilience et de cravache), même au sommet du saut du couloir du fond
+      let ly = Math.max(46, rd(p.y - p.air) - 64);
       for (let k = 0; k < this.n && tags.some(([x, y]) => Math.abs(x - lx) < 40 && Math.abs(y - ly) < 9); k++) ly += 9;
       tags.push([lx, ly]);
       canvasText(ctx, label, lx, ly, { color: this.color(i) });
@@ -805,9 +879,10 @@ export class CourseScene extends MiniScene {
   // classement de l'arrivée, une fois ton cheval arrivé
   drawArrival(ctx) {
     const players = this.state?.players || [];
-    const y = 44;
+    // sous le « TU ARRIVES… » qui s'élève de y = 50 ; le cadre englobe la ligne d'attente
+    const y = 68, wait = !this.over && players.some((p) => !p.rank && !p.left);
     ctx.fillStyle = 'rgba(26,15,10,0.72)';
-    ctx.fillRect(W / 2 - 110, y, 220, 22 + players.length * 11);
+    ctx.fillRect(W / 2 - 110, y, 220, 22 + players.length * 11 + (wait ? 11 : 0));
     canvasText(ctx, 'ARRIVÉE', W / 2, y + 4, { color: '#f8d070' });
     const order = players.map((p, i) => i).sort((a, b) => (players[a].rank || 99) - (players[b].rank || 99));
     order.forEach((i, k) => {
@@ -816,10 +891,11 @@ export class CourseScene extends MiniScene {
       const prog = i === this.me ? 1 : clamp((r?.x || 0) / this.world.len, 0, 0.99);
       const txt = pl.rank
         ? `${pl.rank}. ${pl.name.toUpperCase()}  ${this.fmt(pl.time ?? (i === this.me ? this.finishT : 0))}  +${COURSE.arrival[pl.rank - 1] || 0}`
-        : pl.left ? `-  ${pl.name.toUpperCase()}  ABANDON` : `-  ${pl.name.toUpperCase()}  ENCORE ${rd(((1 - prog) * this.world.len) / M)} M`;
+        // la distance restante par dizaines de mètres : pas une nouvelle chaîne (à rastériser) à chaque image
+        : pl.left ? `-  ${pl.name.toUpperCase()}  ABANDON` : `-  ${pl.name.toUpperCase()}  ENCORE ${10 * Math.ceil(((1 - prog) * this.world.len) / M / 10)} M`;
       canvasText(ctx, txt, W / 2, y + 16 + k * 11, { color: this.color(i) });
     });
-    if (!this.over && players.some((p) => !p.rank && !p.left)) canvasText(ctx, 'EN ATTENTE DES AUTRES CHEVAUX…', W / 2, y + 24 + players.length * 11, { color: '#fdf6e0' });
+    if (wait) canvasText(ctx, 'EN ATTENTE DES AUTRES CHEVAUX…', W / 2, y + 24 + players.length * 11, { color: '#fdf6e0' });
   }
 
   fmt(ms) {

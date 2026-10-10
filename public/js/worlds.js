@@ -69,6 +69,9 @@ export const MODES = {
   // roi de la colline, chasse à la prime, ruée vers les gemmes, au meilleur des 3), choisis comme une variante (brawlkit.js,
   // brawlgame.js, brawl.js). La durée dépend du mode (de 2 min 30 à 7 min pour les manches) : celle-ci n'est qu'un plafond.
   melee: { name: 'La mêlée', sub: 'Vue de dessus : choisis ton kit, 5 modes de jeu', min: 2, max: 6, duration: 420000, soloBots: 5 },
+  // tactique au tour par tour façon Pathway : on forme sa bande, on l'équipe et on traverse le territoire jusqu'au repaire
+  // d'El Diablo (pistekit.js, piste.js, pistegame.js). Chacun mène son expédition ; jouable seul, 45 min au plus.
+  piste: { name: 'La piste', sub: 'Tactique : forme ta bande et traque El Diablo', min: 1, max: 6, duration: 2700000, unit: 'étapes', soloBots: 0 },
 };
 
 export function rng(seed) {
@@ -113,9 +116,15 @@ export const lairNow = () => LAIR;
 
 // Le "rail" : position de la caméra dans le temps, avec des arrêts pendant les vagues.
 const shift = (start, keys) => keys.map(([t, x]) => [t + start, x]);
+// les abords : quatre arrêts répartis sur la largeur du décor (0, 384, 768, 1152 pour les abords dessinés ici ; les
+// décors du mode histoire, plus étroits, sont parcourus à plus petits pas)
+const edgeCam = (span) => {
+  const x = (k) => Math.round((span * k) / 3);
+  return shift(EDGE_START, [[0, 0], [4500, 0], [8000, x(1)], [14000, x(1)], [17500, x(2)], [23500, x(2)], [27000, span], [EDGE_END - EDGE_START, span]]);
+};
 const CAM = {
   station: [[STATION_START, 0], [5000, 0], [8500, 384], [14500, 384], [18000, 768], [STATION_END, 768]],
-  edge: shift(EDGE_START, [[0, 0], [4500, 0], [8000, 384], [14000, 384], [17500, 768], [23500, 768], [27000, 1152], [EDGE_END - EDGE_START, 1152]]),
+  edge: edgeCam(EDGE_W - W), // posé par shooterWorld selon la largeur des abords
   street: shift(STREET_START, [[0, 0], [3000, 0], [6500, 250], [12500, 250], [16000, 630], [22500, 630], [26000, 1030], [32000, 1030], [35500, 1440], [41500, 1440], [45000, 1824], [48500, 2208], [STREET_END - STREET_START, 2208]]),
   saloon: shift(SALOON_START, [[0, 0], [11000, 0], [15000, 384], [999999, 384]]),
   // la poursuite : la caméra ne bouge pas dans la section, c'est le décor qui défile (le galop)
@@ -156,14 +165,17 @@ export const KINDS = {
   theater: { sign: 'THEATRE', w: [190, 220], top: [22, 28], up: [3, 3], door: 34, low: 2, roof: ['arch', 'step'], cols: ['#8a3a5a', '#6a3a6a'] },
   laundry: { sign: 'LAVERIE', w: [130, 150], top: [50, 56], up: [2, 2], door: 34, low: 1, awning: 1, roof: ['flat'], cols: ['#a8b8b8', '#b8c0c8'] },
 };
-// Le saloon ferme toujours la rue : c'est là qu'on entre pour affronter El Diablo.
+// Le bout de la rue mène au repaire d'El Diablo : le saloon (on y entre ; c'est aussi de là qu'il s'enfuit à cheval
+// pour la poursuite), ou, si son repaire est la mine abandonnée, la colline où s'ouvre la galerie, au sortir de la ville
+// (mineEnd : la cabane du gardien, sa fenêtre, l'entrée de la galerie ; un bandit peut se poster sur la colline).
 const SALOON_B = { x: 2264, w: 264, kind: 'saloon', sign: 'SALOON', col: '#9a4a2a', top: 22, up: 3, door: 42, low: 2, balcony: true, roof: 'flat' };
+const MINE_B = { x: 2264, w: 264, kind: 'mineEnd', sign: 'MINE ABANDONNEE', col: '#8a6a48', top: 40, up: 0, door: 44, low: 0, roof: 'flat' };
 const TOWN_START = 300, TOWN_END = SALOON_B.x - 14;
 
 export const PROP_DIM = { wagon: [86, 40], fence: [90, 20], rock: [44, 26], hay: [40, 24], barrels: [34, 28], crates: [32, 32], trough: [46, 18] };
 export const PROP_BASE = 200;
 
-export function streetLayout(seed) {
+export function streetLayout(seed, lair = 'saloon') {
   const R = rng((seed ^ 0x2545f491) >>> 0);
   const ri = (a, b) => a + Math.floor(R() * (b - a + 1));
   const pick = (arr) => arr[Math.floor(R() * arr.length)];
@@ -187,7 +199,7 @@ export function streetLayout(seed) {
     });
     x += w + (R() < 0.2 ? ri(36, 60) : ri(14, 26)); // de temps en temps, une ruelle
   }
-  buildings.push({ ...SALOON_B });
+  buildings.push(lair === 'mine' ? { ...MINE_B } : { ...SALOON_B });
   // château d'eau dans la plus grande ruelle, poteaux télégraphiques dans les autres
   const gaps = [];
   for (let i = 0; i < buildings.length - 1; i++) gaps.push([buildings[i].x + buildings[i].w, buildings[i + 1].x]);
@@ -214,6 +226,10 @@ export function streetLayout(seed) {
 
 // Géométrie d'une façade : partagée entre le dessin et les emplacements des cibles.
 export function facade(b) {
+  if (b.kind === 'mineEnd') {
+    // la cabane du gardien à gauche, la galerie boisée dans la colline à droite
+    return { ...b, windows: [{ x: b.x + 30, y: 114, w: 26, h: 28, up: false }], door: { x: b.x + 168, y: GROUND - 60, w: b.door, h: 60 } };
+  }
   const windows = [];
   const uw = b.upW ?? 28, uh = b.upH ?? 36, uy = b.upY ?? 60;
   for (let i = 0; i < b.up; i++) {
@@ -299,10 +315,12 @@ export const locoCab = (L) => ({ x: L.x + 18, y: 70, w: 26, h: 26 });
 // houses : bâtiments (wins/door : bandits aux fenêtres et aux portes ; roof : bandit sur le toit, au-dessus de roof ;
 // belfry : clocher ; sign : enseigne). slots : abris au premier plan, [x, sortes possibles].
 // Les caméras s'arrêtent en x = 0, 384, 768 et 1152 : chaque écran a ses fenêtres, ses portes et ses abris.
+// Les quatre dernières (fort, mission, hacienda, mine du Vieux Joe) reprennent les décors du mode histoire : moins
+// larges (w), la caméra les parcourt à plus petits pas ; leurs emplacements (spots) sont relevés sur le décor.
 export const EDGE_COVER = { ...PROP_DIM, stone: [24, 30], cross: [20, 36], tomb: [40, 22], hearse: [86, 40], ore: [40, 26], tnt: [32, 32] };
 export const EDGES = {
   boothill: {
-    name: 'BOOT HILL',
+    name: 'BOOT HILL', twist: 'graves',
     houses: [
       { kind: 'gate', x: 18, w: 100, sign: { t: 'BOOT HILL', y: 80 } },
       { kind: 'chapel', x: 196, w: 150, top: 78, wins: [{ x: 212, y: 104, w: 18, h: 30 }, { x: 312, y: 104, w: 18, h: 30 }], door: { x: 256, y: 120, w: 30, h: 46 }, belfry: { x: 262, y: 36, w: 18, h: 20 } },
@@ -315,7 +333,7 @@ export const EDGES = {
     slots: [[136, ['stone', 'cross', 'tomb']], [410, ['stone', 'cross']], [660, ['tomb', 'stone']], [790, ['stone', 'cross']], [850, ['hearse']], [1110, ['cross', 'stone']], [1390, ['tomb', 'stone']], [1470, ['stone', 'cross']]],
   },
   ranch: {
-    name: 'LE RANCH',
+    name: 'LE RANCH', twist: 'riders',
     houses: [
       { kind: 'gate', x: 18, w: 100, sign: { t: 'RANCH', y: 80 } },
       { kind: 'farm', x: 140, w: 210, top: 60, wins: [{ x: 160, y: 70, w: 22, h: 26 }, { x: 308, y: 70, w: 22, h: 26 }, { x: 160, y: 120, w: 24, h: 30 }, { x: 306, y: 120, w: 24, h: 30 }], door: { x: 230, y: 116, w: 30, h: 50 }, roof: 60 },
@@ -327,7 +345,7 @@ export const EDGES = {
     slots: [[60, ['hay', 'barrels', 'crates']], [470, ['fence']], [640, ['hay']], [700, ['trough']], [1046, ['hay', 'crates']], [1100, ['barrels']], [1176, ['barrels', 'crates']], [1410, ['wagon']]],
   },
   mine: {
-    name: 'LA MINE D\'OR',
+    name: 'LA MINE D\'OR', twist: 'tnt',
     houses: [
       { kind: 'office', x: 40, w: 170, top: 70, sign: { t: 'ESSAIS', y: 76 }, wins: [{ x: 58, y: 112, w: 22, h: 28 }, { x: 170, y: 112, w: 22, h: 28 }], door: { x: 110, y: 114, w: 30, h: 52 }, roof: 70 },
       { kind: 'tunnel', x: 466, w: 64, sign: { t: 'MINE', y: 80 }, door: { x: 476, y: 106, w: 44, h: 60 } },
@@ -338,7 +356,61 @@ export const EDGES = {
     ],
     slots: [[250, ['ore']], [320, ['crates', 'tnt']], [404, ['rock']], [680, ['ore']], [1010, ['tnt', 'crates']], [1080, ['barrels']], [1250, ['crates', 'rock']], [1460, ['ore']]],
   },
+  // Abords peints avec les décors du mode histoire (story/sets : set, de largeur w) : pas de bâtiments à dessiner,
+  // les emplacements sont relevés sur le décor (spots) ; perch : où se posent les corbeaux
+  fort: {
+    name: 'LE FORT SAINT-JUDE', set: 'fort', w: 660, twist: 'riders', town: 'SAINT-JUDE', // le bourg du fort, au bord de la rivière
+    spots: [
+      sWin(51, 70, 20, 26, { dark: true }), sWin(543, 70, 20, 26, { dark: true }), // meurtrières de l'étage des blockhaus
+      sDoor(327, 114, 26, 54, { dark: true }), // le guichet de la grande porte
+      ledge(130, 92), ledge(250, 92), ledge(430, 92), ledge(512, 92), // par-dessus les pieux de la palissade
+      ledge(196, 65), ledge(372, 42, 34), // sur le toit de la caserne, sur le chemin de ronde de la porte
+    ],
+    slots: [[14, ['hay', 'barrels']], [150, ['crates', 'barrels']], [214, ['hay']], [440, ['crates', 'barrels']], [500, ['hay', 'crates']], [586, ['barrels']]],
+    perch: [[74, 33], [566, 33], [150, 51], [500, 41]],
+  },
+  mission: {
+    name: 'LA MISSION SAN ROSARIO', set: 'mission', w: 540, twist: 'cloister', town: 'SAN ROSARIO',
+    spots: [
+      sWin(119, 46, 18, 24), // sous la cloche du campanile
+      sDoor(203, 102, 22, 60), // la porte de l'église
+      ...[286, 322, 393, 428].map((x) => sDoor(x + 2, 112, 22, 52)), // les arcades du couvent
+      ...[300, 357, 413].map((x) => sWin(x, 72, 14, 14, { glass: true })), // les fenêtres des cellules, à l'étage
+      ledge(166, 61, 34), ledge(330, 61), ledge(440, 61), // sur les toits en terrasse
+    ],
+    slots: [[6, ['cross', 'stone']], [84, ['tomb', 'stone']], [244, ['crates', 'hay']], [356, ['barrels', 'crates']], [470, ['hay', 'barrels']]],
+    perch: [[127, 6], [212, 19], [270, 22], [495, 124]],
+  },
+  hacienda: {
+    name: 'L\'HACIENDA DEL DIABLO', set: 'hacienda', w: 680, twist: 'ramparts', town: 'SAN MIGUEL', // le pueblo au pied du volcan
+    spots: [
+      sDoor(306, 110, 48, 54), // le passage voûté du portail
+      sDoor(446, 131, 20, 34), // la petite porte de l'aile droite
+      ...[411, 438, 465, 492].map((x) => sWin(x, 80, 16, 20)), // la loggia
+      ledge(289, 64, 24), ledge(330, 64, 24), ledge(368, 64, 24), // au balcon, au-dessus de la porte
+      ledge(155, 37), ledge(220, 62), ledge(452, 62), ledge(535, 32), // derrière les créneaux des tours et des ailes
+    ],
+    slots: [[30, ['rock', 'barrels']], [150, ['crates', 'barrels']], [236, ['tnt', 'crates']], [404, ['barrels', 'crates']], [500, ['rock']], [596, ['tnt', 'barrels']]],
+    perch: [[155, 28], [535, 22], [446, 52]],
+  },
+  vieuxjoe: {
+    name: 'LA MINE DU VIEUX JOE', set: 'mine', w: 600, twist: 'tnt', town: 'RED ROCK', // la mine est dans les montagnes de Red Rock
+    spots: [
+      sWin(36, 139, 15, 11, { glass: true }), sDoor(76, 142, 16, 27), // la cabane du Vieux Joe
+      sDoor(398, 108, 44, 62), // l'entrée de la galerie
+      ledge(136, 137, 36), ledge(188, 100, 36), // derrière le toit de la salle du treuil, dans le chevalement
+      ledge(245, 146, 30), ledge(311, 150, 44), ledge(530, 144, 44), // derrière la dynamite, le wagonnet, le terril
+    ],
+    slots: [[16, ['rock', 'barrels']], [120, ['ore', 'tnt']], [206, ['crates', 'barrels']], [340, ['ore']], [462, ['tnt', 'crates']], [548, ['rock', 'ore']]],
+    perch: [[188, 26], [60, 112], [544, 46]],
+  },
 };
+// Emplacements relevés sur un décor : fenêtre (sWin : le bandit s'y penche, le visage dans l'ouverture), porte (sDoor),
+// et ledge : derrière un rebord (pieux, créneaux, toit, rambarde, wagonnet…) dont le haut est en y.
+// dark : ouverture que le décor n'a pas (meurtrière, guichet), noire le temps qu'il s'y montre.
+function sWin(x, y, w, h, o) { return { kind: 'window', x, y, w, h, base: y + h + 30, ...o }; }
+function sDoor(x, y, w, h, o) { return { kind: 'door', x, y, w, h, base: y + Math.max(52, h + 6), ...o }; }
+function ledge(cx, y, w = 52) { return { kind: 'roof', x: cx - w / 2, y: y - 46, w, h: 46, base: y + 16 }; }
 // force : abords imposés par l'hôte (lobby) ; le tirage est fait quand même, pour ne pas décaler la suite
 export function edgeLayout(seed, force = null) {
   const R = rng((seed ^ 0x3c6ef372) >>> 0);
@@ -347,9 +419,9 @@ export function edgeLayout(seed, force = null) {
   const kind = EDGES[force] ? force : drawn;
   const E = EDGES[kind];
   return {
-    kind, name: E.name, houses: E.houses, seed,
+    kind, name: E.name, houses: E.houses || [], seed, town: E.town || null, set: E.set, w: E.w || EDGE_W, spots: E.spots || [], perch: E.perch || [],
     covers: E.slots.map(([x, kinds]) => ({ x, kind: pick(kinds) })),
-    col: pick({ boothill: ['#7a6a5a', '#6a6460'], ranch: ['#9a3a2a', '#8a4a2a', '#a8582a'], mine: ['#8a6a48', '#7a5a3a'] }[kind]),
+    col: E.set ? null : pick({ boothill: ['#7a6a5a', '#6a6460'], ranch: ['#9a3a2a', '#8a4a2a', '#a8582a'], mine: ['#8a6a48', '#7a5a3a'] }[kind]),
   };
 }
 
@@ -410,6 +482,7 @@ function buildSpots(L) {
       add({ sec: 'edge', kind: 'roof', x: cx - 26, y: h.roof - 46, w: 52, h: 46, cx, base: h.roof + 16 });
     }
   }
+  for (const s of L.edge.spots) add({ sec: 'edge', kind: s.kind, x: s.x, y: s.y, w: s.w, h: s.h, cx: s.x + s.w / 2, base: s.base, dark: !!s.dark });
   for (const c of L.edge.covers) {
     const [w, h] = EDGE_COVER[c.kind];
     const top = PROP_BASE - h;
@@ -479,11 +552,21 @@ export function bossX(t) {
 // hauteur (à l'écran) où l'on vise El Diablo
 export const bossAimY = () => (LAIR === 'chase' ? CHASE.y - Math.round(30 * CHASE.scale) : LAIR === 'mine' ? MINE.balcony - 44 : 50);
 
+// Variantes du mode histoire (cachées dans le lobby, variants.js) : des abords ET un repaire imposés, pour qu'un épisode
+// se joue au bon endroit (story/decos/ville.js). Le reste du monde (rue, train, cibles) reste celui de la graine.
+export const SHOOTER_STORY = {
+  gulch: { name: 'DUSTY GULCH', edge: 'boothill', lair: 'saloon' }, // la grand-rue, El Diablo au balcon du Buckshot
+  joe: { name: 'LA MINE DU VIEUX JOE', edge: 'vieuxjoe', lair: 'mine' }, // les abords de la mine, et la mine elle-même
+};
+
 export function shooterWorld(seed, n, edge = null) {
-  const layout = streetLayout(seed);
+  const sv = SHOOTER_STORY[edge];
+  const lair = sv ? sv.lair : lairOf(seed); // tiré à part : la rue s'arrête devant le repaire
+  const layout = streetLayout(seed, lair);
   layout.train = stationTrain(seed);
-  layout.edge = edgeLayout(seed, edge);
-  LAIR = layout.lair = lairOf(seed);
+  layout.edge = edgeLayout(seed, sv ? sv.edge : edge);
+  CAM.edge = edgeCam((layout.edge.w || EDGE_W) - W);
+  LAIR = layout.lair = lair;
   const spots = buildSpots(layout);
   const R = rng(seed);
   const ri = (a, b) => a + Math.floor(R() * (b - a + 1));
@@ -562,7 +645,6 @@ export function shooterWorld(seed, n, edge = null) {
   // Le repaire : le saloon et la mine ont leurs emplacements (vagues ordinaires) ; dans la poursuite, la bande galope à
   // nos côtés : des cavaliers nous rattrapent par la gauche (ou se laissent distancer par la droite) dans les quatre
   // couloirs du premier plan, et tirent quand ils sont au milieu de l'écran.
-  const lair = layout.lair;
   let lane = 0;
   const chase = (from, to, gap) => {
     for (let t = from; t < to;) {
@@ -739,14 +821,15 @@ export function shooterWorld(seed, n, edge = null) {
   };
 
   ambush('train', 'station', STATION_START + 3000, STATION_END - 6000, 3);
-  // chaque variante des abords a son coup dur : embuscade au cimetière, cavaliers au ranch, dynamite à la mine
-  const ek = layout.edge.kind;
-  if (ek === 'boothill') ambush('graves', 'edge', EDGE_START + 3000, EDGE_END - 6000);
-  else if (ek === 'ranch') riders('edge', EDGE_START + 3000, EDGE_END - 8000, 3);
-  else dynamite('edge', EDGE_START + 3000, EDGE_END - 9000, 3);
+  // chaque variante des abords a son coup dur (EDGES : twist) : cavaliers (ranch, fort), dynamite (mines), ou une
+  // embuscade (au cimetière, au cloître de la mission, sur les remparts de l'hacienda : trois d'entre eux aux créneaux)
+  const tw = EDGES[layout.edge.kind].twist;
+  if (tw === 'riders') riders('edge', EDGE_START + 3000, EDGE_END - 8000, 3);
+  else if (tw === 'tnt') dynamite('edge', EDGE_START + 3000, EDGE_END - 9000, 3);
+  else ambush(tw, 'edge', EDGE_START + 3000, EDGE_END - 6000, tw === 'ramparts' ? 3 : 0);
   ambush('ambush', 'street', STREET_START + 9000, STREET_END - 6000);
-  // et dans la grand-rue, l'autre (ou l'un des deux au cimetière)
-  if (ek === 'mine' || (ek === 'boothill' && R() < 0.5)) riders('street', STREET_START + 4000, STREET_END - 8000, 3 + (n > 2 ? 1 : 0));
+  // et dans la grand-rue, l'autre (ou l'un des deux après une embuscade)
+  if (tw === 'tnt' || (tw !== 'riders' && R() < 0.5)) riders('street', STREET_START + 4000, STREET_END - 8000, 3 + (n > 2 ? 1 : 0));
   else dynamite('street', STREET_START + 4000, STREET_END - 9000, 3);
   // prime doublée : aux abords ou dans la rue
   for (let k = 0; k < 40; k++) {

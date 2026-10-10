@@ -1,10 +1,13 @@
-// Décor de la Roulette : quatre lieux (saloon, cantina, wagon-bar du train, bureau du shérif), chacun
+// Décor de la Roulette : six lieux (saloon, cantina, wagon-bar du train, bureau du shérif, salon du bateau
+// à aubes, grand hôtel), chacun
 // avec ses éléments animés, et une ambiance (heure, météo) visible par les fenêtres et dans l'éclairage.
 // Lieu et ambiance sont tirés de la graine de la partie : les deux joueurs voient la même chose.
 import * as S from './sprites.js';
-import { pickEnv, Ambience, desertOpts, skyDeco, haloSprite } from './env.js';
+import { pickEnv, Ambience, desertOpts, skyDeco, haloSprite, ENVS } from './env.js';
 import { rng } from './worlds.js';
 import { sfx } from './audio.js';
+import { canvasText } from './scene.js';
+import { loadSets, drawSet } from './storyset.js';
 
 const W = 384, H = 216;
 const OUT = S.OUT;
@@ -39,7 +42,12 @@ function drawLamp(ctx, ax, ay, len, a) {
   R(x - 4, y + 3, 9, 10, OUT); R(x - 3, y + 3, 7, 9, '#a06a20');
   R(x - 2, y + 4, 5, 6, '#f8e08a'); R(x - 1, y + 5, 3, 3, '#fffbe0');
   R(x - 5, y + 12, 11, 3, OUT); R(x - 4, y + 12, 9, 2, '#a06a20');
-  return { x, y: y + 7 };
+  return { x, y: y + 7, glass: y };
+}
+// Verre allumé de la lampe, redessiné par-dessus le décor teinté : une flamme ne s'assombrit pas la nuit
+function lampGlass(ctx, x, y) {
+  ctx.fillStyle = '#f8e08a'; ctx.fillRect(x - 2, y + 4, 5, 6);
+  ctx.fillStyle = '#fffbe0'; ctx.fillRect(x - 1, y + 5, 3, 3);
 }
 
 function drawFly(ctx, cx, cy, now, ph = 0) {
@@ -62,7 +70,7 @@ const BAR = {
   skin: '#eab78e', skinD: '#c98e64', skinL: '#f8d8b8', cheek: '#e89a84',
   hair: '#7a6a5a', hairD: '#4a3e34', must: '#5a4434', mustL: '#7a604a',
   shirt: '#ece4d4', shirtD: '#c4b8a4', vest: '#3a2a38', vestL: '#5a4458', vestD: '#241820',
-  bow: '#a02a24', bowL: '#d04a3a', garter: '#c0392b', gold: '#e0b040',
+  bow: '#a02a24', bowL: '#d04a3a', bowD: S.shade('#a02a24', -0.3), garter: '#c0392b', gold: '#e0b040',
   apron: '#f8f2e4', apronD: '#d8ccb4',
 };
 function drawBartender(ctx, x, now, wiping) {
@@ -96,7 +104,7 @@ function drawBartender(ctx, x, now, wiping) {
   R(x - 1, y0 + 4, 1, 6, C.shirtD); // patte de la chemise
   // nœud papillon
   shape(R, [[x - 4, y0 + 1, 3, 3, C.bow], [x + 1, y0 + 1, 3, 3, C.bow], [x - 1, y0 + 1, 2, 2, C.bowL]]);
-  R(x - 4, y0 + 3, 3, 1, S.shade(C.bow, -0.3)); R(x + 1, y0 + 3, 3, 1, S.shade(C.bow, -0.3));
+  R(x - 4, y0 + 3, 3, 1, C.bowD); R(x + 1, y0 + 3, 3, 1, C.bowD);
   // tablier noué à la taille, avec ses plis
   R(x - 9, y0 + 15, 18, 1, C.apronD);
   R(x - 8, y0 + 16, 16, 10, C.apron);
@@ -415,6 +423,17 @@ function note(ctx, x, y, col) {
   ctx.fillRect(x, y, 1, 5); ctx.fillRect(x - 2, y + 4, 3, 2); ctx.fillRect(x + 1, y, 2, 1); ctx.fillRect(x + 2, y + 1, 1, 1);
 }
 
+// Bougies des niches de la cantina (x de la mèche) et fanions de papel picado (couleur, ombre des découpes)
+const CANDLES = [120, 249];
+const PICADO = ['#e8508a', '#3aa858', '#f8c838', '#3a8ad8', '#f07830', '#9a5ad8'];
+const PICADO_D = PICADO.map((c) => S.shade(c, -0.3));
+function candleFlame(ctx, cx, i, now) {
+  const { R } = paint(ctx);
+  const f = hash(Math.floor(now / 90) + i * 77);
+  const h = f < 0.3 ? 3 : 4;
+  R(cx, 38 - h, 1, h, '#f8a030'); R(cx, 37, 1, 1, '#fff6c0'); if (f > 0.7) R(cx + 1, 36, 1, 1, '#f8d070');
+}
+
 function drawParrot(ctx, x, now) {
   const { R } = paint(ctx);
   R(x, 4, 1, 20, '#3a2a1a'); R(x - 7, 24, 15, 2, OUT); R(x - 6, 24, 13, 1, '#7a4a24');
@@ -427,6 +446,8 @@ function drawParrot(ctx, x, now) {
 }
 
 // Prisonnier qui fait les cent pas dans sa cellule
+// (arrêté contre les barreaux, il serre ceux de x = 76 et 92, de part et d'autre de son visage)
+const PRISON_GRIP = [76, 92];
 const PRISONER = { skin: 2, hat: 'none', hatColor: 0, hair: 'messy', hairColor: 1, eyes: 'tired', nose: 'broken', mouth: 'frown', beard: 'stubble', outfit: 'shirt', outfitColor: 5 };
 
 // ------------------------------------------------------------ détails de décor
@@ -541,9 +562,140 @@ function goldFrame(R, x, y, w, h, draw) {
   draw(x, y, w, h);
 }
 
+// Petite flamme de bougie (2 px de large) posée sur le haut d'une bougie en (x, y)
+function candleTip(ctx, x, y, now, k) {
+  const h = 2 + (hash(Math.floor(now / 110) * 7 + k) < 0.5 ? 1 : 0);
+  ctx.fillStyle = '#f8b040'; ctx.fillRect(x, y - h, 2, h);
+  ctx.fillStyle = '#fffbe0'; ctx.fillRect(x + (k % 2), y - h + 1, 1, h - 1);
+}
+
+// ------------------------------------------------------------ bateau à aubes : le fleuve vu des fenêtres
+// La rive boisée et l'eau sont des bandes en cache (motif périodique recopié deux fois : un seul drawImage les
+// fait glisser). Elles couvrent le bas des fenêtres, par-dessus le dehors : le ciel de l'ambiance reste visible.
+const BANK_P = 160, WATER_P = 128, WHEEL_R = 40;
+let RIVER = null;
+function riverArt() {
+  if (RIVER) return RIVER;
+  const rnd = seeded(17);
+  const bank = S.makeCanvas(BANK_P * 2, 16), b = bank.getContext('2d'), B = paint(b).R;
+  const trees = Array.from({ length: 24 }, () => [Math.floor(rnd() * BANK_P), 3 + Math.floor(rnd() * 4)]);
+  for (let j = -1; j <= 2; j++) {
+    const o = j * BANK_P;
+    for (const [x, r] of trees) S.disc(b, x + o, 12 - r, r, '#3e5a2c');
+    for (const [x, r] of trees) S.disc(b, x + o - 1, 11 - r, r - 2, '#56763a');
+    // cabane et ponton sur la berge
+    B(70 + o, 7, 9, 5, '#d8ccae'); B(69 + o, 6, 11, 1, '#8a3a2a'); B(70 + o, 5, 9, 1, '#8a3a2a'); B(72 + o, 4, 5, 1, '#8a3a2a');
+    B(73 + o, 9, 2, 3, '#3a2a1a'); B(76 + o, 2, 1, 3, '#5a4a3a'); B(66 + o, 12, 16, 1, '#6a4a2a');
+  }
+  B(0, 10, BANK_P * 2, 2, '#34502a');
+  B(0, 12, BANK_P * 2, 2, '#8a7450');
+  for (let x = 0; x < BANK_P * 2; x += 5) B(x + ((x * 7) % 3), 12, 2, 1, '#a08a60');
+  B(0, 14, BANK_P * 2, 2, '#3e4c32'); // reflet sombre de la rive
+  for (let x = 0; x < BANK_P * 2; x += 7) B(x, 15, 3, 1, '#58664a');
+  const water = S.makeCanvas(WATER_P * 2, 16), wx = water.getContext('2d'), Wr = paint(wx).R;
+  const bands = ['#76805e', '#687552', '#5a6848'];
+  for (let y = 0; y < 16; y++) Wr(0, y, WATER_P * 2, 1, bands[y < 4 ? 0 : y < 9 ? 1 : 2]);
+  for (const y of [4, 9]) for (let x = 0; x < WATER_P * 2; x += 2) Wr(x, y, 1, 1, bands[y < 9 ? 0 : 1]);
+  for (let y = 0; y < 16; y++) {
+    for (let k = 0; k < 3 + y / 4; k++) {
+      const x = Math.floor(rnd() * WATER_P), len = 2 + Math.floor(y / 3) + Math.floor(rnd() * 3), col = rnd() < 0.6 ? '#a4ac84' : '#4a583c';
+      for (const o of [-WATER_P, 0, WATER_P]) Wr(x + o, y, len, 1, col);
+    }
+  }
+  // jante de la roue à aubes (invariante par rotation : dessinée une fois), deux cercles
+  const c = WHEEL_R + 2, ring = S.makeCanvas(c * 2 + 1, c * 2 + 1), rx = ring.getContext('2d'), Rr = paint(rx).R;
+  for (let y = 0; y <= c * 2; y++) for (let x = 0; x <= c * 2; x++) {
+    const d = Math.hypot(x - c, y - c);
+    if (d >= WHEEL_R - 5 && d <= WHEEL_R + 1) Rr(x, y, 1, 1, d > WHEEL_R || d < WHEEL_R - 4 ? OUT : d > WHEEL_R - 1.5 ? '#d8583a' : '#a8341f');
+    else if (d >= 21 && d <= 24) Rr(x, y, 1, 1, d > 23 || d < 22 ? OUT : '#a0321e');
+  }
+  RIVER = { bank, water, ring, c };
+  return RIVER;
+}
+
+// Le fleuve dans la fenêtre w (calque de la salle, sous les cadres) ; wheel : la roue à aubes tourne devant ;
+// dark : ambiance de nuit
+function riverView(ctx, w, i, now, wheel, dark) {
+  const A = riverArt(), wy = w.y + 34;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(w.x, w.y, w.w, w.h); ctx.clip();
+  const slide = (c, P, sy, h, dy, speed, alpha = 1) => {
+    const off = Math.floor((now * speed + i * 57) % P);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(c, 0, sy, c.width, h, w.x - off, dy, c.width, h);
+  };
+  slide(A.bank, BANK_P, 0, 16, w.y + 18, 0.005);
+  slide(A.water, WATER_P, 0, 5, wy, 0.012); slide(A.water, WATER_P, 5, 5, wy + 5, 0.022); slide(A.water, WATER_P, 10, 6, wy + 10, 0.036);
+  if (wheel) {
+    const { R } = paint(ctx);
+    const cx = w.x + w.w - 14, cy = w.y + w.h + 8, a = now / 700;
+    for (let k = 0; k < 10; k++) {
+      const co = Math.cos(a + (k * TAU) / 10), si = Math.sin(a + (k * TAU) / 10);
+      for (let t = 8; t < WHEEL_R - 3; t += 2) R(cx + co * t, cy + si * t, 2, 2, '#7a2416');
+    }
+    ctx.drawImage(A.ring, cx - A.c, cy - A.c);
+    // pales : planches radiales cernées de noir
+    for (const pass of [0, 1]) for (let k = 0; k < 10; k++) {
+      const co = Math.cos(a + (k * TAU) / 10), si = Math.sin(a + (k * TAU) / 10);
+      for (let t = WHEEL_R - 8; t <= WHEEL_R + 3; t++) {
+        if (pass) R(cx + co * t - 1, cy + si * t - 1, 2, 2, t > WHEEL_R ? '#8a6038' : '#6a4a2a');
+        else R(cx + co * t - 2, cy + si * t - 2, 4, 4, OUT);
+      }
+    }
+    // l'eau repasse devant le bas de la roue, écume et gerbes là où les pales sortent du fleuve
+    slide(A.water, WATER_P, 4, 12, wy + 4, 0.036, 0.55);
+    ctx.globalAlpha = 1;
+    const fx = cx - Math.round(Math.sqrt(WHEEL_R * WHEEL_R - (cy - wy) ** 2));
+    for (let k = 0; k < 7; k++) R(fx - 12 + ((k * 5 + Math.floor(now / 90)) % 20), wy + (k % 3), 3, 1, '#e8ecdc');
+    for (let k = 0; k < 9; k++) {
+      const ph = (now / 650 + k / 9) % 1;
+      R(fx - ph * 16 - (k % 3) * 2, wy - Math.sin(ph * Math.PI) * (6 + (k % 4) * 2), 1, 1, '#f4f0e4');
+    }
+  }
+  ctx.globalAlpha = 1;
+  // la nuit, le fleuve s'assombrit plus que la salle éclairée
+  if (dark) { ctx.fillStyle = 'rgba(12,16,44,0.45)'; ctx.fillRect(w.x, w.y + 18, w.w, w.h - 18); }
+  ctx.restore();
+}
+
+// Lustre en laiton à deux lampes à pétrole, qui oscille doucement avec le roulis (cx : point d'attache)
+const BOAT_LAMPS = [140, 244];
+const boatSwing = (now, i) => Math.round(Math.sin(now / 1100 + i * 1.7) * 1.3);
+function boatLamp(ctx, cx, dx) {
+  const { R } = paint(ctx);
+  for (let y = 9; y < 24; y += 2) R(cx + Math.round((dx * (y - 9)) / 15), y, 1, 1, '#8a6a20');
+  const x = cx + dx;
+  R(x - 11, 27, 23, 3, OUT); R(x - 10, 28, 21, 1, '#c8a040');
+  R(x - 2, 23, 5, 8, OUT); R(x - 1, 24, 3, 6, '#c8a040'); R(x - 1, 24, 1, 6, '#f0d070');
+  R(x - 1, 31, 3, 3, OUT); R(x, 31, 1, 2, '#a02a24');
+  for (const ex of [x - 8, x + 8]) {
+    R(ex - 3, 24, 7, 5, OUT); R(ex - 2, 25, 5, 3, '#c8a040'); R(ex - 2, 25, 5, 1, '#f0d070');
+    R(ex - 2, 16, 5, 9, OUT); R(ex - 1, 17, 3, 7, '#f0e8d0');
+    R(ex - 1, 19, 3, 5, '#f8e08a'); R(ex, 20, 1, 3, '#fffbe0');
+  }
+}
+// flammes des deux lampes (redessinées après la teinte de l'ambiance)
+function boatFlames(ctx, x, now, i) {
+  for (const [k, ex] of [[0, x - 8], [1, x + 8]]) {
+    const f = hash(Math.floor(now / 100) * 5 + i * 2 + k) < 0.4 ? 1 : 0;
+    ctx.fillStyle = '#f8e08a'; ctx.fillRect(ex - 1, 19, 3, 5);
+    ctx.fillStyle = '#fffbe0'; ctx.fillRect(ex, 20 + f, 1, 3 - f);
+  }
+}
+
+// ------------------------------------------------------------ grand hôtel : lustre en cristal, champagne
+// bougies : [x, haut] (lustre à deux étages, candélabre du piano)
+const HOTEL_CANDLES = [[174, 18], [182, 18], [200, 18], [208, 18], [184, 10], [198, 10], [112, 64], [119, 64], [126, 64]];
+// pampilles du lustre : [x, haut, longueur]
+const HOTEL_DROPS = [[173, 26, 6], [179, 26, 8], [205, 26, 8], [211, 26, 6], [186, 29, 6], [198, 29, 6], [192, 34, 4], [184, 17, 4], [200, 17, 4]];
+const COUPE_ROWS = [[4, 86], [3, 80], [2, 74], [1, 68]];
+// le bouchon de la bouteille dans le seau à glace saute toutes les 11 s
+const POP = 11000;
+
 // ------------------------------------------------------------ les lieux
 // windows : ouvertures sur l'extérieur ; lamps(now, room) : sources de lumière animées ; render() : décor fixe
-// (bg = fond, mid = premier plan du décor) ; anim() : derrière le premier plan ; front() : devant.
+// (bg = fond, mid = premier plan du décor) ; anim() : derrière le premier plan ; front() : devant ;
+// lit() : flammes redessinées après la teinte de l'ambiance (une source de lumière ne s'assombrit pas la nuit).
 const ROOMS = {
   saloon: {
     name: 'LE SALOON',
@@ -642,9 +794,9 @@ const ROOMS = {
       if (T < 7000) drawCat(ctx, Math.round(-14 + (84 * T) / 7000), 84, 1, now, false);
       else if (T < 13000) drawCat(ctx, 70, 84, 1, now, true);
       else if (T < 20000) drawCat(ctx, Math.round(70 - (84 * (T - 13000)) / 7000), 84, -1, now, false);
-      // fumée de cigare sous le plafond
+      // fumée de cigare sous le plafond (elle repart de la gauche hors champ : pas de bouffée qui surgit au bouclage)
       for (let b = 0; b < 3; b++) {
-        const off = (now * 0.004 * (b + 1) + b * 140) % (W + 120) - 60;
+        const off = (now * 0.004 * (b + 1) + b * 140) % (W + 140) - 70;
         for (let k = 0; k < 5; k++) S.disc(ctx, Math.round(off + k * 14), 22 + b * 9 + Math.round(Math.sin(now / 900 + k) * 2), 6, 'rgba(230,220,200,0.05)');
       }
       drawFly(ctx, 330, 60, now);
@@ -670,8 +822,8 @@ const ROOMS = {
         R(x, y, 12, 12, alt ? '#f0e8d8' : '#e8d8b8'); R(x, y, 12, 1, '#a89878'); R(x, y, 1, 12, '#a89878');
         R(x + 4, y + 4, 4, 4, alt ? '#3a6ec0' : '#e0b040'); R(x + 5, y + 2, 2, 8, alt ? '#3a6ec0' : '#c0392b'); R(x + 2, y + 5, 8, 2, alt ? '#3a6ec0' : '#c0392b');
       }
-      // niches à bougie
-      for (const nx of [114, 248]) { R(nx, 30, 14, 18, '#a87850'); R(nx + 1, 28, 12, 2, '#a87850'); R(nx + 3, 27, 8, 1, '#a87850'); R(nx + 1, 46, 12, 2, '#8a5a34'); }
+      // niches à bougie (la bougie tombe dans un creux entre deux fanions de la seconde guirlande)
+      for (const nx of CANDLES.map((cx) => cx - 6)) { R(nx, 30, 14, 18, '#a87850'); R(nx + 1, 28, 12, 2, '#a87850'); R(nx + 3, 27, 8, 1, '#a87850'); R(nx + 1, 46, 12, 2, '#8a5a34'); }
       // guirlande de piments, sombrero au mur, étagère à jarres
       R(270, 6, 1, 8, '#5a3a20');
       for (let k = 0; k < 9; k++) { const y = 14 + k * 5; box(266 + (k % 2) * 4, y, 4, 5, '#c0392b'); R(267 + (k % 2) * 4, y, 1, 1, '#4a7a3a'); }
@@ -697,17 +849,11 @@ const ROOMS = {
       }
       M.R(w.x, w.y + 40, w.w, 2, '#2a2622');
     },
-    lamps() { return [{ x: 121, y: 36, r: 26 }, { x: 255, y: 36, r: 26 }]; },
+    lamps() { return CANDLES.map((cx) => ({ x: cx + 1, y: 36, r: 26 })); },
     anim(ctx, now, room) {
       const { R } = paint(ctx);
       // bougies
-      for (const [i, cx] of [[0, 120], [1, 254]]) {
-        R(cx - 1, 38, 3, 8, '#f4ecd8'); R(cx - 1, 38, 1, 8, '#d8d0c0');
-        const f = hash(Math.floor(now / 90) + i * 77);
-        const h = f < 0.3 ? 3 : 4;
-        R(cx, 38 - h, 1, h, '#f8a030'); R(cx, 37, 1, 1, '#fff6c0'); if (f > 0.7) R(cx + 1, 36, 1, 1, '#f8d070');
-      }
-      drawParrot(ctx, 104, now);
+      CANDLES.forEach((cx, i) => { R(cx - 1, 38, 3, 8, '#f4ecd8'); R(cx - 1, 38, 1, 8, '#d8d0c0'); candleFlame(ctx, cx, i, now); });
       const src = drawMariachi(ctx, 300, now, room?.band);
       // notes qui s'envolent de l'instrument (ou de sa bouche quand il chante)
       if (src) for (let i = 0; i < 3; i++) {
@@ -717,9 +863,10 @@ const ROOMS = {
         ctx.globalAlpha = 1;
       }
     },
+    lit(ctx, now) { CANDLES.forEach((cx, i) => candleFlame(ctx, cx, i, now)); },
     front(ctx, now) {
       // guirlandes de papel picado qui ondulent
-      const cols = ['#e8508a', '#3aa858', '#f8c838', '#3a8ad8', '#f07830', '#9a5ad8'];
+      const cols = PICADO, dark = PICADO_D;
       for (const [y0, sag, off] of [[8, 10, 0], [28, 8, 8]]) {
         const yAt = (x) => y0 + sag * (1 - ((x - 192) / 192) ** 2);
         ctx.fillStyle = '#5a3a20';
@@ -728,13 +875,15 @@ const ROOMS = {
           const y = Math.round(yAt(x + 5)) + 1;
           const dx = Math.round(Math.sin(now / 320 + i * 1.3) * 1.2);
           const h = 11 - (Math.sin(now / 260 + i * 1.7) > 0.6 ? 2 : 0);
-          const c = cols[(i + off) % cols.length];
-          ctx.fillStyle = c; ctx.fillRect(x + dx, y, 11, h);
-          ctx.fillStyle = S.shade(c, -0.3);
+          const c = (i + off) % cols.length;
+          ctx.fillStyle = cols[c]; ctx.fillRect(x + dx, y, 11, h);
+          ctx.fillStyle = dark[c];
           ctx.fillRect(x + dx + 3, y + 3, 1, 1); ctx.fillRect(x + dx + 7, y + 3, 1, 1); ctx.fillRect(x + dx + 5, y + 5, 1, 2); ctx.fillRect(x + dx + 3, y + 7, 1, 1); ctx.fillRect(x + dx + 7, y + 7, 1, 1);
           for (let k = 0; k < 11; k += 2) ctx.fillRect(x + dx + k, y + h, 1, 1);
         }
       }
+      // le perroquet sur son perchoir, devant la première guirlande (derrière, ses fanions le cachaient)
+      drawParrot(ctx, 104, now);
       drawFly(ctx, 70, 60, now, 2);
     },
   },
@@ -885,9 +1034,9 @@ const ROOMS = {
       M.box(96, 58, 8, 10, '#3a3e44'); M.R(99, 62, 2, 3, OUT);
       M.R(118, 0, 3, 128, OUT); M.R(0, 7, 121, 2, OUT);
     },
-    lamps(now) { return [{ lx: 236, a: Math.sin(now / 1800) * 0.05, len: 12, r: 46 }]; },
+    // (la lampe pend juste sous la poutre, dont le bas est à y = 5)
+    lamps(now) { return [{ lx: 236, a: Math.sin(now / 1800) * 0.05, len: 12, top: 6, r: 46 }]; },
     anim(ctx, now) {
-      const { R } = paint(ctx);
       // le prisonnier fait les cent pas, puis s'agrippe aux barreaux
       const T = now % 14000;
       const pos = T < 4000 ? smooth(T / 4000) : T < 7000 ? 1 : T < 11000 ? 1 - smooth((T - 7000) / 4000) : 0;
@@ -895,22 +1044,258 @@ const ROOMS = {
       const x = Math.round(8 + pos * 52), bob = walking && Math.floor(now / 180) % 2 ? 1 : 0;
       const spr = S.characterSprite(PRISONER, { blink: (now % 3700) < 120, t: now });
       ctx.drawImage(spr, x, 48 + bob);
-      if (T > 4300 && T < 6800) for (const hx of [x + 12, x + 32]) { R(hx - 1, 77, 6, 5, OUT); R(hx, 78, 4, 3, '#d19a6a'); }
+      // avant-bras levés vers les barreaux (derrière eux : seules les mains passent devant, voir front)
+      if (T > 4300 && T < 6800) for (const bx of PRISON_GRIP) { shape(paint(ctx).R, [[bx - 1, 81, 4, 9, '#d9c49a']]); ctx.fillStyle = '#b8a47a'; ctx.fillRect(bx + 2, 81, 1, 9); }
     },
     front(ctx, now) {
       const { R } = paint(ctx);
-      // trousseau de clés qui se balance au clou
+      // les mains du prisonnier serrent deux barreaux, de part et d'autre de son visage
+      const T = now % 14000;
+      if (T > 4300 && T < 6800) for (const bx of PRISON_GRIP) { shape(R, [[bx - 1, 78, 4, 4, '#d19a6a']]); R(bx - 1, 81, 4, 1, '#a87448'); R(bx, 78, 1, 3, '#a87448'); }
+      // trousseau de clés qui se balance au clou, pendu à son anneau par un crochet
       const a = Math.sin(now / 900) * 0.3;
-      const kx = Math.round(130 + Math.sin(a) * 6), ky = Math.round(52 + Math.cos(a) * 6);
+      const kx = Math.round(130 + Math.sin(a) * 9), ky = Math.round(47 + Math.cos(a) * 9);
+      for (let k = 1; k <= 6; k++) R(130 + Math.sin(a) * k, 47 + Math.cos(a) * k, 1, 1, '#5a5448');
       R(129, 46, 3, 2, OUT);
       S.disc(ctx, kx, ky, 3, OUT); S.disc(ctx, kx, ky, 2, '#c8a040'); S.disc(ctx, kx, ky, 1, '#4a463e');
       for (const d of [-2, 2]) { R(kx + d, ky + 3, 1, 6, '#c8a040'); R(kx + d, ky + 8, 2, 1, '#c8a040'); }
-      // un courant d'air soulève les coins des avis de recherche
+      // un courant d'air soulève les coins des avis de recherche : le coin corné se replie plus grand
       for (const [i, px, py] of [[0, 302, 65], [1, 338, 66]]) {
-        const lift = Math.sin(now / 240 + i * 2) > 0.55 ? 1 : 0;
-        if (lift) { R(px + 26, py + 22, 5, 5, '#8e8676'); R(px + 25, py + 20, 4, 4, OUT); R(px + 26, py + 21, 3, 3, '#f0dca8'); }
+        if (Math.sin(now / 240 + i * 2) <= 0.55) continue;
+        for (let k = 0; k < 6; k++) { R(px + 24 + k, py + 20 + k, 6 - k, 1, '#c4a46a'); R(px + 24 + k, py + 20 + k, 1, 1, '#8a6a40'); }
+        R(px + 25, py + 19, 5, 1, '#b8985c'); // ombre portée du rabat sur l'affiche
       }
       drawFly(ctx, 200, 48, now, 3);
+    },
+  },
+
+  bateau: {
+    name: 'LE BATEAU À AUBES',
+    windows: [{ x: 16, y: 28, w: 88, h: 50 }, { x: 280, y: 28, w: 88, h: 50 }],
+    render(bg, mid) {
+      const { R, box } = paint(bg);
+      const rnd = seeded(13);
+      // cloisons en lattes peintes en blanc cassé
+      R(0, 0, W, 128, '#e6dcc2');
+      for (let x = 0; x < W; x += 6) { R(x, 12, 1, 76, '#cfc2a4'); R(x + 1, 12, 1, 76, '#f0e8d4'); }
+      for (let i = 0; i < 40; i++) R(rnd() * W, 14 + rnd() * 72, 1, 2 + rnd() * 4, '#d8ccb0');
+      // plafond à poutres, frise dorée, lambrequin découpé en arcades (la dentelle de bois des vapeurs)
+      R(0, 0, W, 10, '#d8ccb0');
+      for (let x = 0; x < W; x += 32) { R(x, 0, 4, 10, '#c4b494'); R(x, 0, 1, 10, '#a89878'); }
+      R(0, 10, W, 2, '#c8a040'); R(0, 10, W, 1, '#f0d070');
+      for (let x = 0; x < W; x++) {
+        const u = ((((x - 16) % 32) + 32) % 32 - 16) / 16, bot = 15 + Math.round(7 * u * u);
+        R(x, 12, 1, bot - 12, '#f4ecd8'); R(x, bot, 1, 1, '#c8a040'); R(x, bot + 1, 1, 1, '#a89060');
+      }
+      for (let x = 16; x < W; x += 32) {
+        R(x - 7, 16, 2, 2, '#b8a888'); R(x + 6, 16, 2, 2, '#b8a888'); // jours ajourés
+        R(x - 1, 22, 3, 4, OUT); R(x, 23, 1, 2, '#e0b040'); // pendeloques
+      }
+      // lambris d'acajou sous une main courante en laiton
+      R(0, 88, W, 3, '#c8a040'); R(0, 88, W, 1, '#f0d070'); R(0, 91, W, 37, '#5a2418');
+      for (let x = 4; x < W; x += 38) {
+        box(x, 96, 30, 26, '#4a1c12'); R(x, 96, 30, 1, '#7a3424'); R(x, 96, 1, 26, '#6a2a1c');
+        R(x + 4, 100, 22, 18, '#5a2418'); R(x + 4, 100, 22, 1, '#3a140c'); R(x + 4, 117, 22, 1, '#7a3424');
+        for (const [dx, dy] of [[2, 2], [27, 2], [2, 23], [27, 23]]) R(x + dx, 96 + dy, 1, 1, '#e0b040');
+      }
+      // pilastres cannelés entre les fenêtres
+      for (const x of [110, 266]) {
+        box(x, 26, 8, 60, '#f0e8d4'); R(x + 2, 29, 1, 54, '#d0c4a8'); R(x + 5, 29, 1, 54, '#d0c4a8'); R(x + 7, 26, 1, 60, '#c8bca0');
+        box(x - 1, 25, 10, 3, '#c8a040'); box(x - 1, 85, 10, 3, '#c8a040');
+      }
+      // barre du navire au-dessus de l'adversaire : poignées cernées, jante, moyeu en laiton
+      const hx = 192, hy = 27, wood = '#8a5a34';
+      const spokes = Array.from({ length: 8 }, (_, k) => [Math.cos((k * TAU) / 8 + 0.2), Math.sin((k * TAU) / 8 + 0.2)]);
+      for (const [co, si] of spokes) for (let t = 9; t <= 13; t++) R(hx + co * t - 1, hy + si * t - 1, 4, 4, OUT);
+      S.disc(bg, hx, hy, 9, OUT); S.disc(bg, hx, hy, 8, wood); S.disc(bg, hx, hy, 6, OUT); S.disc(bg, hx, hy, 5, '#e6dcc2');
+      for (const [co, si] of spokes) for (let t = 1; t <= 13; t++) if (t < 6 || t > 8) R(hx + co * t, hy + si * t, 2, 2, t > 8 ? '#a8703c' : wood);
+      S.disc(bg, hx, hy, 2, OUT); S.disc(bg, hx, hy, 1, '#e0b040');
+      // bouée de sauvetage, rouge et blanche
+      const bx = 128, by = 56;
+      for (let y = -10; y <= 10; y++) for (let x = -10; x <= 10; x++) {
+        const d = Math.hypot(x, y);
+        if (d > 9.6 || d < 3.6) continue;
+        const q = Math.floor(((Math.atan2(y, x) + TAU + Math.PI / 4) % TAU) / (Math.PI / 2)) % 2;
+        R(bx + x, by + y, 1, 1, d > 8.6 || d < 4.6 ? OUT : q ? '#c83a2a' : '#f4ecd8');
+      }
+      R(bx - 1, by - 13, 3, 4, OUT); R(bx, by - 12, 1, 2, '#8a6a40');
+      // tableau : un vapeur sur le fleuve
+      goldFrame(R, 228, 46, 30, 18, (x, y, w, h) => {
+        for (let j = 0; j < h; j++) R(x, y + j, w, 1, j < 12 ? S.mix('#e8b878', '#f8e0b0', j / 12) : S.mix('#7a8a6a', '#5a6a4a', (j - 12) / 6));
+        R(x, y + 11, w, 1, '#4a5a34');
+        R(x + 3, y + 12, 24, 2, '#f4ecd8'); R(x + 5, y + 14, 20, 1, '#a89878'); // coque
+        R(x + 6, y + 9, 18, 3, '#e8dcc0'); for (let k = 0; k < 8; k++) R(x + 7 + k * 2, y + 10, 1, 1, '#7a6a5a'); // ponts
+        R(x + 12, y + 6, 6, 3, '#f4ecd8'); R(x + 13, y + 7, 4, 1, '#5a6a7a'); // timonerie
+        R(x + 8, y + 1, 1, 8, '#2a2420'); R(x + 21, y + 1, 1, 8, '#2a2420'); R(x + 7, y + 1, 3, 1, '#2a2420'); R(x + 20, y + 1, 3, 1, '#2a2420');
+        for (let k = 0; k < 3; k++) { R(x + 4 - k * 2, y - k % 2, 3, 2, '#d8d0c0'); R(x + 17 - k * 2, y + (k % 2), 3, 2, '#d8d0c0'); }
+        S.disc(bg, x + 15, y + 12, 2, '#a02a24'); // tambour de la roue
+        R(x + 1, y + 16, 5, 1, '#9aa47c'); R(x + 20, y + 15, 6, 1, '#9aa47c');
+      });
+      // fenêtres : le dehors est découpé (le fleuve est dessiné par-dessus, dans anim)
+      for (const w of ROOMS.bateau.windows) bg.clearRect(w.x, w.y, w.w, w.h);
+      const M = paint(mid);
+      for (const w of ROOMS.bateau.windows) {
+        M.box(w.x - 4, w.y - 4, w.w + 8, 3, '#f0e8d4'); M.R(w.x - 4, w.y - 4, w.w + 8, 1, '#c8a040');
+        M.box(w.x - 4, w.y - 1, 3, w.h + 2, '#f0e8d4'); M.box(w.x + w.w + 1, w.y - 1, 3, w.h + 2, '#f0e8d4');
+        M.box(w.x - 6, w.y + w.h + 1, w.w + 12, 3, '#c8a040'); M.R(w.x - 6, w.y + w.h + 1, w.w + 12, 1, '#f0d070');
+        M.box(w.x + w.w / 2 - 1, w.y, 2, w.h, '#f0e8d4'); M.box(w.x, w.y + 13, w.w, 2, '#f0e8d4');
+      }
+    },
+    lamps(now) { return BOAT_LAMPS.map((cx, i) => ({ x: cx + boatSwing(now, i), y: 22, r: 42 })); },
+    // roulis du vapeur : très lent, un pixel au plus
+    sway(now) { return Math.round(Math.sin(now / 1500) * 1.2); },
+    anim(ctx, now, room) {
+      const dark = room?.env.id === 'nuit' || room?.env.id === 'orage';
+      ROOMS.bateau.windows.forEach((w, i) => riverView(ctx, w, i, now, i === 1, dark));
+      BOAT_LAMPS.forEach((cx, i) => boatLamp(ctx, cx, boatSwing(now, i)));
+    },
+    lit(ctx, now) { BOAT_LAMPS.forEach((cx, i) => boatFlames(ctx, cx + boatSwing(now, i), now, i)); },
+    front(ctx, now) {
+      // reflets de l'eau qui dansent au plafond
+      ctx.fillStyle = 'rgba(255,250,225,0.22)';
+      for (let k = 0; k < 9; k++) {
+        const x = 18 + k * 44 + Math.sin(now / 700 + k) * 6, y = 2 + (k % 3) * 3 + Math.sin(now / 480 + k * 2);
+        ctx.fillRect(Math.round(x), Math.round(y), 4 + Math.round(Math.sin(now / 300 + k) * 2), 1);
+      }
+    },
+  },
+
+  hotel: {
+    name: 'LE GRAND HÔTEL',
+    windows: [{ x: 30, y: 26, w: 52, h: 56 }],
+    render(bg, mid) {
+      const { R, box } = paint(bg);
+      // papier peint damassé bordeaux
+      R(0, 0, W, 128, '#5e1a22');
+      for (let y = 16, row = 0; y < 88; y += 11, row++) for (let x = (row % 2) * 8 - 8; x < W; x += 16) {
+        const cx = x + 8, cy = y + 5;
+        R(cx, cy - 4, 1, 9, '#7a2a32'); R(cx - 1, cy - 2, 3, 5, '#7a2a32'); R(cx - 2, cy - 1, 5, 3, '#7a2a32'); R(cx - 3, cy, 7, 1, '#7a2a32');
+        R(cx, cy, 1, 1, '#a8743a');
+      }
+      // plafond, corniche dorée à oves et denticules
+      R(0, 0, W, 8, '#efe4c8'); for (let x = 0; x < W; x += 48) R(x, 0, 1, 8, '#d8c8a4');
+      R(0, 8, W, 5, '#c8a040'); R(0, 8, W, 1, '#f0d070'); R(0, 12, W, 1, '#8a6a20');
+      for (let x = 1; x < W; x += 4) { R(x, 10, 2, 2, '#8a6a20'); R(x, 10, 1, 1, '#f0d070'); }
+      R(0, 13, W, 3, '#3a0e14'); for (let x = 0; x < W; x += 3) R(x, 13, 2, 2, '#e8dcc0');
+      // cimaise dorée et lambris de noyer
+      R(0, 88, W, 3, '#c8a040'); R(0, 88, W, 1, '#f0d070'); R(0, 91, W, 37, '#3a2216');
+      for (let x = 4; x < W; x += 38) {
+        box(x, 96, 30, 26, '#4a2c1c'); R(x, 96, 30, 1, '#6a4028');
+        R(x + 3, 99, 24, 1, '#c8a040'); R(x + 3, 118, 24, 1, '#8a6a20'); R(x + 3, 99, 1, 20, '#c8a040'); R(x + 26, 99, 1, 20, '#8a6a20');
+      }
+      // portrait du propriétaire
+      goldFrame(R, 106, 24, 28, 30, (x, y, w, h) => {
+        for (let j = 0; j < h; j++) R(x, y + j, w, 1, S.mix('#3a4a34', '#1e2a1e', j / h));
+        R(x + 6, y + 20, 16, 10, '#1a1a22'); R(x + 11, y + 19, 6, 4, '#f4ecd8'); R(x + 13, y + 20, 2, 5, '#9a2a1c');
+        S.disc(bg, x + 14, y + 12, 5, '#e0b090'); R(x + 9, y + 6, 10, 3, '#3a2a1a'); R(x + 9, y + 9, 2, 4, '#3a2a1a');
+        R(x + 11, y + 15, 7, 1, '#3a2a1a'); R(x + 12, y + 11, 1, 1, OUT); R(x + 16, y + 11, 1, 1, OUT);
+      });
+      // piano droit en laque noire et son candélabre
+      box(96, 80, 46, 48, '#2a1a1e'); R(96, 80, 46, 2, '#4a3438'); R(96, 80, 1, 48, '#3e2a2e');
+      R(100, 86, 38, 10, '#1e1216'); R(100, 86, 38, 1, '#c8a040');
+      box(108, 85, 9, 9, '#f4ecd8'); box(119, 85, 9, 9, '#f4ecd8');
+      for (let k = 0; k < 4; k++) { R(109, 87 + k * 2, 7, 1, '#8a8070'); R(120, 87 + k * 2, 7, 1, '#8a8070'); }
+      R(98, 99, 42, 6, OUT); R(99, 100, 40, 4, '#f4ecd8');
+      for (let k = 0; k < 13; k++) R(100 + k * 3, 100, 1, 4, '#c8bca8');
+      for (let k = 0; k < 13; k++) if (k % 7 !== 2 && k % 7 !== 6) R(102 + k * 3, 100, 2, 2, OUT);
+      R(100, 108, 38, 1, '#c8a040');
+      box(118, 70, 3, 10, '#c8a040'); box(110, 70, 20, 1, '#c8a040'); box(114, 78, 12, 2, '#c8a040');
+      // lustre en cristal : chaîne, couronnes, bobèches, pampilles et guirlande de perles
+      const cx = 192;
+      for (let y = 0; y < 14; y += 2) { R(cx - 1, y, 3, 2, OUT); R(cx, y, 1, 1, '#e0b040'); }
+      box(cx - 1, 14, 3, 18, '#c8a040');
+      box(cx - 9, 15, 19, 2, '#c8a040'); box(cx - 20, 24, 41, 2, '#c8a040'); R(cx - 20, 24, 41, 1, '#f0d070');
+      box(cx - 7, 26, 15, 3, '#c8a040'); box(cx - 4, 29, 9, 2, '#c8a040'); box(cx - 1, 31, 3, 3, '#e0b040');
+      for (let x = cx - 20; x <= cx + 20; x += 2) R(x, 27 + Math.round(5 * (1 - ((x - cx) / 20) ** 2)), 1, 1, '#c8e0ec');
+      for (const [x, top, len] of HOTEL_DROPS) {
+        for (let y = top; y < top + len; y += 2) R(x, y, 1, 1, '#d8ecf4');
+        R(x - 1, top + len, 3, 3, OUT); R(x, top + len, 1, 2, '#a8d8f0');
+      }
+      // bougies (lustre et candélabre) : les flammes sont animées
+      for (const [x, top] of HOTEL_CANDLES) { const h = top < 15 ? 5 : 6; R(x - 1, top - 1, 4, h + 2, OUT); R(x, top, 2, h, '#f4ecd8'); R(x + 1, top, 1, h, '#d8d0c0'); R(x - 1, top + h, 4, 1, '#c8a040'); }
+      // miroir doré coiffé d'une coquille
+      S.disc(bg, 274, 19, 7, OUT); S.disc(bg, 274, 19, 6, '#c8a040'); R(274, 13, 1, 6, '#8a6a20'); R(271, 15, 1, 4, '#8a6a20'); R(277, 15, 1, 4, '#8a6a20');
+      goldFrame(R, 252, 22, 44, 52, (x, y, w, h) => {
+        for (let j = 0; j < h; j++) R(x, y + j, w, 1, S.mix('#8a9aa2', '#c4d0d4', j / h));
+        for (let j = 0; j < h; j++) { R(x + 4 + Math.floor(j * 0.5), y + j, 2, 1, '#d8e4e8'); R(x + 11 + Math.floor(j * 0.5), y + j, 1, 1, '#d0dce0'); }
+        for (let k = 0; k < 6; k++) R(x + 2 + ((k * 17) % (w - 4)), y + h - 3 - ((k * 5) % 6), 2, 1, '#7a8a90'); // tain piqué
+      });
+      // étagère de bouteilles de champagne
+      box(304, 50, 76, 3, '#4a2c1c'); R(304, 50, 76, 1, '#6a4028');
+      for (const x of [308, 372]) { R(x - 1, 53, 4, 5, OUT); R(x, 53, 2, 4, '#4a2c1c'); }
+      for (let k = 0; k < 6; k++) {
+        const x = 308 + k * 12;
+        shape(R, [[x, 40, 6, 10, '#1e3a22'], [x + 1, 38, 4, 2, '#1e3a22'], [x + 2, 33, 2, 5, '#d8b040']]);
+        R(x + 1, 41, 1, 7, '#3a6a40'); R(x + 1, 44, 4, 3, '#f4ecd8'); R(x + 2, 45, 2, 1, '#c8a040'); R(x + 1, 38, 4, 1, '#d8b040');
+      }
+      // desserte : pyramide de coupes sur un plateau d'argent, seau à glace
+      box(304, 87, 76, 3, '#6a4028'); R(304, 87, 76, 1, '#8a5a34');
+      box(310, 85, 38, 2, '#c8ccd0');
+      for (const [n, b] of COUPE_ROWS) for (let k = 0; k < n; k++) {
+        const x = 329 - n * 4 + k * 8;
+        shape(R, [[x, b - 6, 7, 2, '#c8dce4'], [x + 3, b - 4, 1, 3, '#c8dce4'], [x + 1, b - 1, 5, 1, '#c8dce4']]);
+        R(x + 1, b - 6, 5, 1, '#f0d070');
+      }
+      shape(R, [[360, 62, 4, 14, '#1e3a22']]); R(360, 62, 4, 4, '#d8b040');
+      shape(R, [[356, 76, 12, 10, '#b8c0c4'], [355, 75, 14, 2, '#d8e0e4']]);
+      R(357, 77, 1, 8, '#e8f0f4'); R(366, 77, 1, 8, '#8a9094'); R(358, 73, 3, 2, '#e8f4f8'); R(364, 74, 2, 1, '#e8f4f8');
+      // fenêtre
+      const w = ROOMS.hotel.windows[0];
+      box(w.x - 3, w.y - 3, w.w + 6, w.h + 6, '#e8dcc0');
+      bg.clearRect(w.x, w.y, w.w, w.h);
+      const M = paint(mid);
+      M.box(w.x + w.w / 2 - 1, w.y, 2, w.h, '#e8dcc0'); M.box(w.x, w.y + 18, w.w, 2, '#e8dcc0'); M.box(w.x, w.y + 37, w.w, 2, '#e8dcc0');
+      M.box(w.x - 6, w.y + w.h + 2, w.w + 12, 3, '#e8dcc0');
+      // rideaux de velours rouge, retenus par des embrasses à glands
+      M.box(12, 15, 88, 2, '#c8a040'); M.box(9, 14, 4, 4, '#e0b040'); M.box(99, 14, 4, 4, '#e0b040');
+      for (const side of [0, 1]) {
+        for (let y = 18; y < 128; y++) {
+          const ww = y < 60 ? Math.round(18 - 11 * Math.sin((Math.min(1, (y - 18) / 42) * Math.PI) / 2)) : 7 + Math.round((y - 60) * 0.12);
+          const x = side ? 96 - ww : 16;
+          M.R(x - 1, y, ww + 2, 1, OUT); M.R(x, y, ww, 1, '#8a1a22');
+          M.R(x + Math.round(ww * 0.15), y, 1, 1, '#b83440'); M.R(x + Math.round(ww * 0.4), y, 1, 1, '#5a0e14'); M.R(x + Math.round(ww * 0.75), y, 1, 1, '#5a0e14');
+        }
+        const tx = side ? 85 : 18;
+        M.box(tx, 59, 9, 3, '#e0b040'); M.box(tx + 3, 62, 3, 6, '#c8a040');
+      }
+      // lambrequin festonné à franges dorées
+      M.box(12, 17, 88, 5, '#8a1a22');
+      for (let x = 12; x < 100; x++) {
+        const u = ((x - 12) % 22) / 22, bot = 22 + Math.round(5 * Math.sin(Math.PI * u));
+        M.R(x, 22, 1, bot - 22, '#8a1a22'); M.R(x, 22, 1, 1, '#b83440'); M.R(x, bot, 1, 1 + (x % 2), '#e0b040');
+      }
+    },
+    lamps() { return [{ x: 192, y: 20, r: 58 }, { x: 120, y: 62, r: 26 }]; },
+    anim(ctx, now) {
+      const { R } = paint(ctx);
+      HOTEL_CANDLES.forEach(([x, top], k) => candleTip(ctx, x, top, now, k));
+      // les pampilles scintillent
+      const f = Math.floor(now / 150);
+      HOTEL_DROPS.forEach(([x, top, len], k) => {
+        if (hash(f * 13 + k) < 0.14) { R(x, top + len - 1, 1, 3, '#ffffff'); R(x - 1, top + len, 3, 1, '#ffffff'); }
+      });
+      // le bouchon saute, la mousse déborde, puis la bouteille est de nouveau bouchée
+      const T = now % POP;
+      const cork = (x, y) => { R(x - 1, y - 1, 4, 5, OUT); R(x, y, 2, 3, '#c8a070'); R(x, y, 2, 1, '#e0c090'); };
+      if (T < 900) cork(361 - T * 0.035, 59 - T * 0.12 + T * T * 0.00014);
+      else if (T > 4000) cork(361, 59);
+      if (T < 2400) {
+        const k = 1 - T / 2400, h = Math.round(6 * k), d = Math.round(10 * (1 - k));
+        R(360, 62 - h, 4, h, '#fdf6e0'); R(359, 62, 1, d, '#fdf6e0'); R(364, 62, 1, Math.round(d * 0.7), '#fdf6e0');
+        if (T < 500) for (let j = 0; j < 5; j++) R(358 + j * 2 - (j % 2) * T * 0.01, 58 - T * 0.03 * (1 + j % 3), 1, 1, '#fdf6e0');
+      }
+    },
+    lit(ctx, now) { HOTEL_CANDLES.forEach(([x, top], k) => candleTip(ctx, x, top, now, k)); },
+    front(ctx, now) {
+      // un éclat de lumière glisse en biais sur le miroir
+      const T = now % 7000;
+      if (T >= 900) return;
+      const x0 = 252, y0 = 22, mw = 44, mh = 52, xg = x0 - 30 + (T / 900) * (mw + 40);
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      for (let j = 0; j < mh; j++) {
+        const a = Math.max(x0, Math.round(xg + j * 0.5)), b = Math.min(x0 + mw, Math.round(xg + j * 0.5) + 4);
+        if (b > a) ctx.fillRect(a, y0 + j, b - a, 1);
+      }
     },
   },
 };
@@ -920,34 +1305,212 @@ export const ROOM_NAMES = Object.fromEntries(ROOM_IDS.map((id) => [id, ROOMS[id]
 // force : salle imposée par l'hôte (lobby).
 export const roomIdFor = (seed, force = null) => (ROOMS[force] ? force : ROOM_IDS[Math.floor(rng((seed ^ 0x9e3779b9) >>> 0)() * ROOM_IDS.length)]);
 
+// ------------------------------------------------------------ salles du mode histoire
+// Jamais tirées au sort (ni proposées dans le lobby) : imposées par le décor d'un épisode (story/decos : deco.room).
+// felt : couleur du tapis de la table (scene.js), backdrop(ctx, now, room) : décor en plein air dessiné derrière.
+const FELT_RED = { '#2a4a30': '#4a1c1c', '#33583a': '#5a2422', '#3a6040': '#6a2c26', '#24402a': '#3e1616', '#1a2a1c': '#260c0c' };
+
+// Brasero de fer forgé sur trépied (vasque en x, bord en y) : la flamme est animée à part (anim)
+function brazier(R, x, y) {
+  shape(R, [[x - 2, y + 6, 2, 34, '#3a3438'], [x + 10, y + 6, 2, 34, '#3a3438'], [x + 4, y + 8, 2, 30, '#2a2428']]);
+  shape(R, [[x - 6, y, 22, 4, '#4a4248'], [x - 4, y + 4, 18, 3, '#3a3438']]);
+  R(x - 6, y, 22, 1, '#7a6e74'); R(x - 4, y + 6, 18, 1, '#2a2428');
+  for (let k = 0; k < 5; k++) R(x - 4 + k * 4, y + 1, 2, 2, '#c8501c'); // braises au bord de la vasque
+}
+function brazierFlame(ctx, x, y, now, ph) {
+  const { R } = paint(ctx);
+  for (let i = 0; i < 9; i++) {
+    const k = hash(i * 13 + ph);
+    const h = Math.round((8 + k * 9) * (0.6 + 0.4 * Math.abs(Math.sin(now / (110 + k * 70) + k * 7))) * (1 - Math.abs(i - 4) / 6));
+    if (h < 2) continue;
+    const fx = x - 4 + i * 2;
+    R(fx, y - h, 2, h, '#e8501c');
+    R(fx, y - Math.round(h * 0.66), 2, Math.round(h * 0.66), '#f89a2a');
+    R(fx, y - Math.round(h * 0.33), 2, Math.round(h * 0.33), '#fde870');
+  }
+  // étincelles qui s'envolent
+  for (let i = 0; i < 3; i++) {
+    const age = (now + i * 430 + ph * 97) % 1300;
+    R(x + 1 + Math.round(Math.sin(age / 160 + i) * 4), y - 14 - Math.round(age * 0.04), 1, 1, age < 800 ? '#fde870' : '#e8501c');
+  }
+}
+
+const STORY_ROOMS = {
+  // Le Buckshot Saloon de Rosa, à Dusty Gulch : le saloon, avec son enseigne sous le crâne de bœuf
+  buckshot: {
+    ...ROOMS.saloon,
+    name: 'LE BUCKSHOT SALOON',
+    render(bg, mid) {
+      ROOMS.saloon.render(bg, mid);
+      const { R, box } = paint(bg);
+      // planche peinte en rouge, filets et lettres dorés, deux clous
+      box(150, 30, 84, 13, '#8a2418');
+      R(150, 30, 84, 1, '#b8402a'); R(150, 42, 84, 1, '#5a140c');
+      R(152, 32, 80, 1, '#c89838'); R(152, 40, 80, 1, '#c89838');
+      for (const nx of [153, 230]) { R(nx, 35, 2, 2, OUT); R(nx, 35, 1, 1, '#d8d0c0'); }
+    },
+    // le nom, redessiné à chaque image (canvasText : net dès que la police est chargée)
+    anim(ctx, now, room) {
+      ROOMS.saloon.anim(ctx, now, room);
+      canvasText(ctx, 'BUCKSHOT', 192, 33, { color: '#f8d070', shadow: '#4a1008' });
+    },
+  },
+  // La Bouche de l'Enfer : la table du Diable dressée au bord du cratère, entre deux braseros ; derrière, les
+  // parois de basalte et la lueur du filon qui monte du gouffre (décor « bouche » du mode histoire)
+  bouche: {
+    name: 'LA BOUCHE DE L’ENFER',
+    windows: [],
+    felt: FELT_RED,
+    backdrop(ctx, now, room) {
+      if (!drawSet(ctx, 'bouche', 232, room.amb, now)) { ctx.fillStyle = '#2a1a1c'; ctx.fillRect(0, 0, W, H); }
+    },
+    render(bg) {
+      const { R } = paint(bg);
+      // aiguilles de basalte qui encadrent la table
+      for (const [x0, dir] of [[0, 1], [W, -1]]) {
+        for (let k = 0; k < 34; k++) {
+          const x = x0 + dir * k - (dir < 0 ? 1 : 0);
+          const top = Math.round(40 + k * k * 0.07 + Math.sin(k * 1.7) * 2);
+          R(x, top, 1, 140 - top, OUT);
+          if (k < 33) R(x, top + 1, 1, 139 - top, k < 3 ? '#2a2026' : (k + Math.floor(top / 5)) % 7 ? '#3a2e32' : '#4a3a3c');
+        }
+      }
+      brazier(R, 46, 92);
+      brazier(R, 328, 92);
+    },
+    lamps() { return [{ x: 51, y: 84, r: 44 }, { x: 333, y: 84, r: 44 }]; },
+    anim(ctx, now) {
+      brazierFlame(ctx, 51, 92, now, 1);
+      brazierFlame(ctx, 333, 92, now, 2);
+    },
+    // les flammes, redessinées hors teinte (elles éclairent, l'ambiance ne les assombrit pas)
+    lit(ctx, now) {
+      brazierFlame(ctx, 51, 92, now, 1);
+      brazierFlame(ctx, 333, 92, now, 2);
+    },
+  },
+};
+export const roomFelt = (room) => room?.def.felt || null;
+
 // ------------------------------------------------------------ dehors
 const OUTSIDE = new Map();
-function outsideArt(key, w, env, train) {
-  let c = OUTSIDE.get(key);
-  if (c) return c;
-  c = S.makeCanvas(train ? 512 : w.w, w.h);
-  const opts = desertOpts(env, { sunX: 0.7, sunY: 0.3 });
-  if (train) { opts.skyDeco = () => {}; opts.cacti = false; }
-  S.drawDesert(c.getContext('2d'), 0, 0, c.width, w.h, opts);
+function cacheOutside(key, c) {
   if (OUTSIDE.size > 24) { for (const old of OUTSIDE.values()) S.freeCanvas(old); OUTSIDE.clear(); }
   OUTSIDE.set(key, c);
   return c;
 }
+function outsideArt(key, w, env) {
+  const c = OUTSIDE.get(key);
+  if (c) return c;
+  const cv = S.makeCanvas(w.w, w.h);
+  S.drawDesert(cv.getContext('2d'), 0, 0, w.w, w.h, desertOpts(env, { sunX: 0.7, sunY: 0.3 }));
+  return cacheOutside(key, cv);
+}
+
+// Wagon-bar : le ciel (soleil, lune, étoiles) reste fixe et le paysage défile devant, sans le recouvrir.
+// Ciel : mêmes bandes tramées que S.drawDesert, puis son décor.
+const SKY_NOON = ['#d4ae7e', '#dcb98a', '#e3c697', '#ebd2a5', '#f0dcb0'];
+function trainSky(key, w, env, horizon) {
+  const c = OUTSIDE.get(key);
+  if (c) return c;
+  const cv = S.makeCanvas(w.w, horizon), x = cv.getContext('2d');
+  const cols = env.sky || SKY_NOON, n = cols.length;
+  for (let i = 0; i < n; i++) {
+    const ya = Math.round((i * horizon) / n), yb = Math.round(((i + 1) * horizon) / n);
+    x.fillStyle = cols[i]; x.fillRect(0, ya, w.w, yb - ya);
+    if (i > 0) {
+      x.fillStyle = cols[i - 1];
+      for (let px = 0; px < w.w; px += 2) x.fillRect(px, ya, 1, 1);
+      for (let px = 1; px < w.w; px += 4) x.fillRect(px, ya + 1, 1, 1);
+    }
+  }
+  skyDeco(env, 0.75, 0.3)(x, 0, 0, w.w, horizon);
+  return cacheOutside(key, cv);
+}
+// Paysage : mesas et sol de S.drawDesert, ciel rendu transparent (dessiné en magenta puis effacé, une fois),
+// suivi de son reflet en miroir : la bande de 1024 px boucle sans raccord.
+function trainLand(key, w, env) {
+  const c = OUTSIDE.get(key);
+  if (c) return c;
+  const half = 512;
+  const src = S.makeCanvas(half, w.h, true), sx = src.getContext('2d', { willReadFrequently: true });
+  S.drawDesert(sx, 0, 0, half, w.h, { ...desertOpts(env), sky: ['#ff00ff'], skyDeco: () => {}, cacti: false });
+  const img = sx.getImageData(0, 0, half, w.h), d = img.data;
+  for (let i = 0; i < d.length; i += 4) if (d[i] > 250 && d[i + 1] < 5 && d[i + 2] > 250) d[i + 3] = 0;
+  sx.putImageData(img, 0, 0);
+  const cv = S.makeCanvas(half * 2, w.h), x = cv.getContext('2d');
+  x.drawImage(src, 0, 0);
+  x.setTransform(-1, 0, 0, 1, half * 2, 0);
+  x.drawImage(src, 0, 0);
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  S.freeCanvas(src);
+  return cacheOutside(key, cv);
+}
+// Vitesse de défilement (px/ms) d'une ligne du paysage : les mesas au loin, puis le sol de plus en plus vite
+// à mesure qu'il se rapproche (perspective : vitesse proportionnelle à la distance sous l'horizon)
+const LAND_FAR = 0.012, LAND_NEAR = 0.14;
+const landSpeed = (row, rows) => LAND_FAR + ((LAND_NEAR - LAND_FAR) * row) / Math.max(1, rows - 1);
+
+// Virevoltant vu par la fenêtre, teint comme le paysage de l'ambiance (4 images en cache par teinte)
+const TUMBLE = new Map();
+function tumbleTinted(ctx, x, y, now, tint) {
+  if (!tint) { S.tumbleweed(ctx, x, y, now); return; }
+  const f = ((Math.floor(now / 120) % 4) + 4) % 4, key = tint + f;
+  let c = TUMBLE.get(key);
+  if (!c) {
+    const raw = S.makeCanvas(13, 13);
+    S.tumbleweed(raw.getContext('2d'), 6, 6, f * 120);
+    c = S.tintCanvas(raw, tint);
+    S.freeCanvas(raw);
+    if (TUMBLE.size >= 24) { for (const old of TUMBLE.values()) S.freeCanvas(old); TUMBLE.clear(); }
+    TUMBLE.set(key, c);
+  }
+  ctx.drawImage(c, Math.round(x) - 6, Math.round(y) - 6);
+}
+
+// Couleur multipliée par une teinte (comme S.tintCanvas), pour les détails du dehors dessinés à la main
+function multiply(hex, tint) {
+  if (!tint) return hex;
+  const a = parseInt(hex.slice(1), 16), b = parseInt(tint.slice(1), 16);
+  return '#' + [16, 8, 0].map((s) => Math.round((((a >> s) & 255) * ((b >> s) & 255)) / 255).toString(16).padStart(2, '0')).join('');
+}
+
+// Couleurs fixes de l'éclairage (pas de chaîne recomposée à chaque image)
+const BEAM = { midi: 'rgba(255,236,190,0.05)', aube: 'rgba(255,210,210,0.05)', crepuscule: 'rgba(255,170,100,0.08)', poussiere: 'rgba(255,210,150,0.06)', neige: 'rgba(230,240,255,0.05)' };
+const DAY_SKY = new Set(['midi', 'aube', 'crepuscule']);
+// Halo d'une lampe (rayon r, tremblement d de -1 à 1 pixel, plus fort la nuit), gardé sous une clé numérique :
+// haloSprite recompose sa clé (une chaîne) à chaque appel. Un halo libéré par le cache d'env.js est refait.
+const HALOS = new Map();
+function lampHalo(r, d, night) {
+  const key = (r * 4 + d + 1) * 2 + (night ? 1 : 0);
+  let h = HALOS.get(key);
+  if (!h || !h.width) {
+    const k = night ? 1.8 : 1;
+    h = haloSprite([[r, 0.04], [r * 0.65, 0.05], [r * 0.35, 0.06]].map(([rr, a]) => [Math.round(rr) + d, a * k]), '255,170,70');
+    HALOS.set(key, h);
+  }
+  return h;
+}
+const STAR_TRAIL = [0, 1, 2, 3, 4, 5].map((j) => `rgba(255,255,240,${(1 - j / 6).toFixed(3)})`);
 
 export class Room {
-  constructor(seed, force = null) {
+  // deco : décor d'un épisode du mode histoire (hooks.story.deco : { room, env }), la même salle pour les deux joueurs
+  constructor(seed, force = null, deco = null) {
     this.seed = seed;
     const R = rng((seed ^ 0x9e3779b9) >>> 0);
     const drawn = ROOM_IDS[Math.floor(R() * ROOM_IDS.length)];
-    this.id = ROOMS[force] ? force : drawn;
-    this.def = ROOMS[this.id];
+    this.id = STORY_ROOMS[deco?.room] ? deco.room : ROOMS[force] ? force : drawn;
+    this.def = ROOMS[this.id] || STORY_ROOMS[this.id];
     this.band = MARIACHI[Math.floor(R() * MARIACHI.length)];
-    this.env = pickEnv(seed, 'roulette');
+    this.env = ENVS[deco?.env] ? { id: deco.env, ...ENVS[deco.env] } : pickEnv(seed, 'roulette');
     this.amb = new Ambience(this.env);
     this.tint = ROOM_TINT[this.env.id] || null;
+    // buissons qui défilent derrière les vitres du train : teints comme le paysage de l'ambiance
+    this.bushCols = ['#6a7a3a', '#8a6a4a', '#7a8a46'].map((c) => multiply(c, this.env.tint));
     this.art = Room.art(this.id);
     this.layer = S.makeCanvas(W, H);
     this.tinted = null;
+    if (this.def.backdrop) loadSets().catch((e) => console.error(e));
   }
 
   static art(id) {
@@ -955,7 +1518,7 @@ export class Room {
     let a = Room.cache.get(id);
     if (!a) {
       a = { bg: S.makeCanvas(W, H), mid: S.makeCanvas(W, H) };
-      ROOMS[id].render(a.bg.getContext('2d'), a.mid.getContext('2d'));
+      (ROOMS[id] || STORY_ROOMS[id]).render(a.bg.getContext('2d'), a.mid.getContext('2d'));
       Room.cache.set(id, a);
     }
     return a;
@@ -968,6 +1531,7 @@ export class Room {
   // Tout ce qui est derrière l'adversaire : dehors, décor teinté, éléments animés, lumières.
   drawBack(ctx, now) {
     const sway = this.sway(now);
+    this.def.backdrop?.(ctx, now, this); // en plein air (mode histoire) : le décor de l'aventure derrière la salle
     this.def.windows.forEach((w, i) => {
       ctx.save();
       ctx.beginPath();
@@ -980,6 +1544,8 @@ export class Room {
     const L = this.layer, l = L.getContext('2d');
     l.setTransform(1, 0, 0, 1, 0, sway);
     l.clearRect(0, -2, W, H + 4);
+    // quand le wagon descend, la première ligne du plafond s'étire sur le haut de l'écran (sinon : bande vide)
+    if (sway > 0) l.drawImage(this.art.bg, 0, 0, W, 1, 0, -sway, W, sway);
     l.drawImage(this.art.bg, 0, 0);
     this.def.anim?.(l, now, this);
     const lamps = this.lampPos(l, now);
@@ -991,14 +1557,20 @@ export class Room {
     if (tint) {
       this.tinted = S.tintCanvas(L, tint, this.tinted || S.makeCanvas(W, H));
       ctx.drawImage(this.tinted, 0, 0);
+      // les flammes gardent leur éclat, quelle que soit l'ambiance
+      ctx.save();
+      ctx.translate(0, sway);
+      for (const p of lamps) if (p.glass != null) lampGlass(ctx, p.x, p.glass);
+      this.def.lit?.(ctx, now, this);
+      ctx.restore();
     } else ctx.drawImage(L, 0, 0);
     // rayons de lumière par les fenêtres, puis halo des lampes (plus fort la nuit)
     const night = this.env.id === 'nuit' || this.env.id === 'orage';
-    const beam = { midi: '255,236,190,0.05', aube: '255,210,210,0.05', crepuscule: '255,170,100,0.08', poussiere: '255,210,150,0.06', neige: '230,240,255,0.05' }[this.env.id];
+    const beam = BEAM[this.env.id];
     ctx.globalCompositeOperation = 'lighter';
-    if (beam && !this.def.windows[0].train) {
+    if (beam && this.def.windows.length && !this.def.windows[0].train) {
       for (const w of this.def.windows) {
-        ctx.fillStyle = `rgba(${beam})`;
+        ctx.fillStyle = beam;
         ctx.beginPath();
         ctx.moveTo(w.x, w.y + w.h); ctx.lineTo(w.x + w.w, w.y + w.h);
         const dx = w.x > W / 2 ? -70 : 70;
@@ -1006,10 +1578,9 @@ export class Room {
         ctx.closePath(); ctx.fill();
       }
     }
-    const k = night ? 1.8 : 1;
     for (const p of lamps) {
-      const fl = Math.sin(now / 90 + p.x) * 0.5 + Math.sin(now / 37) * 0.5;
-      const h = haloSprite([[p.r, 0.04], [p.r * 0.65, 0.05], [p.r * 0.35, 0.06]].map(([r, a]) => [Math.round(r + fl), a * k]), '255,170,70');
+      const fl = Math.round(Math.sin(now / 90 + p.x) * 0.5 + Math.sin(now / 37) * 0.5);
+      const h = lampHalo(p.r, fl, night);
       ctx.drawImage(h, Math.round(p.x) - h.r, Math.round(p.y + sway) - h.r);
     }
     ctx.globalCompositeOperation = 'source-over';
@@ -1020,7 +1591,7 @@ export class Room {
     return this.def.lamps(now, this).map((p) => {
       if (p.lx == null) return p;
       const q = drawLamp(l, p.lx, p.top ?? 7, p.len, p.a);
-      return { x: q.x, y: q.y, r: p.r };
+      return { x: q.x, y: q.y, r: p.r, glass: q.glass };
     });
   }
 
@@ -1028,16 +1599,25 @@ export class Room {
     const env = this.env;
     const horizon = w.y + Math.round(w.h * 0.6);
     if (w.train) {
-      // le paysage défile : désert lointain lentement, buissons et poteaux télégraphiques à toute vitesse
-      const art = outsideArt(`${this.id}${env.id}t${w.h}`, w, env, true);
-      const off = Math.floor((now * 0.012 + i * 200) % art.width);
-      ctx.drawImage(art, w.x - off, w.y); ctx.drawImage(art, w.x - off + art.width, w.y);
-      if (env.moon || env.sky == null || env.sun) skyDeco(env, 0.75, 0.3)(ctx, w.x, w.y, w.w, horizon);
+      // le ciel reste fixe ; devant, le paysage défile : mesas au loin lentement, le sol de plus en plus vite
+      // vers le bas (une ligne à la fois), buissons à la vitesse de leur ligne, poteaux télégraphiques au ras de la vitre
+      const hz = horizon - w.y, rows = w.h - hz;
+      ctx.drawImage(trainSky(`${env.id}s${w.w}x${w.h}`, w, env, hz), w.x, w.y);
+      const land = trainLand(`${env.id}t${w.h}`, w, env), T = land.width;
+      const strip = (y, h, speed) => {
+        const off = Math.floor((now * speed + i * 200) % T);
+        ctx.drawImage(land, 0, y, T, h, w.x - off, w.y + y, T, h);
+        if (T - off < w.w) ctx.drawImage(land, 0, y, T, h, w.x - off + T, w.y + y, T, h);
+      };
+      strip(0, hz + 1, LAND_FAR);
+      for (let r = 1; r < rows; r++) strip(hz + r, 1, landSpeed(r, rows));
       const { R } = paint(ctx);
+      const [bushA, bushB, bushL] = this.bushCols;
       for (let k = 0; k < 14; k++) {
-        const x = w.x + ((((k * 53) - now * 0.09) % (w.w + 40)) + w.w + 40) % (w.w + 40) - 20;
-        const y = horizon + 6 + (k % 3) * 5;
-        R(x, y, 4 + (k % 3) * 2, 2, k % 2 ? '#6a7a3a' : '#8a6a4a'); R(x + 1, y - 1, 2, 1, '#7a8a46');
+        const r = 6 + (k % 3) * 5, span = w.w + 40;
+        const x = w.x + ((((k * 53) - now * landSpeed(r, rows)) % span) + span) % span - 20;
+        const y = horizon + r;
+        R(x, y, 4 + (k % 3) * 2, 2, k % 2 ? bushA : bushB); R(x + 1, y - 1, 2, 1, bushL);
       }
       const span = 150, px = ((-now * 0.32) % span + span) % span;
       for (let x = w.x + px - span; x < w.x + w.w + span; x += span) {
@@ -1047,10 +1627,12 @@ export class Room {
       // panaches de fumée de la locomotive
       for (let k = 0; k < 3; k++) {
         const ph = ((now / 1700) + k / 3 + i * 0.5) % 1;
-        S.disc(ctx, Math.round(w.x + w.w + 10 - ph * (w.w + 30)), Math.round(w.y + 4 + Math.sin(ph * 5 + k) * 2), Math.round(4 + ph * 6), `rgba(240,236,228,${0.55 * (1 - ph)})`);
+        ctx.globalAlpha = 0.55 * (1 - ph);
+        S.disc(ctx, Math.round(w.x + w.w + 10 - ph * (w.w + 30)), Math.round(w.y + 4 + Math.sin(ph * 5 + k) * 2), Math.round(4 + ph * 6), '#f0ece4');
       }
+      ctx.globalAlpha = 1;
     } else {
-      ctx.drawImage(outsideArt(`${this.id}${env.id}${i}`, w, env, false), w.x, w.y);
+      ctx.drawImage(outsideArt(`${this.id}${env.id}${i}`, w, env), w.x, w.y);
       const { R } = paint(ctx);
       // nuages qui passent
       if (env.id !== 'nuit') {
@@ -1060,10 +1642,10 @@ export class Room {
           for (const [dx, r] of [[0, 4], [5, 5], [10, 3]]) S.disc(ctx, Math.round(cx + dx), cy, r, col);
         }
       }
-      if (['midi', 'aube', 'crepuscule'].includes(env.id)) S.vulture(ctx, Math.round(w.x + w.w / 2 + Math.cos(now / 4000) * 18), Math.round(w.y + 12 + Math.sin(now / 3000) * 4), now);
-      // virevoltant
+      if (DAY_SKY.has(env.id)) S.vulture(ctx, Math.round(w.x + w.w / 2 + Math.cos(now / 4000) * 18), Math.round(w.y + 12 + Math.sin(now / 3000) * 4), now);
+      // virevoltant (teint comme le sol de l'ambiance)
       const tw = now % 15000;
-      if (tw < 5000) S.tumbleweed(ctx, Math.round(w.x - 6 + ((w.w + 12) * tw) / 5000), Math.round(horizon + 8 - Math.abs(Math.sin(now / 160)) * 4), now);
+      if (tw < 5000) tumbleTinted(ctx, w.x - 6 + ((w.w + 12) * tw) / 5000, horizon + 8 - Math.abs(Math.sin(now / 160)) * 4, now, env.tint);
       // cavalier au loin sur la crête
       const rd = (now + 7000) % 23000;
       if (rd < 7000) {
@@ -1076,7 +1658,7 @@ export class Room {
       // étoile filante
       if (env.stars && (now % 11000) < 500) {
         const k = (now % 11000) / 500;
-        for (let j = 0; j < 6; j++) R(w.x + 10 + k * 40 - j * 2, w.y + 6 + k * 12 - j * 0.6, 1, 1, `rgba(255,255,240,${1 - j / 6})`);
+        for (let j = 0; j < 6; j++) R(w.x + 10 + k * 40 - j * 2, w.y + 6 + k * 12 - j * 0.6, 1, 1, STAR_TRAIL[j]);
       }
     }
     // météo sur la vitre
@@ -1100,13 +1682,16 @@ export class Room {
       for (let k = 0; k < 10; k++) ctx.fillRect(Math.round(w.x + w.w - ((k * 31 + now * 0.12) % (w.w + 20))), w.y + ((k * 7) % w.h), 8, 1);
     }
     const f = this.amb.flash(now);
-    if (f) { ctx.fillStyle = `rgba(240,240,255,${0.8 * f})`; ctx.fillRect(w.x, w.y, w.w, w.h); this.amb.sky(ctx, now); }
+    if (f) {
+      ctx.globalAlpha = 0.8 * f; ctx.fillStyle = '#f0f0ff'; ctx.fillRect(w.x, w.y, w.w, w.h); ctx.globalAlpha = 1;
+      this.amb.sky(ctx, now);
+    }
   }
 
   // Par-dessus toute la scène : éclair qui illumine la pièce (et le tonnerre)
   drawOverlay(ctx, now) {
     if (this.amb.thunder(now)) sfx('thunder', 0.4);
     const f = this.amb.flash(now);
-    if (f) { ctx.fillStyle = `rgba(230,236,255,${0.18 * f})`; ctx.fillRect(0, 0, W, H); }
+    if (f) { ctx.globalAlpha = 0.18 * f; ctx.fillStyle = '#e6ecff'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
   }
 }

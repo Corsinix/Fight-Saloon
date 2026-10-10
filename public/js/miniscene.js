@@ -1,13 +1,20 @@
 // Base commune des scènes de mini-jeux : horloge partagée, compte à rebours, entrées,
 // curseurs/positions des autres joueurs, petits textes de points.
-import { canvasText, canvasPos, due60 } from './scene.js';
+import { canvasText, canvasPos, due60, textSprite } from './scene.js';
 import { ruleLines, drawRuleLines } from './ruletext.js';
+import { TOK, ease, panel, textW } from './uikit.js';
 import { sfx } from './audio.js';
 import { W, H, PLAYER_COLORS, MODES, CUT_MS, HELP_MS } from './worlds.js';
 import { pickEnv, Ambience, ENVS } from './env.js';
 import { Cutscene, CUT_FADE } from './cutscene.js';
 
 const LIVE_MS = 150; // cadence max des positions envoyées aux autres joueurs
+const RULES_IN = 420; // apparition du panneau des règles (ms)
+const GO_MS = 900; // durée du « GO ! » après le compte à rebours
+const COUNT_COL = '#f0705a';
+const popY = (p) => Math.round(p.y - (p.t / 1100) * 18); // hauteur d'un texte flottant (monte de 18 px), au pixel
+// « mouvements réduits » demandé par le système : le panneau des règles apparaît sans glisser
+const CALM = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export class MiniScene {
   constructor(canvas, hooks) {
@@ -96,8 +103,10 @@ export class MiniScene {
     this.over = null;
     this.popups = [];
     this.parts = [];
-    // ambiance (heure, météo) tirée de la graine : la même pour toute la table
-    this.env = pickEnv(seed, this.kind);
+    // ambiance (heure, météo) tirée de la graine : la même pour toute la table ; un épisode du mode histoire peut
+    // l'imposer (hooks.story.env), sauf à la pinte dont l'arbitre tire lui-même la salle et l'heure
+    const story = this.hooks.story;
+    this.env = story?.env && ENVS[story.env] && this.kind !== 'pinte' ? { id: story.env, ...ENVS[story.env] } : pickEnv(seed, this.kind);
     this.amb = new Ambience(this.env);
     this.setup(seed);
     this.cutSkip = false;
@@ -106,9 +115,12 @@ export class MiniScene {
       players: this.state.players.map((p, i) => ({ name: p.name, character: p.character, color: this.color(i) })),
       me: this.me,
       env: this.showEnv ? this.env : null,
-      title: this.title(),
+      title: story?.title || this.title(),
       sub: MODES[this.kind]?.sub || '',
-      extra: { suspect: () => this.suspect?.() },
+      caption: story?.caption || this.cutCaption?.() || undefined, // légende et rumeur de l'épisode (sinon celles du jeu)
+      rumor: story?.rumor || undefined,
+      // un jeu peut fournir son propre plan d'ensemble (cutExtra : { establish(ctx, el) }), dessiné avec ses décors
+      extra: { suspect: () => this.suspect?.(), ...this.cutExtra?.() },
     });
   }
 
@@ -199,8 +211,18 @@ export class MiniScene {
   }
 
   // ---------------------------------------------------------- effets
+  // Texte qui s'envole : centre gardé dans l'écran selon sa largeur (rien ne dépasse du bord), et s'il naît sur un
+  // autre encore jeune (scores simultanés au même endroit), il se pose juste au-dessus au lieu de le recouvrir.
   popup(x, y, text, col = '#f8d070', big = false) {
-    this.popups.push({ x, y, text, col, big, t: 0 });
+    const half = Math.ceil(textW(text, big ? 16 : 8) / 2) + 1, h = big ? 12 : 7;
+    x = Math.max(half, Math.min(W - half, Math.round(x)));
+    y = Math.round(y);
+    for (let k = 0; k < 3; k++) { // trois crans au plus : une rafale reste près de sa source
+      const o = this.popups.find((p) => p.t < 500 && Math.abs(p.x - x) < p.half + half && y < popY(p) + p.h + 1 && popY(p) < y + h + 1);
+      if (!o) break;
+      y = popY(o) - h - 1;
+    }
+    this.popups.push({ x, y, text, col, big, t: 0, half, h });
   }
 
   // ---------------------------------------------------------- boucle
@@ -226,7 +248,7 @@ export class MiniScene {
     for (const p of this.popups) {
       const k = p.t / 1100;
       ctx.globalAlpha = k > 0.7 ? 1 - (k - 0.7) / 0.3 : 1;
-      canvasText(ctx, p.text, p.x, p.y - k * 18, { size: p.big ? 16 : 8, color: p.col });
+      canvasText(ctx, p.text, p.x, Math.max(1, Math.min(H - (p.h || 7) - 2, popY(p))), { size: p.big ? 16 : 8, color: p.col });
       ctx.globalAlpha = 1;
     }
     ctx.restore();
@@ -250,31 +272,57 @@ export class MiniScene {
       if (cel > (this.cut.len || CUT_MS) - CUT_FADE) this.drawRules(ctx, t); // les règles apparaissent sous le fondu
       this.cut.draw(ctx, cel, this.now);
     } else if (t < 0) this.drawRules(ctx, t);
-    else if (t < 900 && !this.over) {
-      ctx.globalAlpha = 1 - t / 900;
-      canvasText(ctx, this.goText(), W / 2, 90, { size: 24, color: '#f8d070' });
-      ctx.globalAlpha = 1;
-    } else if (t >= this.duration && !this.over) {
-      ctx.fillStyle = 'rgba(26,15,10,0.6)';
-      ctx.fillRect(0, 84, W, 34);
-      canvasText(ctx, 'TEMPS ÉCOULÉ !', W / 2, 92, { size: 16, color: '#f8d070' });
-    }
+    else if (t < GO_MS && !this.over) this.drawGo(ctx, t);
+    else if (t >= this.duration && !this.over) this.drawTimeUp(ctx, t - this.duration);
   }
 
+  // Panneau des règles (cadre « nuit » d'uikit) : il descend en rebondissant à sa première image, le titre sur une
+  // plaque de bois, les règles en dessous, le compte à rebours qui claque à chaque seconde.
   drawRules(ctx, t) {
-    ctx.fillStyle = 'rgba(26,15,10,0.72)';
-    ctx.fillRect(0, 30, W, 138);
-    // l'ambiance (heure, météo) et la variante du jeu (abords, carte, salle…), s'il en a une
-    const where = [this.env && this.showEnv && this.env.name, this.variantName?.()].filter(Boolean).join(' - ');
-    if (where) canvasText(ctx, where, W / 2, 34, { color: '#c8b8e8' });
-    canvasText(ctx, this.title(), W / 2, 50, { size: 16, color: '#f8d070' });
+    // l'entrée commence sous le fondu de sortie de la cinématique, ou tout de suite si on l'a passée
+    if (this.rulesFor !== this.t0) { this.rulesFor = this.t0; this.rulesAt = this.cutSkip ? t : -HELP_MS - CUT_FADE; }
+    const k = Math.min(1, (t - this.rulesAt) / RULES_IN);
+    ctx.save();
+    if (k < 1 && !CALM) {
+      ctx.globalAlpha = ease.out3(k * 2);
+      ctx.translate(0, Math.round((1 - ease.backOut(k)) * -18));
+    }
     // touches en relief, souris, points en couleur (ruletext.js) ; plus de 5 lignes : on serre et on remonte
     const lines = ruleLines(this.help(), W - 12);
     const many = lines.length > 5;
-    drawRuleLines(ctx, lines, W / 2, many ? 68 : 72, { lh: lines.length > 8 ? 10 : 11, maxW: W - 12 });
+    const lh = lines.length > 8 ? 10 : 11, y0 = many ? 68 : 72;
+    // le cadre s'arrête sous la dernière ligne quand le compte à rebours passe dans le coin
+    panel(ctx, 2, 26, W - 4, many ? Math.min(146, y0 + lines.length * lh + 6 - 26) : 146, 'ink');
+    // l'ambiance (heure, météo) et la variante du jeu (abords, carte, salle…), s'il en a une
+    const where = [this.env && this.showEnv && this.env.name, this.variantName?.()].filter(Boolean).join(' - ');
+    if (where) canvasText(ctx, where, W / 2, 31, { color: '#c8b8e8' });
+    titlePlate(ctx, this.title(), W / 2, 41);
+    drawRuleLines(ctx, lines, W / 2, y0, { lh, maxW: W - 12 });
+    ctx.restore();
     // le compte à rebours : sous les règles s'il y a la place, sinon dans le coin
     const c = Math.ceil(-t / 1000);
-    if (c <= 3) canvasText(ctx, String(c), many ? W - 22 : W / 2, many ? 34 : 136, { size: many ? 16 : 24, color: '#f0705a' });
+    if (c <= 3) popText(ctx, String(c), many ? W - 22 : W / 2, many ? 32 : 136, many ? 16 : 24, c * 1000 + t, COUNT_COL);
+  }
+
+  // « GO ! » (ou le cri du jeu) : claque en grand puis s'efface ; el = ms depuis le départ.
+  // Les jeux qui relancent un départ en cours de partie (manches du fort, mêlée) l'appellent aussi.
+  drawGo(ctx, el, text = this.goText()) {
+    if (!text || el < 0 || el >= GO_MS) return;
+    ctx.globalAlpha = el > GO_MS - 400 ? (GO_MS - el) / 400 : 1;
+    popText(ctx, text, W / 2, 90, 24, el, TOK.gold);
+    ctx.globalAlpha = 1;
+  }
+
+  // Fin du chrono, en attendant le verdict de l'hôte : un bandeau en travers de l'image ; el = ms depuis la fin.
+  drawTimeUp(ctx, el) {
+    const k = Math.min(1, el / 260);
+    if (k < 1) ctx.globalAlpha = ease.out3(k * 1.5);
+    panel(ctx, -4, 84, W + 8, 34, 'ink');
+    ctx.fillStyle = TOK.gold;
+    ctx.fillRect(0, 88, W, 1);
+    ctx.fillRect(0, 113, W, 1);
+    canvasText(ctx, 'TEMPS ÉCOULÉ !', W / 2, 93 - Math.round((1 - ease.backOut(k)) * 10), { size: 16, color: TOK.gold });
+    ctx.globalAlpha = 1;
   }
 
   goText() { return 'GO !'; }
@@ -306,14 +354,56 @@ export class MiniScene {
   hudStats() { return []; }
 }
 
-// Petit anneau en pixels (viseur, lasso, verrouillage)
+// Plaque de bois clouée portant un titre (police 16), centrée sur cx, en haut à y
+function titlePlate(ctx, text, cx, y) {
+  const s = textSprite(text, 16, TOK.gold, TOK.ink);
+  const w = s.w + 18, h = 20, x = Math.round(cx - w / 2);
+  ctx.fillStyle = TOK.ink; ctx.fillRect(x, y + 1, w, h - 2); ctx.fillRect(x + 1, y, w - 2, h);
+  ctx.fillStyle = TOK.wood; ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+  ctx.fillStyle = TOK.woodL; ctx.fillRect(x + 1, y + 1, w - 2, 1);
+  ctx.fillStyle = TOK.woodD; ctx.fillRect(x + 1, y + h - 3, w - 2, 2);
+  ctx.fillStyle = '#5a5a62'; ctx.fillRect(x + 3, y + 8, 2, 2); ctx.fillRect(x + w - 5, y + 8, 2, 2); // clous
+  ctx.drawImage(s.c, x + 9, y + 3 + s.dy);
+}
+
+// Texte qui « claque » : un peu plus petit, puis trop grand, puis à sa taille (tailles de police entières :
+// les pixels restent nets). el = ms depuis l'apparition ; le texte reste centré sur (x, y + size / 2).
+function popText(ctx, text, x, y, size, el, color) {
+  let sz = size;
+  if (el < 60) sz = size - 8;
+  else if (el < 150 && textW(text, size + 8) <= W - 24) sz = size + 8;
+  const s = textSprite(text, sz, color, TOK.ink);
+  const left = Math.round(x - s.w / 2), top = Math.round(y - (sz - size) / 2) + s.dy;
+  // contour d'encre d'un pixel tout autour : lisible sur le ciel comme sur le sable
+  const ink = textSprite(text, sz, TOK.ink, null).c;
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) ctx.drawImage(ink, left + dx, top + dy);
+  ctx.drawImage(s.c, left, top);
+}
+
+// Petit anneau en pixels (viseur, lasso, verrouillage), continu à toute taille : assez d'angles pour avancer de
+// moins d'un pixel à chaque pas, les doublons sautés (une couleur translucide ne fait pas de points plus foncés)
+// et les coins en « L » retirés (trait d'un pixel). step > 1 : pointillés de step pixels, décalés par phase.
+const RING = [];
+const ringNear = (i, j) => Math.abs(RING[i * 2] - RING[j * 2]) <= 1 && Math.abs(RING[i * 2 + 1] - RING[j * 2 + 1]) <= 1;
 export function ring(ctx, cx, cy, rx, ry, col, step = 1, phase = 0) {
   ctx.fillStyle = col;
-  const n = Math.max(12, Math.round((rx + ry) * 3));
+  const n = Math.max(12, Math.ceil(Math.PI * 2 * Math.max(Math.abs(rx), Math.abs(ry))) + 1);
+  let m = 0, px = NaN, py = NaN;
   for (let k = 0; k < n; k++) {
-    if (step > 1 && Math.floor(k / step + phase) % 2) continue;
     const a = (k / n) * Math.PI * 2;
-    ctx.fillRect(Math.round(cx + Math.cos(a) * rx), Math.round(cy + Math.sin(a) * ry), 1, 1);
+    const x = Math.round(cx + Math.cos(a) * rx), y = Math.round(cy + Math.sin(a) * ry);
+    if (x === px && y === py) continue;
+    RING[m++] = px = x; RING[m++] = py = y;
+  }
+  if (m > 2 && RING[0] === px && RING[1] === py) m -= 2; // le dernier retombe sur le premier
+  const len = m / 2;
+  // un point dont les deux voisins se touchent déjà (en diagonale) fait un coin épais : on le saute
+  let kept = 0, last = 0;
+  for (let i = 0; i < len; i++) {
+    if (i > 0 && i < len - 1 && len > 8 && ringNear(last, i + 1)) continue; // (le premier et le dernier restent : pas de trou au raccord)
+    last = i;
+    if (step > 1 && Math.floor(kept++ / step + phase) % 2) continue;
+    ctx.fillRect(RING[i * 2], RING[i * 2 + 1], 1, 1);
   }
 }
 

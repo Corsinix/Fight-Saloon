@@ -1,0 +1,282 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>La piste — vue isométrique</title></head>
+<body style="margin:0;background:#120c08;color:#e3c697;font:12px monospace">
+<canvas id="cv" width="1536" height="864" style="display:block;image-rendering:pixelated;cursor:grab"></canvas>
+<div id="info" style="padding:4px 8px;white-space:pre"></div>
+<pre id="errlog" style="color:#f66;margin:0 8px"></pre>
+<script type="module">
+// Banc d'essai du rendu isométrique des combats de « La piste » (pisteiso.js), sur des cartes d'essai faites ici
+// (une par thème, avec tous les codes de cases et un bord irrégulier). Touches : 1-9 thème, B grande carte 36 × 26,
+// flèches / ZQSD : caméra (ou glisser à la souris), F brouillard, D noir de la mine, P portée et contour, N autre graine.
+// Paramètres : ?theme=mine&z=3&big=1&fog=1&seed=3&cam=x,y&hover=x,y&shot=1 (image fixe, sans animation du temps)
+import { IsoView, TW, TH } from './js/pisteiso.js';
+import { bodySprite, gunSprite } from './js/pistelook.js';
+import { lookOf, blit } from './js/brawlart.js';
+window.onerror = (m, s, l, c, e) => { document.getElementById('errlog').textContent += `${e?.stack || m}\n`; };
+window.onunhandledrejection = (e) => { document.getElementById('errlog').textContent += `${e.reason?.stack || e.reason}\n`; };
+
+const C = { FLOOR: 0, PATH: 1, WALL: 2, CRATE: 3, BUSH: 4, WATER: 5, CHEST: 6, SAND: 7, VOID: 8, TABLE: 9, COUNTER: 10, RAIL: 11, FENCE: 12, PILLAR: 13 };
+const THEMES = ['desert', 'canyon', 'prairie', 'foret', 'neige', 'mine', 'saloon', 'ville', 'hacienda'];
+const q = new URLSearchParams(location.search);
+const Z = +(q.get('z') || 2);
+const cv = document.getElementById('cv');
+cv.style.width = `${384 * Z}px`; cv.style.height = `${216 * Z}px`;
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+// ------------------------------------------------------------ cartes d'essai
+const rng = (seed) => { let s = (seed * 2654435761) >>> 0 || 1; return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); };
+const hs = (x, y, s) => { let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(s | 0, 1442695041); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+const vn = (x, y, s) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf); const a = hs(xi, yi, s), b = hs(xi + 1, yi, s), c = hs(xi, yi + 1, s), d = hs(xi + 1, yi + 1, s); return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
+const fb = (x, y, s) => (vn(x, y, s) * 0.6 + vn(x * 2.1, y * 2.1, s + 9) * 0.3 + vn(x * 4.3, y * 4.3, s + 17) * 0.1);
+
+function makeMap(theme, w, h, seed) {
+  const R = rng(seed + THEMES.indexOf(theme) * 101), cells = new Uint8Array(w * h);
+  const inb = (x, y) => x >= 0 && y >= 0 && x < w && y < h;
+  const get = (x, y) => (inb(x, y) ? cells[y * w + x] : C.VOID);
+  const set = (x, y, t) => { if (inb(x, y) && cells[y * w + x] !== C.VOID) cells[y * w + x] = t; };
+  const free = (x, y) => get(x, y) === C.FLOOR;
+  const ri = (a, b) => a + Math.floor(R() * (b - a + 1));
+  const scatter = (t, n, ok = free) => { for (let k = 0, tries = 0; k < n && tries < 2000; tries++) { const x = ri(1, w - 2), y = ri(1, h - 2); if (ok(x, y)) { set(x, y, t); k++; } } };
+  const line = (x, y, dx, dy, n, t, ok = free) => { for (let i = 0; i < n; i++) if (ok(x + dx * i, y + dy * i)) set(x + dx * i, y + dy * i, t); };
+  // bord irrégulier : le vide ronge les bords
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const d = Math.min(x, y, w - 1 - x, h - 1 - y);
+    if (d < 0.4 + fb(x / 4, y / 4, seed + 3) * 3.4) cells[y * w + x] = C.VOID;
+  }
+  const lights = [];
+  const outdoor = ['desert', 'canyon', 'prairie', 'foret', 'neige'].includes(theme);
+  if (outdoor) {
+    const th = { desert: 0.66, canyon: 0.58, prairie: 0.66, foret: 0.6, neige: 0.64 }[theme];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (fb(x / 5, y / 5, seed + 11) > th) set(x, y, C.WALL);
+    // l'eau : rivière, oasis ou ruisseau
+    if (theme === 'desert') { const cx = ri(6, w - 7), cy = ri(5, h - 6); for (let y = -3; y <= 3; y++) for (let x = -4; x <= 4; x++) if (x * x / 14 + y * y / 6 < 1) set(cx + x, cy + y, C.WATER); }
+    else for (let x = 0; x < w; x++) { const yc = h * 0.35 + Math.sin(x / 4 + seed) * 2.5; for (let y = 0; y < h; y++) if (Math.abs(y - yc) < (theme === 'canyon' ? 0.8 : 1.4) && get(x, y) !== C.WALL) set(x, y, C.WATER); }
+    // la piste : de gauche à droite en serpentant
+    let py = Math.floor(h * 0.7);
+    for (let x = 0; x < w; x++) { if (get(x, py) !== C.WATER) set(x, py, C.PATH); if (R() < 0.25) { const ny = Math.max(2, Math.min(h - 3, py + (R() < 0.5 ? -1 : 1))); if (get(x, ny) !== C.WATER) set(x, ny, C.PATH); py = ny; } }
+    // une voie ferrée : droite puis un virage
+    const ry = 3 + (seed % 3);
+    for (let x = Math.floor(w * 0.45); x < w; x++) if (get(x, ry) !== C.VOID) set(x, ry, C.RAIL);
+    for (let y = ry; y < ry + 5; y++) set(Math.floor(w * 0.45), y, C.RAIL);
+    scatter(C.BUSH, Math.floor(w * h / 30));
+    scatter(C.CRATE, 8); scatter(C.CHEST, 3); scatter(C.PILLAR, 7);
+    for (let k = 0; k < 3; k++) line(ri(2, w - 6), ri(2, h - 4), 1, 0, 3, C.SAND);
+    for (let k = 0; k < 2; k++) line(ri(2, w - 8), ri(2, h - 4), R() < 0.5 ? 1 : 0, 1, 5, C.FENCE);
+    line(ri(3, w - 6), ri(3, h - 4), 1, 0, 3, C.COUNTER); scatter(C.TABLE, 2);
+  } else if (theme === 'mine') {
+    for (let i = 0; i < w * h; i++) if (cells[i] !== C.VOID) cells[i] = C.WALL;
+    const carve = (x, y, r) => { for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r) set(x + dx, y + dy, C.FLOOR); };
+    const my = Math.floor(h / 2);
+    for (let x = 1; x < w - 1; x++) carve(x, my + Math.round(Math.sin(x / 6) * 1.5), 1);
+    for (let k = 0; k < 5; k++) { let x = ri(3, w - 4), y = ri(3, h - 4); for (let s = 0; s < 40; s++) { carve(x, y, R() < 0.2 ? 2 : 1); x += ri(-1, 1); y += ri(-1, 1); x = Math.max(2, Math.min(w - 3, x)); y = Math.max(2, Math.min(h - 3, y)); } }
+    for (let k = 0; k < 3; k++) carve(ri(5, w - 6), ri(4, h - 5), 3);
+    // rails le long de la galerie principale, et un embranchement en courbe
+    for (let x = 2; x < w - 2; x++) { const y = my + Math.round(Math.sin(x / 6) * 1.5); if (get(x, y) === C.FLOOR) set(x, y, C.RAIL); const y2 = my + Math.round(Math.sin((x + 1) / 6) * 1.5); if (y2 !== y && get(x, y2) === C.FLOOR) set(x, y2, C.RAIL); }
+    scatter(C.CRATE, 7, (x, y) => free(x, y) && (get(x - 1, y) === C.RAIL || get(x + 1, y) === C.RAIL || get(x, y - 1) === C.RAIL || R() < 0.3));
+    scatter(C.PILLAR, 7); scatter(C.BUSH, 6); scatter(C.CHEST, 3); scatter(C.WATER, 3);
+    line(ri(3, w - 6), my - 2, 1, 0, 3, C.SAND); line(ri(3, w - 6), my + 2, 1, 0, 3, C.FENCE);
+    scatter(C.TABLE, 1); line(ri(3, w - 6), ri(3, h - 4), 1, 0, 2, C.COUNTER); scatter(C.PATH, 6);
+    for (let x = 3; x < w - 2; x += 6) { for (let dy = -3; dy <= 3; dy++) if (free(x, my + dy) || get(x, my + dy) === C.PATH) { lights.push({ x, y: my + dy, r: 4 }); break; } }
+    for (let k = 0; k < 3; k++) { const x = ri(3, w - 4), y = ri(3, h - 4); if (free(x, y)) lights.push({ x, y, r: 3.5 }); }
+  } else if (theme === 'saloon') {
+    const x0 = 2, y0 = 2, x1 = w - 3, y1 = h - 3;
+    for (let x = x0; x <= x1; x++) { set(x, y0, C.WALL); set(x, y1, C.WALL); }
+    for (let y = y0; y <= y1; y++) { set(x0, y, C.WALL); set(x1, y, C.WALL); }
+    const px = Math.floor(w * 0.7);
+    for (let y = y0; y <= y1; y++) set(px, y, C.WALL);
+    set(px, Math.floor(h / 2), C.FLOOR); set(px, Math.floor(h / 2) + 1, C.FLOOR); // porte de l'arrière-salle
+    set(Math.floor(w * 0.35), y1, C.FLOOR); set(Math.floor(w * 0.35) + 1, y1, C.FLOOR); // porte d'entrée
+    for (let x = x0 + 3; x < px - 3; x++) set(x, y0 + 3, C.COUNTER);
+    for (let x = x0 + 3; x < px - 3; x += 3) set(x, y0 + 1, C.CHEST);
+    for (let y = y0 + 4; y < y1; y++) set(Math.floor(w * 0.35), y, C.PATH), set(Math.floor(w * 0.35) + 1, y, C.PATH);
+    for (let k = 0; k < 7; k++) { const x = ri(x0 + 2, px - 2), y = ri(y0 + 5, y1 - 2); if (free(x, y) && free(x + 1, y) && free(x, y + 1)) set(x, y, C.TABLE); }
+    for (const [x, y] of [[x0 + 5, y0 + 6], [px - 5, y0 + 6], [x0 + 5, y1 - 3], [px - 5, y1 - 3]]) set(x, y, C.PILLAR);
+    for (let k = 0; k < 9; k++) { const x = ri(px + 1, x1 - 1), y = ri(y0 + 1, y1 - 1); if (free(x, y)) set(x, y, C.CRATE); }
+    for (const [x, y] of [[x0 + 1, y1 - 1], [px - 1, y1 - 1], [x0 + 1, y0 + 5]]) set(x, y, C.BUSH);
+    line(x0 + 1, y0 + 7, 1, 0, 3, C.FENCE); line(px + 2, y1 - 2, 1, 0, 3, C.SAND);
+    set(x1 - 2, y0 + 2, C.WATER); set(x1 - 2, y0 + 3, C.RAIL); set(x1 - 2, y0 + 4, C.RAIL);
+  } else if (theme === 'ville') {
+    const my = Math.floor(h / 2);
+    for (let side = -1; side <= 1; side += 2) {
+      let x = 2;
+      while (x < w - 4) {
+        const bw = ri(3, 5), bh = ri(3, 4), yb = side < 0 ? my - 3 - bh : my + 4;
+        for (let yy = 0; yy < bh; yy++) for (let xx = 0; xx < bw; xx++) set(x + xx, yb + yy, C.WALL);
+        for (let xx = -1; xx <= bw; xx++) set(x + xx, side < 0 ? my - 3 : my + 3, C.PATH);
+        if (R() < 0.6) set(x + Math.floor(bw / 2), side < 0 ? my - 3 : my + 3, C.PATH);
+        x += bw + ri(1, 2);
+      }
+    }
+    for (let x = 3; x < w - 3; x += 5) { set(x, my - 2, C.PILLAR); set(x + 2, my + 2, C.PILLAR); }
+    scatter(C.CRATE, 8, (x, y) => free(x, y) || get(x, y) === C.PATH); scatter(C.BUSH, 5); scatter(C.CHEST, 3);
+    line(ri(4, w - 8), my, 1, 0, 3, C.SAND); set(Math.floor(w * 0.6), my + 1, C.WATER); set(Math.floor(w * 0.6) + 1, my + 1, C.WATER);
+    for (let y = 0; y < h; y++) if (get(w - 4, y) !== C.WALL) set(w - 4, y, C.RAIL);
+    line(2, 2, 1, 0, 6, C.FENCE, (x, y) => free(x, y)); line(2, h - 3, 1, 0, 6, C.FENCE, (x, y) => free(x, y));
+    scatter(C.TABLE, 2); line(ri(4, w - 9), my - 1, 1, 0, 2, C.COUNTER);
+  } else if (theme === 'hacienda') {
+    const x0 = 2, y0 = 2, x1 = w - 3, y1 = h - 3, gx = Math.floor(w / 2);
+    for (let x = x0; x <= x1; x++) { set(x, y0, C.WALL); set(x, y1, C.WALL); }
+    for (let y = y0; y <= y1; y++) { set(x0, y, C.WALL); set(x1, y, C.WALL); }
+    for (let x = x0 + 1; x <= x0 + 6; x++) for (let y = y0 + 1; y <= y0 + 4; y++) set(x, y, C.WALL); // la maison
+    for (const dx of [-1, 0, 1]) set(gx + dx, y1, C.FLOOR);
+    for (let y = y0 + 1; y < y1; y++) set(gx, y, C.PATH);
+    for (let x = x0 + 1; x < x1; x++) set(x, Math.floor(h / 2) + 2, C.PATH);
+    const fx = gx - 1, fy = Math.floor(h / 2) - 1;
+    for (let y = 0; y < 2; y++) for (let x = 0; x < 3; x++) set(fx + x, fy + y, C.WATER);
+    for (let x = x0 + 8; x < x1 - 1; x += 2) set(x, y0 + 2, C.PILLAR);
+    for (const [cx, cy] of [[x0 + 3, y1 - 4], [x1 - 4, y1 - 4]]) { for (let k = -1; k <= 1; k++) { set(cx + k, cy - 2, C.FENCE); } set(cx, cy, C.BUSH); set(cx + 1, cy, C.BUSH); set(cx - 1, cy + 1, C.BUSH); }
+    scatter(C.CRATE, 8); scatter(C.CHEST, 2); scatter(C.BUSH, 4); scatter(C.TABLE, 3);
+    line(x1 - 6, y0 + 6, 1, 0, 3, C.SAND); line(x0 + 2, y0 + 7, 1, 0, 2, C.COUNTER);
+    set(x1 - 2, y1 - 2, C.RAIL); set(x1 - 3, y1 - 2, C.RAIL);
+  }
+  return { theme, env: theme, name: `essai ${theme}`, w, h, cells, base: cells.slice(), fog: false, dark: theme === 'mine', deploy: { p: [], e: [], amb: [], boss: { x: 0, y: 0 } }, lights, seed };
+}
+
+// ------------------------------------------------------------ personnages factices
+const LOOKS = [
+  { skin: 2, hairColor: 1, outfitColor: 0, hat: 'cowboy', hatColor: 1, beard: 'stubble' },
+  { skin: 0, hairColor: 3, outfitColor: 2, hat: 'bowler', hatColor: 0 },
+  { skin: 3, hairColor: 0, outfitColor: 4, hat: 'cowboy', hatColor: 3, beard: 'full' },
+  { skin: 1, hairColor: 2, outfitColor: 5, hat: 'sombrero', hatColor: 2 },
+  { skin: 2, hairColor: 4, outfitColor: 1, hat: 'cowboy', hatColor: 4 },
+  { skin: 4, hairColor: 1, outfitColor: 3, hat: 'none', beard: 'moustache' },
+];
+const GUNS = ['revolver', 'winchester', 'fusil', 'sharps', 'revolver', 'arc'], ARMS = [null, 'cuir', 'duster', 'plastron', null, 'cuir'];
+function makeActors(map) {
+  const out = [], w = map.w, h = map.h;
+  const cx = w / 2, cy = h / 2;
+  const cand = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const t = map.cells[y * w + x]; if (t === C.FLOOR || t === C.PATH || t === C.BUSH) cand.push({ x, y, d: Math.hypot(x - cx, y - cy) + hs(x, y, 5) * 6 }); }
+  cand.sort((a, b) => a.d - b.d);
+  for (let k = 0; k < 6 && k * 3 < cand.length; k++) {
+    const c = cand[k * 3], lk = lookOf(LOOKS[k], `t${k}`), side = k < 3 ? 'p' : 'e';
+    out.push({ x: c.x, y: c.y, side, sel: k === 0, draw(g, sx, sy) {
+      // ombre, anneau de camp, le personnage et son arme
+      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(sx - 5, sy - 0.5, 10, 1.5);
+      g.fillStyle = side === 'p' ? '#7ab0f0' : '#f0705a';
+      for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; g.fillRect(Math.round((sx + Math.cos(a) * 6) * 2) / 2, Math.round((sy + Math.sin(a) * 3) * 2) / 2, 1, 0.5); }
+      const b = bodySprite(lk, GUNS[k], ARMS[k], false, 0);
+      blit(g, b, sx, sy - 0.5, side === 'e');
+      const gun = gunSprite(GUNS[k], side === 'e' ? Math.PI + 0.25 : -0.25);
+      if (gun) blit(g, gun, sx + (side === 'e' ? -3.5 : 3.5), sy - 7);
+    } });
+  }
+  return out;
+}
+
+// ------------------------------------------------------------ la scène d'essai
+let theme = q.get('theme') || 'desert', big = q.has('big'), seed = +(q.get('seed') || 1);
+let fog = q.has("fog"), dark = !q.has("nodark"), range = q.has('range'), iv, map, actors, hover = null;
+const keys = new Set();
+const timings = [];
+function load() {
+  iv?.free();
+  const sizes = { desert: [26, 18], canyon: [28, 20], prairie: [26, 18], foret: [28, 20], neige: [24, 18], mine: [30, 22], saloon: [24, 17], ville: [30, 20], hacienda: [26, 20] };
+  const [w, h] = big ? [36, 26] : sizes[theme];
+  map = makeMap(theme, w, h, seed);
+  iv = new IsoView(map, { top: 15, bottom: 176 });
+  actors = makeActors(map);
+  if (actors[0]) iv.centerOn(actors[0].x, actors[0].y, { smooth: false });
+  const cm = q.get('cam'); if (cm) { const [x, y] = cm.split(',').map(Number); iv.setCamera(x, y); }
+  const t0 = performance.now(); iv.prewarm(1e9); window.__warm = performance.now() - t0;
+  window.T = { iv, map, actors, setTheme: (t) => { theme = t; load(); } };
+}
+load();
+
+function visibleSets() {
+  const vis = new Set(), exp = new Set(), w = map.w, h = map.h;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let d = 99;
+    for (const a of actors) if (a.side === 'p') d = Math.min(d, Math.max(Math.abs(a.x - x), Math.abs(a.y - y)));
+    if (d <= 4) vis.add(y * w + x);
+    if (d <= 8 || x < w * 0.35) exp.add(y * w + x);
+  }
+  return { vis, exp };
+}
+function reachSet(a, n) {
+  const out = new Map(), w = map.w, st = [[a.x, a.y, 0]];
+  out.set(a.y * w + a.x, { x: a.x, y: a.y, d: 0 });
+  while (st.length) {
+    const [x, y, d] = st.shift();
+    if (d >= n) continue;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const xx = x + dx, yy = y + dy, k = yy * w + xx;
+      if (xx < 0 || yy < 0 || xx >= w || yy >= map.h || out.has(k)) continue;
+      const t = map.cells[k];
+      if (t !== C.FLOOR && t !== C.PATH && t !== C.BUSH && t !== C.RAIL) continue;
+      out.set(k, { x: xx, y: yy, d: d + 1 }); st.push([xx, yy, d + 1]);
+    }
+  }
+  return out;
+}
+
+let last = performance.now();
+const FIXED = q.has('shot');
+function frame(now) {
+  const dt = Math.min(50, now - last); last = now;
+  const sp = 0.22 * dt;
+  let dx = 0, dy = 0;
+  if (keys.has('ArrowLeft') || keys.has('q') || keys.has('a')) dx -= sp;
+  if (keys.has('ArrowRight') || keys.has('d')) dx += sp;
+  if (keys.has('ArrowUp') || keys.has('z') || keys.has('w')) dy -= sp;
+  if (keys.has('ArrowDown') || keys.has('s')) dy += sp;
+  if (dx || dy) iv.scroll(dx, dy);
+  iv.update(dt);
+  const t = FIXED ? 1000 : now;
+  const t0 = performance.now();
+  ctx.setTransform(4, 0, 0, 4, 0, 0);
+  iv.drawGround(ctx, t);
+  if (range && actors[0]) {
+    const r = reachSet(actors[0], 4);
+    iv.drawTiles(ctx, r, 'rgb(122,176,240)', 0.45);
+    iv.drawOutline(ctx, r, '#fff2b0');
+  }
+  if (hover) { iv.drawTiles(ctx, [hover], 'rgb(255,242,176)', 0.5); iv.drawOutline(ctx, [hover], '#fff8d0'); }
+  const see = actors.filter((a) => a.side === 'p');
+  iv.drawScene(ctx, t, actors, { seeThrough: see, hover });
+  if (fog) { const { vis, exp } = visibleSets(); iv.drawFog(ctx, vis, exp); }
+  if (dark && map.dark) iv.drawDark(ctx, map.lights, actors);
+  const el = performance.now() - t0;
+  timings.push(el); if (timings.length > 60) timings.shift();
+  // bandeaux de l'interface (pour juger la zone utile)
+  ctx.fillStyle = 'rgba(26,15,10,0.85)'; ctx.fillRect(0, 0, 384, 15); ctx.fillRect(0, 176, 384, 40);
+  if (hover) { ctx.fillStyle = '#fdf6e0'; ctx.font = '6px monospace'; ctx.fillText(`${hover.x},${hover.y}`, 4, 10); }
+  if (Math.floor(now / 250) !== Math.floor((now - dt) / 250)) {
+    const st = iv.stats(), avg = timings.reduce((a, b) => a + b, 0) / timings.length;
+    document.getElementById('info').textContent = `${theme} ${map.w}×${map.h}  cam ${iv.cam.x.toFixed(0)},${iv.cam.y.toFixed(0)}  case ${hover ? `${hover.x},${hover.y}` : '-'}  dessin ${avg.toFixed(2)} ms  préparation ${window.__warm.toFixed(0)} ms\n`
+      + `mémoire ${(st.bytes / 1048576).toFixed(1)} Mo (sol+murs ${(st.cache / 1048576).toFixed(1)}, objets ${(st.props / 1048576).toFixed(1)}, pochoirs ${(st.stamps / 1048576).toFixed(1)}, noir ${(st.dark / 1048576).toFixed(1)})  morceaux ${st.chunks}  murs ${st.walls}  sprites ${st.sprites}\n`
+      + `1-9 thème · B grande carte · flèches/ZQSD caméra · glisser · F brouillard ${fog ? 'oui' : 'non'} · D noir ${dark ? 'oui' : 'non'} · P portée · N graine ${seed}`;
+    window.__stats = { st, avg };
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ------------------------------------------------------------ commandes
+addEventListener('keydown', (e) => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  keys.add(k);
+  if (/^[1-9]$/.test(k)) { theme = THEMES[+k - 1]; load(); }
+  if (k === 'b') { big = !big; load(); }
+  if (k === 'f') fog = !fog;
+  if (k === 'e') dark = !dark;
+  if (k === 'p') range = !range;
+  if (k === 'n') { seed++; load(); }
+  if (k.startsWith('Arrow')) e.preventDefault();
+});
+addEventListener('keyup', (e) => keys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key));
+let drag = null;
+const gp = (e) => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * 384, y: (e.clientY - r.top) / r.height * 216 }; };
+cv.addEventListener('mousedown', (e) => { drag = { ...gp(e), moved: 0 }; cv.style.cursor = 'grabbing'; });
+addEventListener('mouseup', (e) => {
+  if (drag && drag.moved < 2) { const p = gp(e), c = iv.toCell(p.x, p.y); if (c) iv.centerOn(c.x, c.y); }
+  drag = null; cv.style.cursor = 'grab';
+});
+cv.addEventListener('mousemove', (e) => {
+  const p = gp(e);
+  if (drag) { iv.scroll(drag.x - p.x, drag.y - p.y); drag.moved += Math.abs(drag.x - p.x) + Math.abs(drag.y - p.y); drag.x = p.x; drag.y = p.y; }
+  hover = p.y >= 15 && p.y < 176 ? iv.toCell(p.x, p.y) : null;
+});
+cv.addEventListener('mouseleave', () => { hover = null; });
+const hv = q.get('hover'); if (hv) { const [x, y] = hv.split(',').map(Number); hover = { x, y }; }
+</script></body></html>

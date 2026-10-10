@@ -25,6 +25,14 @@ const cached = (key, make) => {
   return c;
 };
 
+// reflets de l'eau (ruisseau, fossés de la piste) : quelques teintes mélangées une fois pour toutes, plutôt qu'un
+// S.mix par ligne d'eau à chaque image ; k = part de la teinte claire (0 à 1)
+const tints = (a, b, n) => Array.from({ length: n + 1 }, (_, i) => S.mix(a, b, i / n));
+const DEEP = tints('#2a5a8a', '#7ab0f0', 20), FORD = tints('#9ac0c8', '#c8e0e0', 10);
+const pick = (pal, k) => pal[rd(Math.min(1, Math.max(0, k)) * (pal.length - 1))];
+export const waterCol = (k) => pick(DEEP, k);
+const fordCol = (k) => pick(FORD, k);
+
 // ------------------------------------------------------------ sprites (origine : bord gauche de l'emprise, au sol)
 const SPRITES = {
   rock: () => pixelSprite(28, 20, 3, 17, (R) => {
@@ -57,36 +65,45 @@ function farTree(ctx, x, y, s) {
   ctx.fillStyle = '#6a8048'; ctx.fillRect(x - 2, y - 7 - s, 2, 2);
 }
 
+// couleurs de la prairie (une chevauchée du mode histoire peut en imposer d'autres : sd.pal, voir routesdeco.js)
+const PRAIRIE = { edge: '#a89a58', edgeTop: '#c0b068', edgeDisc: ['#8a9258', '#7a8a50'], edgeDash: '#8a7e44',
+  field: '#b4a45e', fieldLine: '#9a8c4c', fieldLine2: '#c4b470', path: '#c8aa70', pathEdge: '#b89a60', pathDot: '#a88a58',
+  tuft: '#8a7e44', flower: ['#f0d060', '#ece4f0'], stem: '#6a8040', post: '#c8a070' };
+
 // Le fond : lointain, lisière, la prairie (herbe, fleurs, sentier de terre), départ, poteaux et arrivée.
-export function drawField(ctx, cam, now, len) {
+// sd : le décor d'un épisode du mode histoire (routesdeco.js : lointain, couleurs, lisière, arrivée), ou null.
+export function drawField(ctx, cam, now, len, sd = null) {
+  const C = sd?.pal || PRAIRIE;
   // lointain : peupliers et rochers, très lents
   const far = cam * 0.3;
-  for (let x = Math.floor(far / 46) * 46; x < far + W + 46; x += 46) {
+  if (sd) sd.far(ctx, cam / len, now);
+  else for (let x = Math.floor(far / 46) * 46; x < far + W + 46; x += 46) {
     const k = Math.floor(x / 46), sx = rd(x - far + hash(k) * 30);
     if (hash(k + 3) < 0.5) farTree(ctx, sx, 98, rd(hash(k + 5) * 4));
     else if (hash(k + 3) < 0.62) { ctx.fillStyle = '#8a7a64'; ctx.fillRect(sx, 95, 6, 3); ctx.fillRect(sx + 1, 94, 3, 1); }
   }
   // lisière : herbes hautes et armoise, un peu plus lentes que la prairie
-  ctx.fillStyle = '#a89a58'; ctx.fillRect(0, 96, W, FIELD - 96);
-  ctx.fillStyle = '#c0b068'; ctx.fillRect(0, 96, W, 1);
+  ctx.fillStyle = C.edge; ctx.fillRect(0, 96, W, FIELD - 96);
+  ctx.fillStyle = C.edgeTop; ctx.fillRect(0, 96, W, 1);
+  sd?.lisiere?.(ctx, cam); // le troupeau et la clôture des McCoy
   const mid = cam * 0.7;
   for (let x = Math.floor(mid / 11) * 11; x < mid + W + 11; x += 11) {
     const k = Math.floor(x / 11), sx = rd(x - mid);
-    if (hash(k) < 0.35) S.disc(ctx, sx, 100 + rd(hash(k + 1) * (FIELD - 106)), 2 + rd(hash(k + 2) * 2), hash(k + 4) < 0.5 ? '#8a9258' : '#7a8a50');
-    else if (hash(k) < 0.7) { ctx.fillStyle = '#8a7e44'; ctx.fillRect(sx, 99 + rd(hash(k + 1) * (FIELD - 103)), 2, 1); }
+    if (hash(k) < 0.35) S.disc(ctx, sx, 100 + rd(hash(k + 1) * (FIELD - 106)), 2 + rd(hash(k + 2) * 2), hash(k + 4) < 0.5 ? C.edgeDisc[0] : C.edgeDisc[1]);
+    else if (hash(k) < 0.7) { ctx.fillStyle = C.edgeDash; ctx.fillRect(sx, 99 + rd(hash(k + 1) * (FIELD - 103)), 2, 1); }
   }
   // la prairie
-  ctx.fillStyle = '#b4a45e'; ctx.fillRect(0, FIELD, W, H - FIELD);
-  ctx.fillStyle = '#9a8c4c'; ctx.fillRect(0, FIELD, W, 1);
-  ctx.fillStyle = '#c4b470'; ctx.fillRect(0, FIELD + 1, W, 1);
+  ctx.fillStyle = C.field; ctx.fillRect(0, FIELD, W, H - FIELD);
+  ctx.fillStyle = C.fieldLine; ctx.fillRect(0, FIELD, W, 1);
+  ctx.fillStyle = C.fieldLine2; ctx.fillRect(0, FIELD + 1, W, 1);
   // sentier de terre qui serpente
   for (let sx = 0; sx < W; sx += 3) {
     const x = sx + cam;
     const cy = rd((WILD.y0 + WILD.y1) / 2 + Math.sin(x / 380) * 22 + Math.sin(x / 127) * 5);
     const hw = 6 + rd(Math.sin(x / 90) * 2);
-    ctx.fillStyle = '#c8aa70'; ctx.fillRect(sx, cy - hw, 3, hw * 2);
-    ctx.fillStyle = '#b89a60'; ctx.fillRect(sx, cy - hw, 3, 1); ctx.fillRect(sx, cy + hw - 1, 3, 1);
-    if (hash(Math.floor(x / 3)) < 0.2) { ctx.fillStyle = '#a88a58'; ctx.fillRect(sx + 1, cy - hw + 2 + rd(hash(Math.floor(x / 3) + 7) * (hw * 2 - 4)), 1, 1); }
+    ctx.fillStyle = C.path; ctx.fillRect(sx, cy - hw, 3, hw * 2);
+    ctx.fillStyle = C.pathEdge; ctx.fillRect(sx, cy - hw, 3, 1); ctx.fillRect(sx, cy + hw - 1, 3, 1);
+    if (hash(Math.floor(x / 3)) < 0.2) { ctx.fillStyle = C.pathDot; ctx.fillRect(sx + 1, cy - hw + 2 + rd(hash(Math.floor(x / 3) + 7) * (hw * 2 - 4)), 1, 1); }
   }
   // touffes d'herbe et fleurs
   for (let x = Math.floor(cam / 8) * 8; x < cam + W + 8; x += 8) {
@@ -95,8 +112,8 @@ export function drawField(ctx, cam, now, len) {
       const k = hash(xi * 131 + row * 17);
       if (k > 0.24) continue;
       const sx = rd(x - cam + hash(xi + row * 7) * 6), yy = y + rd(hash(xi * 3 + row) * 4);
-      if (k < 0.02) { ctx.fillStyle = k < 0.01 ? '#f0d060' : '#ece4f0'; ctx.fillRect(sx, yy - 1, 1, 1); ctx.fillStyle = '#6a8040'; ctx.fillRect(sx, yy, 1, 1); }
-      else { ctx.fillStyle = '#8a7e44'; ctx.fillRect(sx, yy - 1, 1, 2); ctx.fillRect(sx + 1, yy, 1, 1); ctx.fillRect(sx - 1, yy, 1, 1); }
+      if (k < 0.02) { ctx.fillStyle = k < 0.01 ? C.flower[0] : C.flower[1]; ctx.fillRect(sx, yy - 1, 1, 1); ctx.fillStyle = C.stem; ctx.fillRect(sx, yy, 1, 1); }
+      else { ctx.fillStyle = C.tuft; ctx.fillRect(sx, yy - 1, 1, 2); ctx.fillRect(sx + 1, yy, 1, 1); ctx.fillRect(sx - 1, yy, 1, 1); }
     }
   }
   // la ligne de départ, tracée à la chaux, et son fanion
@@ -116,13 +133,14 @@ export function drawField(ctx, cam, now, len) {
     const sx = rd(x - cam);
     ctx.fillStyle = OUT; ctx.fillRect(sx - 1, FIELD - 18, 3, 20); ctx.fillRect(sx - 12, FIELD - 27, 25, 11);
     ctx.fillStyle = '#5a3a20'; ctx.fillRect(sx, FIELD - 17, 1, 18);
-    ctx.fillStyle = '#c8a070'; ctx.fillRect(sx - 11, FIELD - 26, 23, 9);
+    ctx.fillStyle = C.post; ctx.fillRect(sx - 11, FIELD - 26, 23, 9);
     canvasText(ctx, `${(len - x) / M}`, sx + 1, FIELD - 26, { color: '#3a2214', shadow: '' });
   }
-  // l'arrivée : le ranch derrière sa clôture, un damier au sol et le poteau du drapeau
+  // l'arrivée : le ranch derrière sa clôture (ou le lieu de l'épisode), un damier au sol et le poteau du drapeau
   const s1 = rd(len - cam);
   if (s1 > -260 && s1 < W + 60) {
-    ranch(ctx, s1 + 30, FIELD, now);
+    if (sd) sd.arrival(ctx, s1 + 30, FIELD, now);
+    else ranch(ctx, s1 + 30, FIELD, now);
     for (let y = FIELD + 1; y < H; y++) for (let c = 0; c < 2; c++) {
       ctx.fillStyle = (Math.floor((y - FIELD) / 3) + c) % 2 ? '#1a0f0a' : '#f4f0e4';
       ctx.fillRect(s1 + c * 3, y, 3, 1);
@@ -183,7 +201,7 @@ export function drawFlat(ctx, o, sx, now) {
     for (let y = FIELD; y < H; y++) {
       const off = rd(Math.sin(y * 0.07 + o.id) * 2), x = sx + off;
       const ford = Math.abs(y - o.fy) <= o.fd;
-      ctx.fillStyle = ford ? S.mix('#9ac0c8', '#c8e0e0', 0.5 + 0.5 * Math.sin(now / 300 + y)) : S.mix('#2a5a8a', '#7ab0f0', 0.3 + 0.25 * Math.sin(now / 250 + y * 0.8));
+      ctx.fillStyle = ford ? fordCol(0.5 + 0.5 * Math.sin(now / 300 + y)) : waterCol(0.3 + 0.25 * Math.sin(now / 250 + y * 0.8));
       ctx.fillRect(x, y, o.w, 1);
       ctx.fillStyle = '#6a5030'; ctx.fillRect(x - 1, y, 1, 1); ctx.fillRect(x + o.w, y, 1, 1);
       if (ford && (y + o.id) % 3 === 0) {

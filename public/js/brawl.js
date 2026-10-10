@@ -18,7 +18,7 @@ import {
 } from './brawlkit.js';
 import {
   T, ENV_ART, renderGround, wallSprite, crateSprite, chestSprite, sandSprite, bushSprite, lookOf, charSprite, weaponSprite,
-  icon, gemIcon, turretSprite, kitColor, forgetChars, blit, drawQ, Q, HAND_Y, HEAD_Y,
+  icon, gemIcon, turretSprite, kitColor, forgetChars, blit, drawQ, Q, HAND_Y, HEAD_Y, markSprite, MARK_TOP, MARK_SIDE,
 } from './brawlart.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -31,7 +31,16 @@ const STAT_MAX = { hp: 5400, speed: 3.6, range: 10.5, dmg: 1700, reload: 2300 };
 const CANCEL_R = 0.9; // curseur à moins de 0,9 case de son personnage : la super est annulée
 const MUZZLE = { colts: 7, pompe: 10.5, sniper: 13.5, gatling: 11 }; // éclair au bout du canon, en pixels depuis la main
 const CASING = { colts: 1, pompe: 1, sniper: 1, gatling: 2 }; // douilles éjectées à chaque tir
+const STRIDE = 20; // cycle de marche : 20 ms d'animation par pixel parcouru (une image de jambes tous les 5,5 px), les pieds ne glissent pas
+// Obscurité (mine, nuit) : halos de lumière, en cases. On distingue quelqu'un jusqu'à LIT_K du rayon d'un halo
+// (au-delà, le halo s'éteint dans le noir) ; l'éclair d'un tir éclaire le tireur pendant FIRE_LIT ms.
+const LIGHT = { me: 5, scope: 8.5, ally: 4, fire: 1.6, flash: 1.4, item: 1.2, gems: 2.2, turret: 1.5 };
+const LIT_K = 0.85;
+const FIRE_LIT = 300;
+const inLight = (q, x, y, r) => { const dx = q.x - x, dy = q.y - y, R = r * LIT_K; return dx * dx + dy * dy < R * R; };
 const STEP_COL = { desert: '#f0dca8', foret: '#4a6a30', prairie: '#a8c070', mine: '#8a8090', canyon: '#e0a878', neige: '#ffffff' };
+
+const wrapped = new Map(); // textes de l'écran du choix déjà coupés en lignes
 
 const loadPick = () => { try { return cleanPick(JSON.parse(localStorage.getItem(PICK_KEY) || 'null')); } catch { return cleanPick(null); } };
 const savePick = (p) => { try { localStorage.setItem(PICK_KEY, JSON.stringify(p)); } catch { /* stockage indisponible */ } };
@@ -52,6 +61,63 @@ function lightSprite(r) {
   g.fillRect(0, 0, r * 2, r * 2);
   lights.set(r, c);
   return c;
+}
+
+// L'arme en main, tournée vers la visée ; la fiole du docteur ne tourne pas : elle reste debout, vers la gauche ou la droite
+const heldWeapon = (kit, a) => weaponSprite(kit, kit === 'docteur' ? (Math.cos(a) < 0 ? Math.PI : 0) : a);
+
+// Le jeu se dessine en double résolution : positions ramenées au pixel fin (pas de demi-pixel flou, pas d'anticrénelage)
+const px2 = (v) => Math.round(v * Q) / Q;
+
+// Disque plein au pixel fin près (explosions, fumée, poussière, zones) : au lieu de arc(), qui lisse les bords.
+// Gardé par couleur et rayon (rayon arrondi au pixel fin, de 2 en 2 au-delà de 24) ; on le module par globalAlpha.
+// edge : seulement le bord, épais d'un pixel du jeu (cercles de visée)
+const discs = S.lru(400);
+function pdisc(ctx, x, y, r, col, edge = false) {
+  let R = Math.max(1, Math.round(r * Q));
+  if (R > 24) R = Math.round(R / 2) * 2;
+  const key = `${col}|${R}|${+edge}`;
+  let c = discs.get(key);
+  if (!c) {
+    c = S.makeCanvas(R * 2, R * 2);
+    const g = c.getContext('2d');
+    g.fillStyle = col;
+    const Ri = R - Q;
+    for (let dy = 0; dy < R * 2; dy++) {
+      const yy = dy + 0.5 - R, dx = Math.round(Math.sqrt(R * R - yy * yy));
+      const di = edge && Math.abs(yy) < Ri ? Math.round(Math.sqrt(Ri * Ri - yy * yy)) : 0;
+      if (dx > di) { g.fillRect(R - dx, dy, dx - di, 1); g.fillRect(R + di, dy, dx - di, 1); }
+    }
+    discs.set(key, c);
+  }
+  ctx.drawImage(c, px2(x) - R / Q, px2(y) - R / Q, (R * 2) / Q, (R * 2) / Q);
+}
+
+// Trait au pixel fin près, de (x0, y0) à (x1, y1), épais de w (multiple d'un demi-pixel) : balles, traînées, flèches,
+// bâtons de dynamite… sans rotate() (qui lisse les bords). Une bande d'un pixel fin par pas le long de l'axe principal,
+// sans recouvrement : une couleur transparente garde la même transparence sur tout le trait.
+function pline(ctx, x0, y0, x1, y1, w) {
+  w = Math.max(1 / Q, px2(w));
+  const h = 1 / Q, dx = x1 - x0, dy = y1 - y0;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    for (let x = px2(Math.min(x0, x1) - w / 2), xb = px2(Math.max(x0, x1) + w / 2); x < xb; x += h) {
+      const f = dx ? clamp((x + h / 2 - x0) / dx, 0, 1) : 0;
+      ctx.fillRect(x, px2(y0 + dy * f - w / 2), h, w);
+    }
+  } else {
+    for (let y = px2(Math.min(y0, y1) - w / 2), yb = px2(Math.max(y0, y1) + w / 2); y < yb; y += h) {
+      const f = clamp((y + h / 2 - y0) / dy, 0, 1);
+      ctx.fillRect(px2(x0 + dx * f - w / 2), y, w, h);
+    }
+  }
+}
+
+// Anneau de points au pixel fin (bord d'une zone au sol, onde de choc) ; sy : aplatissement vertical
+function pring(ctx, x, y, r, sz, sy = 1, n = Math.max(24, Math.round(r * 3))) {
+  for (let m = 0; m < n; m++) {
+    const b = (m / n) * Math.PI * 2;
+    ctx.fillRect(px2(x + Math.cos(b) * r - sz / 2), px2(y + Math.sin(b) * r * sy - sz / 2), sz, sz);
+  }
 }
 
 export class BrawlScene extends MiniScene {
@@ -111,11 +177,27 @@ export class BrawlScene extends MiniScene {
     const R = rng((seed ^ 0x5bd1e995) >>> 0);
     const wt = (id) => (ENVS[id]?.w ?? 1);
     let x = R() * art.envs.reduce((sum, id) => sum + wt(id), 0);
-    const envId = art.envs.find((id) => (x -= wt(id)) <= 0) || art.envs[0];
+    let envId = art.envs.find((id) => (x -= wt(id)) <= 0) || art.envs[0];
+    // épisode du mode histoire : l'ambiance de l'épisode (hooks.story.env), comme les autres mini-jeux
+    const se = this.hooks.story?.env;
+    if (se && ENVS[se]) envId = se;
     this.env = envId === 'mine' ? { id: 'mine', name: 'SOUS TERRE' } : { id: envId, ...ENVS[envId] };
     this.amb = new Ambience(this.env);
     this.dark = envId === 'mine' ? 0.9 : envId === 'nuit' ? 0.7 : 0;
     this.ground = renderGround(this.world);
+    // bâtiments des cartes du mode histoire (marks) : chaque case de leur bloc de murs renvoie au bâtiment, dessiné
+    // d'un seul tenant (brawlart.js markSprite) quand on arrive à sa dernière rangée
+    this.marks = [];
+    this.markOf = null;
+    const wl = this.world;
+    for (const m of wl.marks || []) {
+      let ok = true;
+      for (let y = m.y; y < m.y + m.h; y++) for (let x = m.x; x < m.x + m.w; x++) if (wl.base[y * wl.w + x] !== C.WALL) ok = false;
+      if (!ok) continue;
+      if (!this.markOf) this.markOf = new Int8Array(wl.w * wl.h).fill(-1);
+      for (let y = m.y; y < m.y + m.h; y++) for (let x = m.x; x < m.x + m.w; x++) this.markOf[y * wl.w + x] = this.marks.length;
+      this.marks.push(m);
+    }
     this.looks = st.players.map((p, i) => lookOf(p.character, i));
     this.pl = st.players.map(() => ({ x: this.world.cx, y: this.world.cy, tx: this.world.cx, ty: this.world.cy, a: 0, mv: false, walk: 0, atkAt: -1e9, hurtAt: -1e9, seen: false, leap: null, turA: 0 }));
     this.my = {
@@ -182,12 +264,15 @@ export class BrawlScene extends MiniScene {
     return v;
   }
 
-  // l'ennemi i est-il visible (buissons, fumigène) ?
-  visible(i, viewers = this.viewers()) {
+  // l'ennemi i est-il visible (buissons, fumigène, obscurité) ?
+  // body : le corps seul, à dessiner ; dans le noir, c'est le calque de drawDark qui le cache (fondu au bord des halos).
+  // Sinon (chiffres, noms, étincelles, sons, visée automatique), il faut en plus qu'il soit éclairé.
+  visible(i, viewers = this.viewers(), body = false) {
     if (!this.alive(i)) return false;
     if (!this.isEnemy(i)) return true;
     const p = this.stOf(i), q = this.pl[i];
-    return seen(this.world, this.t, { x: q.x, y: q.y, kit: p.kit, atkAt: q.atkAt, trackUntil: p.trT === this.myTeam ? p.tr : 0, smokeUntil: p.sm }, viewers);
+    if (!seen(this.world, this.t, { x: q.x, y: q.y, kit: p.kit, atkAt: q.atkAt, trackUntil: p.trT === this.myTeam ? p.tr : 0, smokeUntil: p.sm }, viewers)) return false;
+    return body || this.lit(i);
   }
 
   enemyTargets() {
@@ -516,7 +601,11 @@ export class BrawlScene extends MiniScene {
           if (j !== this.me) this.pl[j].hurtAt = t;
           else { this.my.hurtAt = t; this.shake = Math.max(this.shake, Math.min(5, 1 + dmg / 500)); sfx(storm ? 'sand' : 'hurt'); }
           if (by === this.me) { sfx('hitmark'); this.dmgDealt += dmg; }
-          const show = j === this.me || by === this.me || !this.isEnemy(j) || this.visible(j);
+          // ses propres coups s'affichent sur un ennemi caché dans un buisson (la balle s'y arrête sous ses yeux), pas sur
+          // un ennemi dans le noir : on n'y voit pas où elle s'arrête, seul le « touché » (hitmark) le dit. Sauf le pisteur
+          // de son équipe : son coup marque l'ennemi, visible 4 s (l'état qui le dit n'arrive qu'après cet événement)
+          const marks = by >= 0 && this.stOf(by)?.kit === 'arc' && this.stOf(by).team === this.myTeam;
+          const show = j === this.me || !this.isEnemy(j) || this.visible(j) || marks || (by === this.me && this.lit(j));
           if (show) this.pop(q.x, q.y - 1.6, `-${dmg}`, j === this.me ? '#f05050' : by === this.me ? '#ffffff' : '#f8b0a0', j === this.me || dmg >= 1500);
         }
         for (const [j, heal] of ev.h) {
@@ -645,6 +734,7 @@ export class BrawlScene extends MiniScene {
     if (me?.alive && this.playing && me.kit) {
       const K = KITS[me.kit];
       my.ammo = Math.min(K.ammo, my.ammo + dt / reloadOf(me.kit));
+      const wx = my.x, wy = my.y;
       if (my.leap) {
         const L = my.leap, k = clamp((t - L.t0) / (L.t1 - L.t0), 0, 1);
         my.x = L.x0 + (L.x1 - L.x0) * k;
@@ -667,7 +757,7 @@ export class BrawlScene extends MiniScene {
         }
       }
       if (this.mouse.in && !this.touch && !my.dash && !my.leap) { const a = this.aimWorld(); my.a = Math.atan2(a.y - my.y, a.x - my.x); }
-      if (my.mv) my.walk += dt;
+      if (my.mv) my.walk += Math.hypot(my.x - wx, my.y - wy) * T * STRIDE;
       if (this.firing) this.tryAttack(true);
       // objets au sol
       for (const it of this.items.values()) {
@@ -692,16 +782,18 @@ export class BrawlScene extends MiniScene {
       const ox = q.x, oy = q.y;
       q.x += (q.tx - q.x) * k;
       q.y += (q.ty - q.y) * k;
-      if (Math.hypot(q.x - ox, q.y - oy) > 0.002) q.walk += dt;
+      const d = Math.hypot(q.x - ox, q.y - oy);
+      if (d > 0.002) q.walk += d * T * STRIDE;
     });
     this.animTick(t, dt);
     // projectiles : les siens comptent les touches, ceux des autres ne sont qu'un effet
     this.stepAll(t);
-    // effets
+    // effets (le freinage dépend du temps écoulé, pas du nombre d'images par seconde)
     let n = 0;
+    const damp = 0.92 ** (dt / 16.7);
     for (const p of this.fx) {
       p.t += dt;
-      if (p.vx != null) { p.x += p.vx * s; p.y += p.vy * s; p.vx *= 0.92; p.vy *= 0.92; }
+      if (p.vx != null) { p.x += p.vx * s; p.y += p.vy * s; p.vx *= damp; p.vy *= damp; }
       if (p.vz != null) { p.z = (p.z || 0) + p.vz * s; p.vz -= 160 * s; if (p.z < 0) { p.z = 0; p.vz *= -0.3; } }
       if (p.t < p.life) this.fx[n++] = p;
     }
@@ -766,7 +858,7 @@ export class BrawlScene extends MiniScene {
     });
     // étincelles de la mèche des bâtons de dynamite en vol
     for (const sh of this.shots) {
-      if (sh.kind !== 'bomb' || sh.rec.k !== 'dynamite' || t < sh.at || Math.random() > 0.6) continue;
+      if (sh.kind !== 'bomb' || sh.rec.k !== 'dynamite' || t < sh.at || Math.random() > dt / 28) continue; // ~35 étincelles par seconde
       const k = clamp((t - sh.at) / (sh.t1 - sh.at), 0, 1);
       const h = Math.sin(k * Math.PI) * (sh.big ? 34 : 26) + 8;
       this.part({ kind: 'spk', x: sh.x0 + (sh.x - sh.x0) * k, y: sh.y0 + (sh.y - sh.y0) * k, z: h, vx: (Math.random() - 0.5) * 1.5, vy: (Math.random() - 0.5) * 1.5, vz: 10, life: 220, t: 0 });
@@ -784,7 +876,7 @@ export class BrawlScene extends MiniScene {
     my.y = to.y;
     my.mv = true;
     ds.left -= step;
-    if (Math.random() < 0.6) this.part({ kind: 'dust', x: my.x, y: my.y + 0.3, vx: -Math.cos(ds.a), vy: -Math.sin(ds.a), life: 400, t: 0 });
+    if (Math.random() < s * 36) this.part({ kind: 'dust', x: my.x, y: my.y + 0.3, vx: -Math.cos(ds.a), vy: -Math.sin(ds.a), life: 400, t: 0 });
     for (const tg of this.enemyTargets()) {
       if (ds.hit.has(tg.tg + tg.id) || Math.hypot(tg.x - my.x, tg.y - my.y) > BR.body + tg.r + 0.25) continue;
       ds.hit.add(tg.tg + tg.id);
@@ -813,7 +905,8 @@ export class BrawlScene extends MiniScene {
       targets: () => this.enemyTargets(),
       hit: (p, tg) => {
         this.sendHit(p.rec, p.b, tg.tg, tg.id, { d: r2(Math.hypot(p.x - p.x0, p.y - p.y0)), st: p.rec.st });
-        this.part({ kind: 'spark', x: p.x, y: p.y, life: 220, t: 0, r: Math.random() });
+        // pas d'étincelle sur un ennemi resté dans le noir (elle le trahirait)
+        if (tg.tg !== 'p' || this.lit(tg.id)) this.part({ kind: 'spark', x: p.x, y: p.y, life: 220, t: 0, r: Math.random() });
       },
       wall: (p, ci, c) => {
         const key = `c${ci}`;
@@ -827,7 +920,7 @@ export class BrawlScene extends MiniScene {
     };
     const otherHooks = {
       targets: (p) => this.othersTargets(p.rec),
-      hit: (p) => this.part({ kind: 'spark', x: p.x, y: p.y, life: 220, t: 0, r: Math.random() }),
+      hit: (p, tg) => { if (tg.tg !== 'p' || this.visible(tg.id)) this.part({ kind: 'spark', x: p.x, y: p.y, life: 220, t: 0, r: Math.random() }); },
       boom: (p) => this.boomFx(p),
       zoneTick: (z) => this.zoneFx(z),
       end: (p) => this.endFx(p),
@@ -905,11 +998,12 @@ export class BrawlScene extends MiniScene {
     this.drawWater(ctx, now, cx, cy);
     this.drawObjectives(ctx, t, now);
     this.drawItems(ctx, t, now);
+    this.drawFx(ctx, t, now, true); // pas et poussière : au sol, sous les personnages
     const viewers = this.viewers();
-    const vis = this.state.players.map((_, i) => i === this.me || this.visible(i, viewers));
+    const vis = this.state.players.map((_, i) => i === this.me || this.visible(i, viewers, true));
     this.drawRows(ctx, t, now, cx, cy, vis);
     this.drawShots(ctx, t);
-    this.drawFx(ctx, t, now);
+    this.drawFx(ctx, t, now, false);
     if (this.cfg.storm) this.drawStorm(ctx, t, now);
     ctx.restore();
     this.tint(out, now);
@@ -962,10 +1056,7 @@ export class BrawlScene extends MiniScene {
       const col = inside > 1 ? (Math.floor(now / 200) % 2 ? '#f05050' : '#f8f8f8') : inside === 1 ? this.colorOf(king) : '#f8e8c0';
       const R = this.cfg.hill * T;
       ctx.globalAlpha = 0.18 + (inside === 1 ? 0.1 : 0);
-      ctx.fillStyle = col;
-      ctx.beginPath();
-      ctx.arc(w.cx * T, w.cy * T, R, 0, Math.PI * 2);
-      ctx.fill();
+      pdisc(ctx, w.cx * T, w.cy * T, R, col);
       ctx.globalAlpha = 1;
       ctx.fillStyle = col;
       const n = 48;
@@ -1032,7 +1123,6 @@ export class BrawlScene extends MiniScene {
         ctx.fillRect(Math.round((cx + Math.cos(b) * r) * 2) / 2, Math.round((cy + Math.sin(b) * r) * 2) / 2, 1, 1);
       }
     };
-    const disc = (cx, cy, r, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); };
     // forme remplie, avec un contour clair doublé d'un liseré sombre (lisible sur le sable comme sur la neige)
     const shape = (pts, fillCol, edgeCol) => {
       ctx.beginPath();
@@ -1041,12 +1131,13 @@ export class BrawlScene extends MiniScene {
       ctx.closePath();
       ctx.fillStyle = fillCol;
       ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = 'rgba(30,15,5,0.45)';
-      ctx.save(); ctx.translate(0, 0.5); ctx.stroke(); ctx.restore();
-      ctx.strokeStyle = edgeCol;
-      ctx.stroke();
+      // le bord au pixel près (pline), par-dessus le bord lissé du remplissage
+      const edges = (col, dy) => {
+        ctx.fillStyle = col;
+        pts.forEach(([ax, ay], k) => { const [bx, by] = pts[(k + 1) % pts.length]; pline(ctx, ax, ay + dy, bx, by + dy, 1); });
+      };
+      edges('rgba(30,15,5,0.45)', 0.5);
+      edges(edgeCol, 0);
     };
     // éventail de rayons arrêtés par les murs (balles, plombs, coups au corps à corps)
     const fanPts = (a0, spread, range, n) => {
@@ -1072,17 +1163,15 @@ export class BrawlScene extends MiniScene {
         // en cloche, par-dessus les murs : le point de chute et la trajectoire
         const aim = clampAim(my.x, my.y, a.x, a.y, sp.range);
         const r = radOf(me.kit, sp) * T;
-        ctx.fillStyle = fill;
-        ctx.beginPath(); ctx.arc(aim.x * T, aim.y * T, r, 0, Math.PI * 2); ctx.fill();
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(30,15,5,0.45)'; ctx.beginPath(); ctx.arc(aim.x * T, aim.y * T + 0.5, r, 0, Math.PI * 2); ctx.stroke();
-        ctx.strokeStyle = edge; ctx.beginPath(); ctx.arc(aim.x * T, aim.y * T, r, 0, Math.PI * 2); ctx.stroke();
+        pdisc(ctx, aim.x * T, aim.y * T, r, fill);
+        pdisc(ctx, aim.x * T, aim.y * T + 0.5, r + 0.5, 'rgba(30,15,5,0.45)', true);
+        pdisc(ctx, aim.x * T, aim.y * T, r + 0.5, edge, true);
         const d = Math.hypot(aim.x - my.x, aim.y - my.y) * T;
         for (let k = 4; k < d; k += 3) {
           const h = Math.sin((k / d) * Math.PI) * 12;
           const px = x0 + Math.cos(ang) * k, py = y0 + Math.sin(ang) * k - h;
-          ctx.fillStyle = 'rgba(30,15,5,0.4)'; ctx.fillRect(px - 0.5, py, 1.5, 1.5);
-          ctx.fillStyle = edge; ctx.fillRect(px - 0.5, py - 0.5, 1.5, 1.5);
+          ctx.fillStyle = 'rgba(30,15,5,0.4)'; ctx.fillRect(px2(px - 0.5), px2(py), 1.5, 1.5);
+          ctx.fillStyle = edge; ctx.fillRect(px2(px - 0.5), px2(py - 0.5), 1.5, 1.5);
         }
       } else if (sp.t === 'melee') {
         shape(fanPts(ang, sp.arc, sp.range + BR.body, 10), fill, edge);
@@ -1098,27 +1187,23 @@ export class BrawlScene extends MiniScene {
     const cancel = this.supCancel();
     const sp = specOf(me.kit, true);
     const pulse = 0.5 + 0.5 * Math.sin(now / 110);
-    const fill = cancel ? 'rgba(240,80,80,0.12)' : `rgba(255,236,170,${0.26 + 0.12 * pulse})`;
+    const fill = cancel ? 'rgba(240,80,80,0.12)' : `rgba(255,236,170,${(0.26 + 0.12 * pulse).toFixed(2)})`;
+    // zone pleine : couleur fixe (gardée en cache), la pulsation passe par globalAlpha
+    const disc = (cx, cy, r) => { ctx.globalAlpha = cancel ? 0.12 : 0.26 + 0.12 * pulse; pdisc(ctx, cx, cy, r, cancel ? '#f05050' : '#ffecaa'); ctx.globalAlpha = 1; };
     const edge = cancel ? 'rgba(240,90,90,0.9)' : '#ffe080';
-    const ring = (cx, cy, r) => {
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(40,20,0,0.55)';
-      ctx.beginPath(); ctx.arc(cx, cy + 0.5, r, 0, Math.PI * 2); ctx.stroke();
-      ctx.strokeStyle = edge;
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-    };
+    const ring = (cx, cy, r) => { pdisc(ctx, cx, cy + 0.5, r + 0.5, 'rgba(40,20,0,0.55)', true); pdisc(ctx, cx, cy, r + 0.5, edge, true); };
     if (sp.t === 'lob' || sp.t === 'zone' || sp.t === 'leap' || sp.t === 'turret') {
       dots(x0, y0, sp.range * T, 120, 'rgba(255,236,170,0.6)', 3); // portée
       const aim = clampAim(my.x, my.y, a.x, a.y, sp.range);
       const r = (sp.t === 'turret' ? 0.7 : radOf(me.kit, sp)) * T;
-      disc(aim.x * T, aim.y * T, r, fill);
+      disc(aim.x * T, aim.y * T, r);
       ring(aim.x * T, aim.y * T, r);
       const d = Math.hypot(aim.x - my.x, aim.y - my.y) * T;
       ctx.fillStyle = edge;
       for (let k = 6; k < d; k += 3) { const h = Math.sin((k / d) * Math.PI) * (sp.t === 'leap' ? 18 : 14); ctx.fillRect(Math.round(x0 + Math.cos(ang) * k), Math.round(y0 + Math.sin(ang) * k - h - 6), 1, 1); }
     } else if (sp.t === 'slam') {
       const r = sp.rad * T;
-      disc(x0, y0, r, fill);
+      disc(x0, y0, r);
       ring(x0, y0, r);
     } else if (sp.t === 'ring') {
       // les balles tout autour s'arrêtent sur les murs
@@ -1171,7 +1256,7 @@ export class BrawlScene extends MiniScene {
       for (let x = x0; x <= x1; x++) {
         const c = w.cells[y * w.w + x];
         const px = x * T, py = y * T;
-        if (c === C.WALL) { const s = wallSprite(w, x, y); drawQ(ctx, s, px, py - s.top); }
+        if (c === C.WALL) { if (!this.markOf || this.markOf[y * w.w + x] < 0) { const s = wallSprite(w, x, y); drawQ(ctx, s, px - s.left, py - s.top); } }
         else if (c === C.CRATE) { const s = crateSprite(w.env, x, y); drawQ(ctx, s, px - 1, py + T - s.height / Q + 2); }
         else if (c === C.CHEST) {
           const s = chestSprite();
@@ -1180,6 +1265,7 @@ export class BrawlScene extends MiniScene {
           if (hp != null && hp < BR.chestHp) { ctx.fillStyle = OUTC; ctx.fillRect(px + 1, py - 9, 14, 3); ctx.fillStyle = '#e0b040'; ctx.fillRect(px + 2, py - 8, Math.round((12 * hp) / BR.chestHp), 1); }
         } else if (c === C.SAND) { const s = sandSprite(); drawQ(ctx, s, px - 1, py + T - s.height / Q + 2); }
       }
+      for (const m of this.marks) if (m.y + m.h - 1 === y) drawQ(ctx, markSprite(w.env, m), m.x * T - MARK_SIDE, m.y * T - MARK_TOP);
       const ents = rows.get(y);
       if (ents) {
         ents.sort((a, b) => a.y - b.y);
@@ -1206,9 +1292,10 @@ export class BrawlScene extends MiniScene {
     const a = i === this.me ? this.my.a : q.a;
     const back = Math.sin(a) < -0.45;
     const moving = i === this.me ? this.my.mv : Math.hypot(q.tx - q.x, q.ty - q.y) > 0.03 || !!q.leap;
-    const frame = moving ? Math.floor((q.walk || 0) / 110) % 4 : 0;
     const flip = Math.cos(a) < 0;
     const L = i === this.me ? this.my.leap : q.leap;
+    // en l'air (bond), les jambes restent repliées au lieu de marcher dans le vide
+    const frame = L ? 1 : moving ? Math.floor((q.walk || 0) / 110) % 4 : 0;
     const hop = L ? Math.sin(clamp((t - L.t0) / (L.t1 - L.t0), 0, 1) * Math.PI) * 18 : 0;
     const x = Math.round(q.x * T * 2) / 2, y = Math.round(q.y * T * 2) / 2;
     const since = t - (A.atkAt ?? -1e9);
@@ -1216,11 +1303,11 @@ export class BrawlScene extends MiniScene {
     // traînée de la charge et du bond
     if (A.trail?.length) {
       const body0 = charSprite(r, kit, back, 1);
-      A.trail.forEach((p, k) => { ctx.globalAlpha = 0.1 + 0.07 * k; blit(ctx, body0, p.x * T, p.y * T - p.h, flip); });
+      A.trail.forEach((p, k) => { ctx.globalAlpha = 0.1 + 0.07 * k; blit(ctx, body0, px2(p.x * T), px2(p.y * T - p.h), flip); });
       ctx.globalAlpha = 1;
     }
     // ombre (plus petite en l'air) et cercle de couleur
-    const sw = Math.max(3, 5 - hop / 6);
+    const sw = px2(Math.max(3, 5 - hop / 6));
     ctx.fillStyle = 'rgba(0,0,0,0.28)';
     ctx.fillRect(x - sw, y - 1, sw * 2, 2);
     ctx.fillRect(x - sw + 2, y - 1.5, sw * 2 - 4, 3);
@@ -1237,7 +1324,7 @@ export class BrawlScene extends MiniScene {
     const kick = since < 150 ? 1 - since / 150 : 0;
     const hurt = t - ((i === this.me ? this.my.hurtAt : q.hurtAt) || -1e9) < 150;
     const jit = hurt ? (Math.floor(now / 30) % 2 ? 0.5 : -0.5) : 0;
-    const bx = x + jit - Math.cos(a) * kick * 0.5, by = y + bob - hop;
+    const bx = px2(x + jit - Math.cos(a) * kick * 0.5), by = px2(y + bob - hop);
     // l'arme : recule le long du regard, balaie l'arc au corps à corps, part avec le bâton lancé, tremble en rafale
     const sp = specOf(kit, !!A.atkSup);
     let wa = a, wox = 0, woy = 0, showW = true;
@@ -1256,8 +1343,8 @@ export class BrawlScene extends MiniScene {
     const appear = clamp(born / 350, 0, 1);
     ctx.globalAlpha = (ghost ? 0.45 : 1) * (0.25 + 0.75 * appear);
     const body = charSprite(r, kit, back, frame);
-    const wp = weaponSprite(kit, wa);
-    const hx = bx + (flip ? -3.5 : 3.5) + wox, hy = by + HAND_Y + woy;
+    const wp = heldWeapon(kit, wa);
+    const hx = px2(bx + (flip ? -3.5 : 3.5) + wox), hy = px2(by + HAND_Y + woy);
     const drawW = () => { if (showW) blit(ctx, wp, hx, hy); };
     if (back) drawW();
     blit(ctx, body, bx, by, flip);
@@ -1273,7 +1360,7 @@ export class BrawlScene extends MiniScene {
     // éclair au bout du canon
     const tip = MUZZLE[kit];
     if (tip && since < 70 && (sp.t === 'shot' || sp.t === 'ring')) {
-      const fx = hx + Math.cos(a) * tip, fy = hy + Math.sin(a) * tip;
+      const fx = px2(hx + Math.cos(a) * tip), fy = px2(hy + Math.sin(a) * tip);
       const s = since < 35 ? 3 : 2;
       ctx.globalCompositeOperation = 'lighter';
       ctx.fillStyle = 'rgba(255,200,90,0.8)';
@@ -1287,25 +1374,26 @@ export class BrawlScene extends MiniScene {
       const k = born / 600;
       ctx.globalAlpha = (1 - k) * 0.6;
       ctx.fillStyle = '#fff4d0';
-      ctx.fillRect(x - 3 * (1 - k), y - 44, 6 * (1 - k), 44);
+      const bw = px2(3 * (1 - k));
+      if (bw > 0) ctx.fillRect(x - bw, y - 44, bw * 2, 44);
       ctx.globalAlpha = (1 - k);
-      for (let n = 0; n < 24; n++) { const b = (n / 24) * Math.PI * 2; ctx.fillRect(x + Math.cos(b) * (4 + k * 10), y + Math.sin(b) * (2 + k * 4), 1, 0.5); }
+      for (let n = 0; n < 24; n++) { const b = (n / 24) * Math.PI * 2; ctx.fillRect(px2(x + Math.cos(b) * (4 + k * 10)), px2(y + Math.sin(b) * (2 + k * 4)), 1, 0.5); }
       ctx.globalAlpha = 1;
     }
     // bouclier, sonné, bloqué, éperons
     if (t < (st.sh || 0)) {
       ctx.fillStyle = `rgba(248,224,112,${0.35 + 0.2 * Math.sin(now / 90)})`;
-      for (let k = 0; k < 40; k++) { const b = (k / 40) * Math.PI * 2; ctx.fillRect(x + Math.cos(b) * 8, by + HEAD_Y / 2 - 2 + Math.sin(b) * 11, 1, 1); }
+      for (let k = 0; k < 40; k++) { const b = (k / 40) * Math.PI * 2; ctx.fillRect(px2(x + Math.cos(b) * 8 - 0.5), px2(by + HEAD_Y / 2 - 2 + Math.sin(b) * 11 - 0.5), 1, 1); }
     }
     if (t < (q.stunUntil || 0) || (i === this.me && t < this.my.stunUntil)) {
       ctx.fillStyle = '#f8d070';
-      for (let k = 0; k < 3; k++) { const b = now / 200 + (k * Math.PI * 2) / 3; ctx.fillRect(x + Math.cos(b) * 6, by + HEAD_Y - 3 + Math.sin(b) * 2, 1.5, 1.5); }
+      for (let k = 0; k < 3; k++) { const b = now / 200 + (k * Math.PI * 2) / 3; ctx.fillRect(px2(x + Math.cos(b) * 6 - 0.75), px2(by + HEAD_Y - 3 + Math.sin(b) * 2 - 0.75), 1.5, 1.5); }
     }
-    if (t < (q.rootUntil || 0) || (i === this.me && t < this.my.rootUntil)) { const ic = icon('piege'); ctx.drawImage(ic, x - (ic.width >> 1), y - 4); }
+    if (t < (q.rootUntil || 0) || (i === this.me && t < this.my.rootUntil)) { const ic = icon('piege'); ctx.drawImage(ic, Math.round(x) - (ic.width >> 1), Math.round(y) - 4); }
     if (i === this.me && t < this.my.speedUntil && moving) {
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       const dir = flip ? 1 : -1;
-      for (let k = 0; k < 3; k++) ctx.fillRect(x + dir * (7 + ((now / 30 + k * 5) % 8)), by - 4 - k * 3, 3, 0.5);
+      for (let k = 0; k < 3; k++) ctx.fillRect(px2(x + dir * (7 + ((now / 30 + k * 5) % 8))), by - 4 - k * 3, 3, 0.5);
     }
   }
 
@@ -1330,85 +1418,82 @@ export class BrawlScene extends MiniScene {
   }
 
   // Les projectiles : à hauteur d'arme (BZ pixels au-dessus du sol) avec leur ombre au sol, une lueur, un contour sombre
-  // pour ressortir sur le sable ou la neige, et une traînée.
+  // pour ressortir sur le sable ou la neige, et une traînée. Tracés au pixel fin le long de leur direction (pline),
+  // sans rotate() : les bords restent nets.
   drawShots(ctx, t) {
     const BZ = 7;
     for (const p of this.shots) {
       const rec = p.rec;
       if (p.kind === 'b') {
         if (t < p.at) continue;
-        const x = p.x * T, y = p.y * T;
+        const x = p.x * T, y = p.y * T - BZ;
+        const ca = Math.cos(p.a), sa = Math.sin(p.a);
+        // trait le long de la balle : de a0 à a1 pixels (vers l'avant), décalé de off pixels sur le côté
+        const L = (a0, a1, w, col, off = 0) => { ctx.fillStyle = col; pline(ctx, x + ca * a0 - sa * off, y + sa * a0 + ca * off, x + ca * a1 - sa * off, y + sa * a1 + ca * off, w); };
         const kit = rec.tu != null ? 'tur' : rec.k;
         const foe = this.relOf(rec) === 'enemy';
         const body = foe ? '#ff5a3a' : '#ffd84a', core = foe ? '#ffe0d0' : '#ffffff', glow = foe ? 'rgba(255,70,40,0.4)' : 'rgba(255,220,110,0.4)';
         const out = 'rgba(30,12,6,0.75)';
         // ombre au sol
         ctx.fillStyle = 'rgba(0,0,0,0.28)';
-        ctx.fillRect(x - 2, y - 0.75, 4, 1.5);
-        ctx.save();
-        ctx.translate(x, y - BZ);
-        ctx.rotate(p.a);
+        ctx.fillRect(px2(x - 2), px2(y + BZ - 0.5), 4, 1.5);
         // la traînée (plus courte au départ, pour ne pas sortir du canon)
         const flown = Math.hypot(p.x - p.x0, p.y - p.y0) * T;
-        const trail = (len, w, col) => { const l = Math.min(len, flown); ctx.fillStyle = col; ctx.fillRect(-l, -w / 2, l, w); };
+        const trail = (len, w, col) => { const l = Math.min(len, flown); if (l > w) L(-l + w / 2, -w / 2, w, col); };
         if (kit === 'arc') {
-          trail(10, 1.5, foe ? 'rgba(255,110,80,0.4)' : 'rgba(255,255,255,0.4)');
-          ctx.fillStyle = out; ctx.fillRect(-12.5, -2, 17, 4);
-          ctx.fillStyle = '#a8784a'; ctx.fillRect(-12, -0.75, 13, 1.5);
-          ctx.fillStyle = foe ? '#ff7a5a' : '#f4f4f4'; ctx.fillRect(-12, -2, 3.5, 1.25); ctx.fillRect(-12, 0.75, 3.5, 1.25); // empennage
-          ctx.fillStyle = '#e0e8f0'; ctx.fillRect(1, -1.5, 2.5, 3); ctx.fillRect(3.5, -0.75, 1, 1.5); // pointe
+          trail(10, 1, foe ? 'rgba(255,110,80,0.4)' : 'rgba(255,255,255,0.4)');
+          L(-11.5, 3.5, 2.5, out); L(-11.5, -9, 2, out, -1.25); L(-11.5, -9, 2, out, 1.25);
+          L(-11.5, 0.5, 1, '#a8784a');
+          L(-11.5, -9, 1, foe ? '#ff7a5a' : '#f4f4f4', -1.25); L(-11.5, -9, 1, foe ? '#ff7a5a' : '#f4f4f4', 1.25); // empennage
+          L(1, 3.5, 1.5, '#e0e8f0'); // pointe
         } else if (kit === 'sniper') {
           const sup = !!rec.s, len = sup ? 30 : 22, w = sup ? 4 : 3;
           ctx.globalCompositeOperation = 'lighter';
           trail(len, w + 2, glow);
           ctx.globalCompositeOperation = 'source-over';
           trail(len, w, sup ? 'rgba(130,230,255,0.75)' : foe ? 'rgba(255,110,80,0.7)' : 'rgba(255,230,150,0.7)');
-          ctx.fillStyle = out; ctx.fillRect(-3.5, -w / 2 - 0.5, 7, w + 1);
-          ctx.fillStyle = sup ? '#c8f4ff' : core; ctx.fillRect(-3, -w / 2, 6, w);
+          L(-3.5 + (w + 1) / 2, 3.5 - (w + 1) / 2, w + 1, out);
+          L(-3 + w / 2, 3 - w / 2, w, sup ? '#c8f4ff' : core);
         } else {
           // balles de revolver, plombs, rafales : une goutte de lumière avec sa traînée
           const big = kit === 'pompe' ? 4 : kit === 'colts' ? 5.5 : 4.5;
-          const hw = kit === 'pompe' ? 2 : 1.75;
+          const hw = kit === 'pompe' ? 2 : 1.5;
           trail(kit === 'pompe' ? 7 : 12, hw * 1.5, foe ? 'rgba(255,90,60,0.5)' : 'rgba(255,220,120,0.5)');
           ctx.globalCompositeOperation = 'lighter';
-          ctx.fillStyle = glow;
-          ctx.beginPath(); ctx.arc(0, 0, big * 0.8 + 1.5, 0, Math.PI * 2); ctx.fill();
+          pdisc(ctx, x, y, big * 0.8 + 1.5, glow);
           ctx.globalCompositeOperation = 'source-over';
-          ctx.fillStyle = out; ctx.fillRect(-big / 2 - 0.5, -hw - 0.5, big + 1, hw * 2 + 1);
-          ctx.fillStyle = body; ctx.fillRect(-big / 2, -hw, big, hw * 2);
-          ctx.fillStyle = core; ctx.fillRect(0, -hw / 2, big / 2, hw);
+          // la goutte : ronde (elle se lit pareil dans toutes les directions), le cœur blanc vers l'avant
+          pdisc(ctx, x, y, hw + 1, out);
+          pdisc(ctx, x, y, hw + 0.5, body);
+          pdisc(ctx, x + ca * big * 0.2, y + sa * big * 0.2, hw * 0.5 + 0.25, core);
         }
-        ctx.restore();
       } else if (p.kind === 'bomb') {
         const k = clamp((t - p.at) / (p.t1 - p.at), 0, 1);
         const gx = p.x0 + (p.x - p.x0) * k, gy = p.y0 + (p.y - p.y0) * k;
         const h = Math.sin(k * Math.PI) * (p.big ? 34 : 26);
         ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.fillRect(gx * T - 3, gy * T - 0.5, 6, 2);
+        ctx.fillRect(px2(gx * T - 3), px2(gy * T - 0.5), 6, 2);
         // zone d'impact au sol, rouge si elle vient d'un ennemi
         const foe = this.relOf(rec) === 'enemy';
-        ctx.fillStyle = foe ? 'rgba(255,70,40,0.16)' : 'rgba(255,255,255,0.12)';
-        ctx.beginPath(); ctx.arc(p.x * T, p.y * T, p.rad * T, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = foe ? 'rgba(255,90,60,0.7)' : 'rgba(255,255,255,0.5)';
-        ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.arc(p.x * T, p.y * T, p.rad * T * (0.4 + 0.6 * k), 0, Math.PI * 2); ctx.stroke();
-        const x = gx * T, y = gy * T - h - 6;
+        pdisc(ctx, p.x * T, p.y * T, p.rad * T, foe ? 'rgba(255,70,40,0.16)' : 'rgba(255,255,255,0.12)');
+        ctx.fillStyle = foe ? 'rgba(255,90,60,0.7)' : 'rgba(255,255,255,0.5)';
+        pring(ctx, p.x * T, p.y * T, p.rad * T * (0.4 + 0.6 * k), 0.5, 1, Math.max(24, Math.round(p.rad * T * (0.4 + 0.6 * k) * 4)));
+        const x = px2(gx * T), y = px2(gy * T - h - 6);
         if (rec.k === 'dynamite') {
-          if (p.big) { const s = crateSprite('mine', 1, 1); drawQ(ctx, s, x - 8, y - 12); }
+          if (p.big) { const s = crateSprite('mine', 0, 0, 1); drawQ(ctx, s, x - 9, y - 12); } // la caisse de TNT
           else {
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(t / 90);
-            ctx.fillStyle = 'rgba(30,12,6,0.75)'; ctx.fillRect(-4, -2, 8, 4);
-            ctx.fillStyle = '#d83828'; ctx.fillRect(-3.5, -1.5, 7, 3);
-            ctx.fillStyle = '#f07060'; ctx.fillRect(-3.5, -1.5, 7, 1);
-            ctx.fillStyle = Math.floor(t / 60) % 2 ? '#f8d070' : '#ffffff'; ctx.fillRect(3.5, -1, 1.5, 1.5);
-            ctx.restore();
+            // le bâton tourne par huitièmes de tour : un trait au pixel près, la mèche qui crépite au bout
+            const b = Math.round(t / 70) * (Math.PI / 4), ca = Math.cos(b), sa = Math.sin(b);
+            ctx.fillStyle = 'rgba(30,12,6,0.75)'; pline(ctx, x - ca * 2, y - sa * 2, x + ca * 2, y + sa * 2, 4);
+            ctx.fillStyle = '#d83828'; pline(ctx, x - ca * 2, y - sa * 2, x + ca * 2, y + sa * 2, 3);
+            ctx.fillStyle = '#f07060'; ctx.fillRect(px2(x - ca * 1.5 - 0.5), px2(y - sa * 1.5 - 1), 1, 1);
+            ctx.fillStyle = Math.floor(t / 60) % 2 ? '#f8d070' : '#ffffff'; ctx.fillRect(px2(x + ca * 4 - 0.75), px2(y + sa * 4 - 0.75), 1.5, 1.5);
           }
         } else if (rec.k === 'docteur') {
+          // la fiole culbute par quarts de tour (rotate d'un multiple de 90° : les pixels restent nets)
           ctx.save();
           ctx.translate(x, y);
-          ctx.rotate(t / 120);
+          ctx.rotate(Math.round(t / 120 / (Math.PI / 2)) * (Math.PI / 2));
           ctx.fillStyle = 'rgba(30,12,6,0.75)'; ctx.fillRect(-3, -3.5, 6, 7.5);
           ctx.fillStyle = rec.s ? '#70d070' : '#a060e0'; ctx.fillRect(-2.5, -2, 5, 5.5);
           ctx.fillStyle = '#e8e0d0'; ctx.fillRect(-1, -3.5, 2, 1.5);
@@ -1423,19 +1508,19 @@ export class BrawlScene extends MiniScene {
       } else if (p.kind === 'zone') {
         const foe = this.relOf(rec) === 'enemy';
         const r = p.rad * T;
-        ctx.fillStyle = rec.k === 'arc' ? (foe ? 'rgba(255,90,60,0.14)' : 'rgba(240,200,120,0.14)') : 'rgba(150,230,140,0.16)';
-        ctx.beginPath(); ctx.arc(p.x * T, p.y * T, r, 0, Math.PI * 2); ctx.fill();
+        pdisc(ctx, p.x * T, p.y * T, r, rec.k === 'arc' ? (foe ? 'rgba(255,90,60,0.14)' : 'rgba(240,200,120,0.14)') : 'rgba(150,230,140,0.16)');
         ctx.fillStyle = rec.k === 'arc' ? (foe ? 'rgba(255,90,60,0.7)' : 'rgba(240,200,120,0.7)') : 'rgba(150,230,140,0.7)';
-        for (let n = 0; n < 48; n++) { if ((n + Math.floor(t / 100)) % 2) continue; const b = (n / 48) * Math.PI * 2; ctx.fillRect(p.x * T + Math.cos(b) * r - 0.5, p.y * T + Math.sin(b) * r - 0.5, 1, 1); }
+        for (let n = 0; n < 48; n++) { if ((n + Math.floor(t / 100)) % 2) continue; const b = (n / 48) * Math.PI * 2; ctx.fillRect(px2(p.x * T + Math.cos(b) * r - 0.5), px2(p.y * T + Math.sin(b) * r - 0.5), 1, 1); }
       }
     }
   }
 
-  drawFx(ctx, t, now) {
-    const disc = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, Math.max(0.5, r), 0, Math.PI * 2); ctx.fill(); };
+  // Effets : ground = true pour ceux qui restent au sol (pas, poussière), dessinés avant les personnages
+  drawFx(ctx, t, now, ground) {
     for (const p of this.fx) {
+      if ((p.kind === 'step' || p.kind === 'dust') !== ground) continue;
       const k = p.t / p.life;
-      const x = p.x * T, y = p.y * T - (p.z || 0);
+      const x = px2(p.x * T), y = px2(p.y * T - (p.z || 0));
       switch (p.kind) {
         case 'flash': // tourelle (les joueurs ont l'éclair au bout du canon) ; sert aussi de lumière dans le noir
           if (p.show) { ctx.fillStyle = '#fff8c0'; ctx.fillRect(x - 1.5, y - 10, 3, 3); }
@@ -1443,28 +1528,27 @@ export class BrawlScene extends MiniScene {
         case 'spark': { // impact : quatre éclats qui filent
           ctx.fillStyle = k < 0.4 ? '#ffffff' : '#f8d070';
           const d = 1 + k * 4;
-          for (let n = 0; n < 4; n++) { const b = (n / 4) * Math.PI * 2 + Math.PI / 4 + (p.r || 0); ctx.fillRect(x + Math.cos(b) * d - 0.5, y - 8 + Math.sin(b) * d - 0.5, 1, 1); }
+          for (let n = 0; n < 4; n++) { const b = (n / 4) * Math.PI * 2 + Math.PI / 4 + (p.r || 0); ctx.fillRect(px2(x + Math.cos(b) * d - 0.5), px2(y - 8 + Math.sin(b) * d - 0.5), 1, 1); }
           if (k < 0.3) ctx.fillRect(x - 1, y - 9, 2, 2);
           break;
         }
         case 'bit': ctx.fillStyle = p.col; ctx.globalAlpha = 1 - k * k; ctx.fillRect(x - (p.sz || 1), y - 2, (p.sz || 1) * 2, p.sz === 0.5 ? 1 : (p.sz || 1) * 2); ctx.globalAlpha = 1; break;
         case 'ember': ctx.fillStyle = k < 0.5 ? '#f8d070' : '#e86020'; ctx.globalAlpha = 1 - k; ctx.fillRect(x - 0.5, y - 0.5, 1, 1); ctx.globalAlpha = 1; break;
         case 'spk': ctx.fillStyle = k < 0.5 ? '#fff4b0' : '#f8a040'; ctx.fillRect(x - 0.5, y - 0.5, 1, 1); break;
-        case 'dust': ctx.fillStyle = `rgba(220,200,160,${0.55 * (1 - k)})`; disc(x, y, 1 + k * 2.5); break;
-        case 'step': ctx.fillStyle = p.col; ctx.globalAlpha = 0.5 * (1 - k); disc(x, y, 0.8 + k * 2); ctx.globalAlpha = 1; break;
-        case 'leaf': ctx.fillStyle = p.col; ctx.globalAlpha = 1 - k; ctx.fillRect(x + Math.sin(p.t / 80) * 1.5, y, 1.5, 1); ctx.globalAlpha = 1; break;
-        case 'smoke': { const r = p.r * (0.5 + k * 0.9); ctx.fillStyle = `rgba(${p.dark ? '60,52,48' : '130,120,110'},${0.45 * (1 - k)})`; disc(x, y - 4 - k * 10, r); break; }
-        case 'mist': { const r = p.r * (0.7 + k * 0.6); ctx.fillStyle = p.col; ctx.globalAlpha = 1 - k; disc(x, y, r); ctx.globalAlpha = 1; break; }
-        case 'plus': ctx.fillStyle = `rgba(120,240,120,${1 - k})`; ctx.fillRect(x - 1, y - 14, 3, 1); ctx.fillRect(x, y - 15, 1, 3); break;
-        case 'glint': { const s = k < 0.5 ? k * 4 : (1 - k) * 4; ctx.fillStyle = '#fff8d0'; ctx.fillRect(x - s / 2, y - 0.25, s, 0.5); ctx.fillRect(x - 0.25, y - s / 2, 0.5, s); break; }
+        case 'dust': ctx.globalAlpha = 0.55 * (1 - k); pdisc(ctx, x, y, 1 + k * 2.5, '#dcc8a0'); ctx.globalAlpha = 1; break;
+        case 'step': ctx.globalAlpha = 0.5 * (1 - k); pdisc(ctx, x, y, 0.8 + k * 2, p.col); ctx.globalAlpha = 1; break;
+        case 'leaf': ctx.fillStyle = p.col; ctx.globalAlpha = 1 - k; ctx.fillRect(px2(x + Math.sin(p.t / 80) * 1.5), y, 1.5, 1); ctx.globalAlpha = 1; break;
+        case 'smoke': ctx.globalAlpha = 0.45 * (1 - k); pdisc(ctx, x, y - 4 - k * 10, p.r * (0.5 + k * 0.9), p.dark ? '#3c3430' : '#82786e'); ctx.globalAlpha = 1; break;
+        case 'mist': ctx.globalAlpha = 1 - k; pdisc(ctx, x, y, p.r * (0.7 + k * 0.6), p.col); ctx.globalAlpha = 1; break;
+        case 'plus': ctx.fillStyle = '#78f078'; ctx.globalAlpha = 1 - k; ctx.fillRect(x - 1, y - 14, 3, 1); ctx.fillRect(x, y - 15, 1, 3); ctx.globalAlpha = 1; break;
+        case 'glint': { const s = px2(k < 0.5 ? k * 4 : (1 - k) * 4); if (s > 0) { ctx.fillStyle = '#fff8d0'; ctx.fillRect(px2(x - s / 2), y, s, 0.5); ctx.fillRect(x, px2(y - s / 2), 0.5, s); } break; }
         case 'boom': { // boule de feu : éclair blanc, puis des boules qui gonflent, jaunissent, rougissent et s'éteignent en fumée
-          if (p.t < 70) { ctx.fillStyle = 'rgba(255,250,225,0.95)'; disc(x, y, p.r * T * (0.6 + p.t / 140)); }
+          if (p.t < 70) { ctx.globalAlpha = 0.95; pdisc(ctx, x, y, p.r * T * (0.6 + p.t / 140), '#fffae1'); }
           for (const b of p.blobs) {
             const kk = clamp((p.t - b.d) / (p.life - b.d), 0, 1);
             if (kk <= 0 || kk >= 1) continue;
-            ctx.fillStyle = kk < 0.15 ? '#fff4c0' : kk < 0.35 ? '#f8c040' : kk < 0.6 ? '#e86020' : '#5a2a1a';
             ctx.globalAlpha = kk < 0.6 ? 1 : 1 - (kk - 0.6) / 0.4;
-            disc(x + b.dx * T * (1 + kk * 0.6), y + b.dy * T * (1 + kk * 0.6) - kk * 8, b.r * (0.45 + kk * 0.75));
+            pdisc(ctx, x + b.dx * T * (1 + kk * 0.6), y + b.dy * T * (1 + kk * 0.6) - kk * 8, b.r * (0.45 + kk * 0.75), kk < 0.15 ? '#fff4c0' : kk < 0.35 ? '#f8c040' : kk < 0.6 ? '#e86020' : '#5a2a1a');
           }
           ctx.globalAlpha = 1;
           break;
@@ -1472,8 +1556,7 @@ export class BrawlScene extends MiniScene {
         case 'ring': {
           const r = p.r * T * (0.25 + (1 - (1 - k) ** 2) * 0.9);
           ctx.fillStyle = p.col; ctx.globalAlpha = 1 - k;
-          const n = Math.max(24, Math.round(r * 3));
-          for (let m = 0; m < n; m++) { const b = (m / n) * Math.PI * 2; ctx.fillRect(x + Math.cos(b) * r - 0.75, y + Math.sin(b) * r * 0.8 - 0.75, 1.5, 1.5); }
+          pring(ctx, x, y, r, 1.5, 0.8);
           ctx.globalAlpha = 1;
           break;
         }
@@ -1487,18 +1570,18 @@ export class BrawlScene extends MiniScene {
               const e = (n / 20) * sweep;
               if (layer === 0 && e < sweep - 0.25) continue;
               const b = p.a - p.arc / 2 + e * p.arc;
-              ctx.fillRect(x + Math.cos(b) * rr - 0.75, y - 8 + Math.sin(b) * rr - 0.75, 1.5, 1.5);
+              ctx.fillRect(px2(x + Math.cos(b) * rr - 0.75), px2(y - 8 + Math.sin(b) * rr - 0.75), 1.5, 1.5);
             }
           }
           ctx.globalAlpha = 1;
           break;
         }
         case 'arrow': ctx.fillStyle = '#8a5a30'; ctx.fillRect(x, y - 6, 1, 6); ctx.fillStyle = '#e0e8f0'; ctx.fillRect(x, y, 1, 1); ctx.fillStyle = '#f0f0f0'; ctx.fillRect(x - 0.5, y - 7, 2, 1); break;
-        case 'jaws': { const ic = icon('piege'); ctx.globalAlpha = 1 - k; ctx.drawImage(ic, x - (ic.width >> 1), y - (ic.height >> 1)); ctx.globalAlpha = 1; break; }
+        case 'jaws': { const ic = icon('piege'); ctx.globalAlpha = 1 - k; ctx.drawImage(ic, Math.round(x) - (ic.width >> 1), Math.round(y) - (ic.height >> 1)); ctx.globalAlpha = 1; break; }
         case 'ghost': {
           ctx.globalAlpha = 0.6 * (1 - k);
           const ic = icon('skull', 2);
-          ctx.drawImage(ic, x - (ic.width >> 1), y - 22 - Math.round(k * 16) + Math.sin(p.t / 120) * 1.5);
+          ctx.drawImage(ic, Math.round(x) - (ic.width >> 1), Math.round(y - 22 - k * 16 + Math.sin(p.t / 120) * 1.5));
           ctx.globalAlpha = 1;
           break;
         }
@@ -1523,7 +1606,7 @@ export class BrawlScene extends MiniScene {
           const fx = (p.x + (to.x - p.x) * e) * T, fy = (p.y + (to.y - 0.8 - p.y) * e) * T - Math.sin(k * Math.PI) * 10;
           const ic = p.icon === 'gem' ? gemIcon(false) : icon('vial');
           ctx.globalAlpha = 1 - k * 0.5;
-          ctx.drawImage(ic, fx - ic.width / 2, fy - ic.height / 2);
+          ctx.drawImage(ic, Math.round(fx - ic.width / 2), Math.round(fy - ic.height / 2));
           ctx.globalAlpha = 1;
           break;
         }
@@ -1569,33 +1652,47 @@ export class BrawlScene extends MiniScene {
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'destination-out';
     const light = (x, y, r) => { const s = lightSprite(r); g.drawImage(s, Math.round(x * T - cx - r), Math.round(y * T - cy - r)); };
-    const scope = t < this.my.scopeUntil || t < (this.mine?.sc || 0);
-    const R = (scope ? 8.5 : 5) * T;
+    const R = this.myLight() * T;
     const me = this.mine;
     if (me?.alive) light(this.my.x, this.my.y, R);
     this.state.players.forEach((p, i) => {
       if (!p.alive || i === this.me) return;
-      if (this.isAlly(i)) light(this.pl[i].x, this.pl[i].y, 4 * T);
-      else if (t - this.pl[i].atkAt < 300) light(this.pl[i].x, this.pl[i].y, 1.6 * T);
+      if (this.isAlly(i)) light(this.pl[i].x, this.pl[i].y, LIGHT.ally * T);
+      else if (t - this.pl[i].atkAt < FIRE_LIT) light(this.pl[i].x, this.pl[i].y, LIGHT.fire * T);
     });
     if (!me?.alive && this.spectate >= 0) light(this.pl[this.spectate].x, this.pl[this.spectate].y, R);
-    for (const p of this.fx) if (p.kind === 'boom' || p.kind === 'flash') light(p.x, p.y, (p.kind === 'boom' ? p.r * 2.2 : 1.4) * T);
-    for (const it of this.items.values()) light(it.x, it.y, 1.2 * T);
-    if (this.cfg.gems) light(this.world.cx, this.world.cy, 2.2 * T);
+    for (const p of this.fx) if (p.kind === 'boom' || p.kind === 'flash') light(p.x, p.y, (p.kind === 'boom' ? p.r * 2.2 : LIGHT.flash) * T);
+    for (const it of this.items.values()) light(it.x, it.y, LIGHT.item * T);
+    if (this.cfg.gems) light(this.world.cx, this.world.cy, LIGHT.gems * T);
     if (this.cfg.hill) light(this.world.cx, this.world.cy, (this.cfg.hill + 0.8) * T);
-    for (const u of this.turrets.values()) light(u.x, u.y, 1.5 * T);
+    for (const u of this.turrets.values()) light(u.x, u.y, LIGHT.turret * T);
     g.globalCompositeOperation = 'source-over';
     out.drawImage(L, 0, 0);
   }
 
-  // éclairé (pour montrer barres et noms dans le noir) ?
+  // rayon de son propre halo, en cases (plus grand avec la longue-vue)
+  myLight() { return this.t < this.my.scopeUntil || this.t < (this.mine?.sc || 0) ? LIGHT.scope : LIGHT.me; }
+
+  // éclairé ? Les mêmes halos que drawDark : sans cela, chiffres, barres, noms, étincelles ou visée automatique
+  // trahiraient un ennemi resté dans le noir. Sans allocation (appelé plusieurs fois par image et par ennemi).
   lit(i) {
     if (!this.dark || i === this.me || this.isAlly(i)) return true;
-    const t = this.t, q = this.pl[i];
-    if (t < this.my.scopeUntil || t - q.atkAt < 400) return true;
-    const R = 5;
-    if (this.mine?.alive && Math.hypot(q.x - this.my.x, q.y - this.my.y) < R) return true;
-    return this.state.players.some((p, j) => p.alive && this.isAlly(j) && Math.hypot(this.pl[j].x - q.x, this.pl[j].y - q.y) < 4);
+    const t = this.t, q = this.pl[i], st = this.state, p = st.players[i], w = this.world;
+    if (p.trT === this.myTeam && t < (p.tr || 0)) return true; // touché par le pisteur : visible 4 s, même dans le noir
+    const me = this.mine;
+    if (me?.alive && inLight(q, this.my.x, this.my.y, this.myLight())) return true;
+    if (!me?.alive && this.spectate >= 0 && inLight(q, this.pl[this.spectate].x, this.pl[this.spectate].y, this.myLight())) return true;
+    for (let j = 0; j < st.players.length; j++) {
+      if (j === this.me || !st.players[j].alive) continue;
+      const o = this.pl[j];
+      if (this.isAlly(j) ? inLight(q, o.x, o.y, LIGHT.ally) : t - o.atkAt < FIRE_LIT && inLight(q, o.x, o.y, LIGHT.fire)) return true;
+    }
+    for (const f of this.fx) if ((f.kind === 'boom' || f.kind === 'flash') && inLight(q, f.x, f.y, f.kind === 'boom' ? f.r * 2.2 : LIGHT.flash)) return true;
+    if (this.items.size) for (const it of this.items.values()) if (inLight(q, it.x, it.y, LIGHT.item)) return true;
+    if (this.cfg.gems && inLight(q, w.cx, w.cy, LIGHT.gems)) return true;
+    if (this.cfg.hill && inLight(q, w.cx, w.cy, this.cfg.hill + 0.8)) return true;
+    if (this.turrets.size) for (const u of this.turrets.values()) if (inLight(q, u.x, u.y, LIGHT.turret)) return true;
+    return false;
   }
 
   // Barres de vie, noms, munitions, gemmes portées
@@ -1605,7 +1702,9 @@ export class BrawlScene extends MiniScene {
       const q = this.posOf(i);
       const L = i === this.me ? this.my.leap : q.leap;
       const hop = L ? Math.sin(clamp((t - L.t0) / (L.t1 - L.t0), 0, 1) * Math.PI) * 18 : 0;
-      const x = Math.round(q.x * T), y = Math.round(q.y * T + HEAD_Y - 12 - hop); // au-dessus du chapeau
+      // au-dessus du chapeau, sans sortir de l'image par le haut quand le personnage, lui, est à l'écran
+      const top = q.y * T - hop > this.cam.y ? Math.round(this.cam.y) + 10 : -Infinity;
+      const x = Math.round(q.x * T), y = Math.max(top, Math.round(q.y * T + HEAD_Y - 12 - hop));
       const k = clamp(p.hp / (p.maxHp || 1), 0, 1);
       const col = i === this.me ? '#60e060' : this.isAlly(i) ? '#60a0f0' : '#f05050';
       ctx.fillStyle = OUTC;
@@ -1777,15 +1876,9 @@ export class BrawlScene extends MiniScene {
       return;
     }
     if (t < 0) { this.drawPicker(ctx, t); return; }
-    if (t < 900 && !this.over) {
-      ctx.globalAlpha = 1 - t / 900;
-      canvasText(ctx, this.goText(), W / 2, 90, { size: 24, color: '#f8d070' });
-      ctx.globalAlpha = 1;
-    } else if (t >= this.duration && !this.over) {
-      ctx.fillStyle = 'rgba(26,15,10,0.6)';
-      ctx.fillRect(0, 84, W, 34);
-      canvasText(ctx, 'TEMPS ÉCOULÉ !', W / 2, 92, { size: 16, color: '#f8d070' });
-    }
+    // « GO ! » et bandeau de fin : ceux de la base (miniscene.js)
+    if (t < 900 && !this.over) this.drawGo(ctx, t);
+    else if (t >= this.duration && !this.over) this.drawTimeUp(ctx, t - this.duration);
   }
 
   // Écran du choix : les 9 kits en haut, le kit choisi en grand (nom, rôle, attaque, super, talent), les objets et « prêt » en bas
@@ -1811,7 +1904,7 @@ export class BrawlScene extends MiniScene {
       }
       const cx = c.x + c.w / 2 - 2, feet = c.y + c.h - 5;
       blit(ctx, charSprite(look, c.k, false, 0), cx, feet);
-      blit(ctx, weaponSprite(c.k, -0.35), cx + 3.5, feet + HAND_Y);
+      blit(ctx, heldWeapon(c.k, -0.35), cx + 3.5, feet + HAND_Y);
       // ce qu'ont choisi les autres (en équipe : ses coéquipiers)
       let dx = 0;
       st.players.forEach((p, i) => {
@@ -1828,7 +1921,7 @@ export class BrawlScene extends MiniScene {
     ctx.fillRect(20, 156, 40, 4);
     const big = charSprite(look, kit, false, 0);
     drawQ(ctx, big, 40 - big.ox * 2, 160 - big.oy * 2, 2);
-    const wp = weaponSprite(kit, -0.35);
+    const wp = heldWeapon(kit, -0.35);
     drawQ(ctx, wp, 50 - wp.ox * 2, 160 + HAND_Y * 2 - wp.oy * 2, 2);
     canvasText(ctx, K.name, 80, 70, { size: 16, color: col, align: 'left' });
     canvasText(ctx, `${K.role.toUpperCase()} - ${K.hp} PV`, 80, 88, { color: '#a89070', align: 'left' });
@@ -1868,7 +1961,12 @@ export class BrawlScene extends MiniScene {
     canvasText(ctx, `${ready}/${st.players.length} PRÊTS${team}`, R.x + R.w / 2, R.y + 13, { color: this.cfg.team ? TEAM_COLORS[this.myTeam] : '#e8c8a0' });
   }
 
+  // Coupe un texte en lignes (gardé : l'écran du choix le redemande à chaque image, et chaque début de ligne mesuré
+  // serait sinon un sprite de texte de plus dans le cache de scene.js)
   wrap(text, maxW) {
+    const key = `${maxW}|${text}`;
+    const done = wrapped.get(key);
+    if (done) return done;
     const words = text.toUpperCase().split(' ');
     const lines = [];
     let cur = '';
@@ -1877,6 +1975,8 @@ export class BrawlScene extends MiniScene {
       if (textSprite(next, 8, '#fff', '#000').w > maxW && cur) { lines.push(cur); cur = wd; } else cur = next;
     }
     if (cur) lines.push(cur);
+    // gardé seulement une fois Silkscreen chargée (mesuré avec la police de secours, le texte serait mal coupé)
+    if (document.fonts.check('8px Silkscreen')) wrapped.set(key, lines);
     return lines;
   }
 

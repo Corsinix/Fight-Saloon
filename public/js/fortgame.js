@@ -59,8 +59,13 @@ export const fortAttacking = (i, h) => fortTeam(i) === h;
 
 // Au-dessus de la porte, le chemin de ronde monte sur le parapet du porche.
 export const PARA_TOP = 44;
-export const overGate = (x) => Math.abs(x - FORT.gateX) <= FORT.gateW / 2 + 12;
-export const wallTop = (x) => (overGate(x) ? PARA_TOP : FORT.wallY - FORT.stakeH);
+export const PORCH_HALF = FORT.gateW / 2 + 12; // demi-largeur du porche
+export const overGate = (x) => Math.abs(x - FORT.gateX) <= PORCH_HALF;
+// De chaque côté du porche, un escalier à 45° (rampe sous un garde-corps en pente) relie les pieux au parapet :
+// les pieds du défenseur montent de 30 px sur 30 px de large au lieu de sauter d'un coup. Crête du mur au pixel
+// près (fort.js dessine la même pente) ; un défenseur montre toujours 16 px au-dessus de la crête.
+export const STAIR_W = FORT.wallY - FORT.stakeH - PARA_TOP;
+export const wallTop = (x) => PARA_TOP + Math.round(clamp(Math.abs(x - FORT.gateX) - PORCH_HALF, 0, STAIR_W));
 export const defFeet = (x) => wallTop(x) + 16;
 
 export function fortTeamSize(i, n) {

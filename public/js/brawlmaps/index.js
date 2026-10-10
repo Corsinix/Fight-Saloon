@@ -21,6 +21,8 @@ export const MAP_DIM = { quad: [31, 21], half: [33, 19] };
 // environnements : nom affiché (le décor est dans brawlart.js)
 export const BRAWL_ENVS = {
   desert: 'DÉSERT', foret: 'FORÊT', prairie: 'PRAIRIE', mine: 'MINE DE GEMMES', canyon: 'CANYON', neige: 'MONTAGNE ENNEIGÉE',
+  // lieux du mode histoire (cartes story : true)
+  mission: 'MISSION SAN ROSARIO', ruines: 'MISSION EN RUINES', salines: 'LES SALINES', pueblo: 'PUEBLO DES CHASSEURS',
 };
 export const mapName = (m) => `${BRAWL_ENVS[m.env] || m.env} - ${m.name}`;
 

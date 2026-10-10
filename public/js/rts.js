@@ -99,6 +99,8 @@ function buildingSprite(kind, col, lv = 1) {
 }
 // drapeaux du fort selon son niveau : [dx, haut du mât, longueur du mât, largeur du drapeau]
 const FORT_FLAGS = { 1: [[4, -37, 13, 8]], 2: [[4, -38, 14, 8], [-11, -40, 7, 5], [12, -40, 7, 5]], 3: [[0, -48, 14, 9], [-11, -38, 6, 5], [12, -38, 6, 5]] };
+// haut du plus haut mât, par niveau (calculé une fois)
+const FORT_TOP = Object.fromEntries(Object.entries(FORT_FLAGS).map(([lv, fl]) => [lv, Math.min(...fl.map((f) => f[1]))]));
 const STONE = '#a09a90', STONE_L = '#c0bab0', STONE_D = '#7a746a';
 function drawBuildingSprite(kind, col, lv) {
   if (kind === 'fort') {
@@ -161,7 +163,7 @@ function drawBuildingSprite(kind, col, lv) {
   }
   if (kind === 'mine') {
     // 1 : galerie étayée ; 2 : chevalement en bois et sa molette ; 3 : chevalement d'acier, machine à vapeur et tas d'or
-    return pixelSprite(24, 34, 12, 31, (R) => {
+    return pixelSprite(26, 34, 12, 31, (R) => {
       R(-8, -12, 16, 11, '#8a7258'); R(-7, -14, 14, 3, '#9a826a'); R(-5, -16, 10, 2, '#a8907a');
       R(-6, -6, 3, 2, '#6a5644'); R(4, -9, 3, 2, '#6a5644');
       if (lv >= 2) {
@@ -188,7 +190,7 @@ function drawBuildingSprite(kind, col, lv) {
   }
   if (kind === 'ranch') {
     // 1 : grange et enclos ; 2 : silo, grenier à foin ; 3 : éolienne (ses pales tournent) et abreuvoir
-    return pixelSprite(26, 34, 13, 31, (R) => {
+    return pixelSprite(28, 34, 14, 31, (R) => {
       if (lv >= 3) { R(7, -27, 1, 15, '#6a6a72'); R(10, -27, 1, 15, '#6a6a72'); for (let y = -24; y < -12; y += 4) R(7, y, 4, 1, '#8a8a92'); R(8, -29, 2, 2, '#4a4a52'); R(10, -29, 3, 1, col); }
       if (lv >= 2) {
         R(-13, -19, 4, 17, '#c8c0b0'); R(-13, -19, 1, 17, '#e0d8c8'); R(-13, -21, 4, 2, '#8a8a92'); R(-12, -22, 2, 1, '#8a8a92');
@@ -245,7 +247,7 @@ function drawBuildingSprite(kind, col, lv) {
   }
   if (kind === 'armory') {
     // 1 : bâtisse en pierre ; 2 : forge et sa cheminée, caisses de fusils ; 3 : parapet crénelé, drapeau, canon devant
-    return pixelSprite(26, 34, 13, 31, (R) => {
+    return pixelSprite(26, 36, 13, 31, (R) => {
       if (lv >= 3) { R(-8, -27, 1, 9, '#3a2416'); R(-7, -27, 5, 3, col); R(-7, -27, 5, 1, S.shade(col, 0.25)); }
       if (lv >= 2) { R(5, -25, 3, 11, '#8a3a2a'); R(5, -25, 3, 1, '#a84a32'); for (let y = -23; y < -15; y += 2) R(5, y, 3, 1, '#6a2a1e'); }
       R(-8, -14, 15, 11, '#8a8a8a'); R(-9, -16, 17, 3, '#4a4a52'); R(-9, -16, 17, 1, col);
@@ -285,41 +287,47 @@ function drawBuildingSprite(kind, col, lv) {
 }
 
 // ------------------------------------------------------------ sprites des unités
-// Vus de trois quarts, pieds à l'origine ; f : image de la marche (0 ou 1)
+// Vus de trois quarts, pieds à l'origine ; f : 0 à l'arrêt (bien campé sur ses jambes), 1 et 2 : les deux temps du pas
 const SKIN = '#e0a878';
 // tech : entraînement du joueur pour ce type (0 à 2), qui change la tenue et l'équipement ;
 // rank : galons (élite : étoile sur la poitrine ; légende : en plus, bande dorée au chapeau)
 const NICKEL = '#d8dce4', GOLD = '#f8d070';
+// couleur du chapeau (ou du casque) selon l'unité et son entraînement : le sprite, et le chapeau qui roule quand elle tombe
+function hatOf(kind, tech = 0) {
+  if (kind === 'rider') return tech >= 1 ? '#3a2a1e' : '#5a3a22';
+  if (kind === 'gunman') return tech >= 2 ? '#2a2420' : tech >= 1 ? '#b88a50' : '#6a4426'; // feutre clair, puis noir
+  if (kind === 'dyn') return tech >= 1 ? '#c8a838' : '#8a7a5a';
+  return '#3a2a1e';
+}
 function unitSprite(kind, col, f, tech = 0, rank = 0) {
   const rk = rank >= 3 ? 2 : rank >= 2 ? 1 : 0;
   return cached(`u:${kind}:${col}:${f}:${tech}:${rk}`, () => {
     if (kind === 'rider') {
       // 0 : cheval bai ; 1 (selles de cuir) : couverture à ses couleurs, selle, bride ; 2 (mustangs) : mustang pie, crinière, poncho
       return pixelSprite(20, 20, 10, 17, (R) => {
-        const leg = f ? 1 : 0;
+        const la = f === 1 ? 1 : 0, lb = f === 2 ? 1 : 0; // jambes levées à chaque temps du pas (en diagonale)
         const coat = tech >= 2 ? '#e8e0d0' : '#7a4a2a', back = tech >= 2 ? '#f4ece0' : '#8a5a3a', hoof = tech >= 2 ? '#6a5a4a' : '#5a3420';
         R(-6, -6, 11, 4, coat); R(-5, -7, 9, 1, back); // cheval
         R(4, -9, 3, 4, coat); R(6, -10, 2, 2, tech >= 2 ? '#d8d0c0' : '#6a3a20'); R(4, -10, 1, 1, '#3a2416');
         if (tech >= 2) { R(-5, -5, 3, 2, '#8a5a3a'); R(1, -4, 3, 2, '#8a5a3a'); R(5, -7, 2, 1, '#8a5a3a'); R(3, -10, 1, 4, '#2a2420'); R(-7, -7, 1, 5, '#2a2420'); } // taches, crinière, queue
         else R(-7, -6, 1, 3, '#3a2416');
-        R(-5, -2, 1, 2 + leg, hoof); R(-3, -2, 1, 3 - leg, hoof); R(1, -2, 1, 2 + leg, hoof); R(3, -2, 1, 3 - leg, hoof);
+        R(-5, -2, 1, 3 - la, hoof); R(-3, -2, 1, 3 - lb, hoof); R(1, -2, 1, 3 - la, hoof); R(3, -2, 1, 3 - lb, hoof);
         if (tech >= 1) { R(-4, -7, 6, 3, S.shade(col, -0.3)); R(-4, -5, 6, 1, S.shade(col, 0.2)); R(6, -9, 1, 1, '#c8a878'); R(-1, -4, 1, 2, '#3a2416'); } // couverture, bride, étrier
         R(-2, -11, 4, 4, col); R(-2, -8, 1, 2, '#4a3a5a'); // cavalier
         if (tech >= 2) { R(-3, -11, 6, 3, '#c8783a'); R(-3, -10, 6, 1, '#e8d070'); R(-3, -9, 6, 1, '#a83a2a'); } // poncho rayé
         R(-1, -13, 3, 2, SKIN);
-        const hat = tech >= 1 ? '#3a2a1e' : '#5a3a22';
+        const hat = hatOf(kind, tech);
         R(-3, -14, 6, 1, hat); R(-2, -16, 4, 2, hat);
         if (rk >= 2) R(-2, -15, 4, 1, GOLD);
         if (rk >= 1) R(0, -10, 1, 1, GOLD);
       });
     }
-    return pixelSprite(14, 17, 7, 15, (R) => {
+    return pixelSprite(15, 17, 7, 15, (R) => {
       // chapeau : feutre du pistolero, chapeau sombre du tireur, chapeau de toile (puis casque de mineur) du dynamiteur
-      let hat = kind === 'rifle' ? '#3a2a1e' : kind === 'dyn' ? '#8a7a5a' : '#6a4426';
-      if (kind === 'gunman') hat = tech >= 2 ? '#2a2420' : tech >= 1 ? '#b88a50' : hat; // feutre clair, puis noir
+      const hat = hatOf(kind, tech);
       const coat = kind === 'gunman' ? '#8a6a42' : kind === 'rifle' ? '#4a4a5a' : null;
       if (coat && tech >= 2) { R(-3, -7, 7, 6, coat); R(-3, -2, 1, 1, coat); R(3, -2, 1, 1, coat); } // cache-poussière
-      R(-2, -3, 2, 3 - f, '#3a3a5a'); R(1, -3, 2, 2 + f, '#3a3a5a'); // jambes
+      R(-2, -3, 2, f === 1 ? 2 : 3, '#3a3a5a'); R(1, -3, 2, f === 2 ? 2 : 3, '#3a3a5a'); // jambes (l'une levée à chaque pas)
       R(-2, -7, 5, 4, col); R(-2, -4, 5, 1, '#3a2416'); // chemise, ceinture
       R(-3, -7, 1, 3, coat && tech >= 2 ? coat : col); R(3, -7, 1, 3, coat && tech >= 2 ? coat : col);
       R(-1, -9, 3, 2, SKIN);
@@ -456,7 +464,7 @@ const scrubSprites = () => [
     R(-1, -10, 2, 10, '#4a7a3a'); R(-1, -10, 1, 9, '#6a9a4a');
     R(-3, -7, 1, 3, '#4a7a3a'); R(-3, -5, 2, 1, '#4a7a3a'); R(2, -8, 1, 3, '#4a7a3a'); R(1, -6, 2, 1, '#4a7a3a');
   }),
-  pixelSprite(8, 7, 4, 6, (R) => { R(-2, -4, 4, 4, '#4a7a3a'); R(-1, -5, 2, 1, '#5a8a42'); R(-1, -4, 1, 3, '#6a9a4a'); R(0, -6, 1, 1, '#e86a8a'); }),
+  pixelSprite(8, 8, 4, 7, (R) => { R(-2, -4, 4, 4, '#4a7a3a'); R(-1, -5, 2, 1, '#5a8a42'); R(-1, -4, 1, 3, '#6a9a4a'); R(0, -6, 1, 1, '#e86a8a'); }),
   pixelSprite(9, 6, 4, 5, (R) => { R(-3, -3, 6, 3, '#7a8a4a'); R(-2, -4, 4, 1, '#8a9a52'); R(-2, -3, 2, 1, '#9aa860'); R(1, -2, 1, 1, '#6a7a3a'); }),
 ];
 // arbres des bois, selon le décor (deux variantes chacun)
@@ -469,14 +477,14 @@ const treeSprite = (kind, v) => cached(`t:${kind}:${v}`, () => {
     });
   }
   if (kind === 'cypress') {
-    return pixelSprite(9, 18, 4, 17, (R) => {
+    return pixelSprite(9, 19, 4, 18, (R) => {
       R(-2, -3, 5, 3, '#5a4a36'); R(-1, -4, 3, 1, '#5a4a36'); // pied évasé dans l'eau
       R(-2, -16, 5, 12, '#4a6a32'); R(-1, -17, 3, 1, '#4a6a32'); R(-2, -16, 2, 10, '#5a7a3a');
       R(-3, -12, 1, 4, '#9aa08a'); R(2 + v, -10, 1, 5, '#9aa08a'); R(0, -7, 1, 3, '#9aa08a'); // mousse espagnole
     });
   }
   if (kind === 'juniper') {
-    return pixelSprite(10, 10, 5, 9, (R) => {
+    return pixelSprite(10, 11, 5, 10, (R) => {
       R(-1, -3, 1, 3, '#5a3a22'); R(0, -4 + v, 1, 2, '#5a3a22');
       R(-4, -8, 7, 5, '#5a7a5a'); R(-3, -9, 5, 1, '#6a8a66'); R(-3, -8, 3, 2, '#7a9a72'); R(1, -5, 2, 1, '#4a6a4a');
     });
@@ -491,7 +499,46 @@ const reedSprite = () => cached('reed', () => pixelSprite(7, 8, 3, 7, (R) => {
   R(-2, -5, 1, 5, '#6a7a3a'); R(0, -6, 1, 6, '#7a8a42'); R(2, -4, 1, 4, '#6a7a3a'); R(0, -7, 1, 2, '#6a4a2a'); R(-2, -6, 1, 1, '#6a4a2a');
 }));
 
-function renderMap(world) {
+// Mode histoire (deco.camps : la Grande Plaine) : les bivouacs de l'armée d'El Diablo, posés sur l'herbe libre loin
+// des forts et des filons (tentes rayées de rouge, feu de camp et sa fumée, fanion noir au crâne, parfois un canon volé
+// au Fort Saint-Jude). Simple décor peint sur la carte : on marche dessus.
+const SMOKE = ['rgba(200,190,170,0.5)', 'rgba(200,190,170,0.4)', 'rgba(200,190,170,0.3)', 'rgba(200,190,170,0.2)'];
+function drawCamps(ctx, world, n) {
+  const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); };
+  const free = (c, r) => {
+    for (let dr = -1; dr <= 2; dr++) for (let dc = -1; dc <= 3; dc++) if (tileAt(world, c + dc, r + dr) !== T.grass) return false;
+    return world.forts.every(([fx, fy]) => Math.hypot(fx - c, fy - r) > 11) && world.veins.every((v) => Math.hypot(v.x - c, v.y - r) > 4);
+  };
+  const camps = [];
+  for (let k = 0; k < 400 && camps.length < n; k++) {
+    const c = 2 + Math.floor(h2(k, 71) * (COLS - 6)), r = 2 + Math.floor(h2(91, k) * (ROWS - 5));
+    if (free(c, r) && camps.every(([a, b]) => Math.hypot(a - c, b - r) > 12)) camps.push([c, r]);
+  }
+  camps.forEach(([c, r], k) => {
+    const x = c * TS, y = r * TS;
+    const tent = (tx, ty) => { // tente canadienne vue de trois quarts, toile écrue rayée de rouge sombre
+      for (let i = 0; i < 9; i++) { R(tx - i - 1, ty + i, 2 * i + 3, 1, '#1a0f0a'); R(tx - i, ty + i, 2 * i + 1, 1, i % 4 === 2 ? '#9a2a1c' : '#e8dcc0'); R(tx, ty + i, i + 1, 1, i % 4 === 2 ? '#7a2016' : '#c8bc9e'); }
+      R(tx - 2, ty + 5, 3, 4, '#3a2414'); R(tx, ty - 3, 1, 3, '#5a3818'); // l'entrée, le mât
+      R(tx - 10, ty + 9, 21, 1, 'rgba(30,20,10,0.35)');
+    };
+    tent(x + 8, y + 2); tent(x + 30, y + 6);
+    // le feu de camp : cercle de pierres, bûches, flammes, fumée qui monte
+    const fx = x + 19, fy = y + 20;
+    for (const [dx, dy] of [[-4, 0], [-3, -2], [0, -3], [3, -2], [4, 0], [3, 2], [0, 3], [-3, 2]]) R(fx + dx, fy + dy, 2, 1, '#8a8478');
+    R(fx - 2, fy - 1, 5, 2, '#5a3818'); R(fx - 1, fy - 3, 3, 2, '#e86a2a'); R(fx, fy - 4, 1, 2, '#f8d070'); R(fx - 1, fy - 1, 1, 1, '#f0a040');
+    for (let i = 0; i < 4; i++) R(fx + 1 + i, fy - 7 - i * 3, 2 + (i >> 1), 2, SMOKE[i]);
+    // le fanion d'El Diablo
+    R(x + 42, y - 4, 1, 16, '#3a2414'); R(x + 43, y - 4, 7, 5, '#1e1416'); R(x + 43, y - 4, 7, 1, '#9a2a1c'); R(x + 45, y - 3, 2, 2, '#e8dcc0');
+    if (k % 2 === 0) { // un canon volé au fort
+      const cx = x + 2, cy = y + 22;
+      R(cx - 1, cy - 1, 12, 5, '#1a0f0a'); R(cx, cy, 10, 3, '#4a4642'); R(cx, cy, 10, 1, '#7a7670'); R(cx + 9, cy - 1, 2, 5, '#2a2622');
+      R(cx + 1, cy + 2, 5, 5, '#1a0f0a'); R(cx + 2, cy + 3, 3, 3, '#8a5a30'); R(cx + 3, cy + 4, 1, 1, '#3a2414');
+      for (const [bx, by] of [[cx + 13, cy + 4], [cx + 15, cy + 4], [cx + 14, cy + 2]]) { R(bx, by, 2, 2, '#2a2622'); R(bx, by, 1, 1, '#6a6660'); } // boulets
+    }
+  });
+}
+
+function renderMap(world, deco = null) {
   SCRUB ||= scrubSprites();
   const L = lookOf(world.biome);
   const c = S.makeCanvas(MW, MH);
@@ -602,6 +649,7 @@ function renderMap(world) {
   }
   // filons
   for (const v of world.veins) drawVein(ctx, v);
+  if (deco?.camps) drawCamps(ctx, world, deco.camps);
   return c;
 }
 
@@ -742,12 +790,15 @@ export class RtsScene extends MiniScene {
 
   setup(seed) {
     this.world = rtsWorld(seed, this.n, this.state.variant);
+    // épisode du mode histoire : l'heure imposée par le décor (deco.env : « au lever du jour »), si l'épisode n'en a pas
+    const sd = this.hooks.story?.deco;
+    if (sd?.env && ENVS[sd.env] && !this.hooks.story.env) { this.env = { id: sd.env, ...ENVS[sd.env] }; this.amb = new Ambience(this.env); }
     // le décor de la carte décide des ambiances possibles (pas de neige dans le bayou…)
     const bi = BIOMES[this.world.biome];
     if (bi.envs && !bi.envs.includes(this.env.id)) { this.env = envFor(seed, bi.envs); this.amb = new Ambience(this.env); }
     this.env = { ...this.env, name: `${bi.name} - ${this.env.name}` };
     this.look = lookOf(this.world.biome);
-    this.map = renderMap(this.world);
+    this.map = renderMap(this.world, sd);
     this.mini = renderMini(this.world);
     // reflets de l'eau : par rangée de cases, x, décalage de phase et hauteur de chaque reflet (calculés une fois)
     this.waterRows = [];
@@ -813,8 +864,11 @@ export class RtsScene extends MiniScene {
     this.cam.y = clamp(this.cam.y + dy, 0, Math.max(0, MH - this.vh));
   }
   centerOn(x, y) { this.cam.x = 0; this.cam.y = 0; this.scroll(x - this.vw / 2, y - this.vh / 2); }
-  get cx() { return rd(this.cam.x); }
-  get cy() { return rd(this.cam.y); }
+  // à un zoom fractionnaire (0,5, 0,75, 1,5), la caméra avance par pas de 2 ou 4 px de la carte : le décalage tombe
+  // sur des pixels entiers de l'écran (sinon la carte et les sprites tremblent d'un pixel quand on la fait défiler)
+  get camStep() { return this.zoom === 0.75 ? 4 : this.zoom % 1 ? 2 : 1; }
+  get cx() { const s = this.camStep; return s > 1 ? Math.floor(this.cam.x / s) * s : rd(this.cam.x); }
+  get cy() { const s = this.camStep; return s > 1 ? Math.floor(this.cam.y / s) * s : rd(this.cam.y); }
   // haut du panneau : celui des pactes (une ligne par joueur) déborde sur la vue au-delà de 3 lignes (5 et 6 joueurs),
   // à gauche seulement (PW : sa largeur), la mini-carte et les ordres restent en place
   get panelY() { return this.diplo ? PY - Math.max(0, this.others().length - 3) * 12 : PY; }
@@ -858,7 +912,16 @@ export class RtsScene extends MiniScene {
     }));
     const units = new Map(s.U.map(([id, owner, k, x, y, hp, face, rank = 0, xp = 0]) => [id, { id, owner, kind: UNIT_IDS[k], x: x / 2, y: y / 2, hp, face, rank, xp }]));
     const prev = this.snapB;
-    this.snapA = prev;
+    // départ du lissage : là où chaque unité est affichée en ce moment (un instantané arrivé en avance ne la fait pas sauter)
+    if (prev) {
+      const A = this.snapA, k = A ? clamp((this.now - prev.at) / prev.span, 0, 1) : 1;
+      const from = new Map();
+      for (const [id, u] of prev.units) {
+        const a = k < 1 && A.units.get(id);
+        from.set(id, a ? { x: a.x + (u.x - a.x) * k, y: a.y + (u.y - a.y) * k } : u);
+      }
+      this.snapA = { units: from };
+    } else this.snapA = null;
     // écart entre deux instantanés (500 ms, plus à 5 et 6 joueurs) : on lisse les déplacements sur cette durée
     const span = prev && s.t > prev.t ? clamp(s.t - prev.t, 100, 2000) : prev?.span || RTS.snapMs;
     this.snapB = { t: s.t, P: s.P, blds, units, at: this.now, span };
@@ -880,7 +943,8 @@ export class RtsScene extends MiniScene {
     for (const [id, u] of prev.units) {
       if (!units.has(id)) {
         this.fx.push({ k: 'dust', x: u.x, y: u.y, t: 0, life: 500 });
-        this.fx.push({ k: 'hat', x: u.x, y: u.y - 8, vx: (Math.random() - 0.5) * 20, t: 0, life: 900, col: u.kind === 'rifle' ? '#3a2a1e' : '#6a4426' });
+        const up = u.kind === 'rider' ? 15 : 11; // part de la hauteur du chapeau et retombe au sol
+        this.fx.push({ k: 'hat', x: u.x, y: u.y - up, fall: up - 1, vx: (Math.random() - 0.5) * 20, t: 0, life: 900, col: hatOf(u.kind, this.techOf(u.owner, u.kind)) });
       }
     }
     // nouvelles recrues chez moi ; galons gagnés
@@ -1102,7 +1166,7 @@ export class RtsScene extends MiniScene {
   bldTop(b) {
     const lv = b.build > 0 ? 1 : b.lv || 1;
     const top = (b.y + b.w) * TS + buildingSprite(b.kind, this.color(b.owner), lv).top;
-    return b.kind === 'fort' ? Math.min(top, (b.y + b.w) * TS + Math.min(...FORT_FLAGS[lv].map((f) => f[1]))) : top;
+    return b.kind === 'fort' ? Math.min(top, (b.y + b.w) * TS + FORT_TOP[lv]) : top;
   }
 
   clickAt(w, add) {
@@ -1604,6 +1668,8 @@ export class RtsScene extends MiniScene {
     const now = this.now;
     if (!this.world || !this.snapB) { out.fillStyle = OUT; out.fillRect(0, 0, W, H); return; }
     const k = this.snapA ? clamp((now - this.snapB.at) / this.snapB.span, 0, 1) : 1;
+    // ms écoulées depuis l'instantané : chantiers et améliorations avancent en continu entre deux
+    this.snapEl = clamp(now - this.snapB.at, 0, this.snapB.span);
     // unités à leur position interpolée : un objet par unité, réutilisé d'une image à l'autre (jusqu'à 240 unités)
     const units = (this.drawUnits ||= []), pool = (this.unitPool ||= new Map());
     units.length = 0;
@@ -1625,18 +1691,18 @@ export class RtsScene extends MiniScene {
       this.drawWater(c, now);
       this.drawGround(c, now);
       this.drawSelGround(c, now);
-      // bâtiments et unités visibles, du haut vers le bas de la carte
+      // bâtiments, unités et virevoltants visibles, du haut vers le bas de la carte
       // (tableau réutilisé, trié sur place : à égalité, les bâtiments restent avant les unités)
       const items = (this.drawItems ||= []);
       let n = 0;
-      const put = (y, b, u) => { const it = (items[n++] ||= { y: 0, b: null, u: null }); it.y = y; it.b = b; it.u = u; };
+      const put = (y, b, u, w = null) => { const it = (items[n++] ||= { y: 0, b: null, u: null, w: null }); it.y = y; it.b = b; it.u = u; it.w = w; };
       for (const b of this.snapB.blds) { const p = bCenter(b); if (this.seen(p.x, p.y, 40)) put((b.y + b.w) * TS, b, null); }
       for (const u of units) if (this.seen(u.x, u.y)) put(u.y, null, u);
+      for (const w of this.weeds) if (this.seen(w.x, w.y)) put(w.y + 5, null, null, w);
       items.length = n;
       items.sort(byY);
-      for (const it of items) if (it.b) this.drawBuilding(c, it.b, now); else this.drawUnit(c, it.u, now);
+      for (const it of items) if (it.b) this.drawBuilding(c, it.b, now); else if (it.u) this.drawUnit(c, it.u, now); else this.drawWeed(c, it.w, now);
       for (const p of this.pending) this.drawBuilding(c, { ...p, id: 0, owner: this.me, w: BUILDINGS[p.kind].w, build: BUILDINGS[p.kind].time, queue: '', lv: 1, up: 0 }, now);
-      for (const w of this.weeds) if (this.seen(w.x, w.y)) S.tumbleweed(c, rd(w.x), rd(w.y), now);
       this.drawFx(c, now);
       // ombres des vautours qui tournent
       c.fillStyle = 'rgba(26,15,10,0.25)';
@@ -1652,10 +1718,11 @@ export class RtsScene extends MiniScene {
     this.inWorld(out, (c) => {
       // tirs (lumineux, par-dessus la teinte)
       for (const tr of this.tracers) {
-        const a = 1 - tr.t / 120;
-        c.fillStyle = tr.big ? `rgba(255,220,140,${a})` : `rgba(255,240,190,${a})`;
+        c.globalAlpha = 1 - tr.t / 120;
+        c.fillStyle = tr.big ? '#ffdc8c' : '#fff0be';
         const n = Math.max(1, Math.ceil(Math.hypot(tr.tx - tr.x, tr.ty - tr.y) / 2));
         for (let i = Math.floor(n * 0.3); i <= n; i++) c.fillRect(rd(tr.x + ((tr.tx - tr.x) * i) / n), rd(tr.y + ((tr.ty - tr.y) * i) / n), 1, 1);
+        c.globalAlpha = 1;
         if (tr.t < 60) { c.fillStyle = '#fff8d0'; c.fillRect(rd(tr.x) - 1, rd(tr.y) - 1, 3, 3); }
       }
       this.drawBars(c);
@@ -1764,7 +1831,7 @@ export class RtsScene extends MiniScene {
     ctx.fillRect(b.x * TS, by, b.w * TS, 1);
     if (b.build > 0) {
       // chantier : charpente qui se monte
-      const k = 1 - b.build / BUILDINGS[b.kind].time;
+      const k = 1 - (b.id ? b.build - this.snapEl : b.build) / BUILDINGS[b.kind].time;
       const h = rd(spr.height * clamp(k, 0, 1));
       ctx.globalAlpha = 0.45;
       ctx.drawImage(spr, rd(cx - spr.ox), rd(by - spr.oy));
@@ -1816,11 +1883,12 @@ export class RtsScene extends MiniScene {
           for (let r = 1; r <= 4; r++) { ctx.fillStyle = r === 4 ? OUT : '#e8e0d0'; ctx.fillRect(rd(X + 9 + Math.cos(a) * r), rd(by - 28 + Math.sin(a) * r), 1, 1); }
         }
       }
-      // des vaches qui broutent dans l'enclos (une de plus par niveau)
+      // des vaches qui broutent dans l'enclos (une de plus par niveau) : une place chacune entre les lisses,
+      // celles d'une même rangée bougent ensemble (elles ne se chevauchent jamais)
       for (let k = 0; k < 1 + lv; k++) {
-        const x = X + 3 + ((Math.sin(now / 1700 + k * 3 + b.id) * 2) | 0) + (k % 2) * 2, y = by - 10 + (k % 3) * 3;
+        const row = k % 2, x = X + 2 + (k >> 1) * 5 + ((Math.sin(now / 1700 + row * 3 + b.id) * 2) | 0), y = by - 10 + row * 5;
         ctx.fillStyle = OUT; ctx.fillRect(x - 1, y - 1, 6, 4);
-        ctx.fillStyle = k === 2 ? '#8a5a3a' : '#e8e0d0'; ctx.fillRect(x, y, 4, 2); ctx.fillStyle = '#3a2416'; ctx.fillRect(x + 1, y, 1, 1); ctx.fillRect(x + (k % 2 ? -1 : 4), y, 1, 1);
+        ctx.fillStyle = k === 2 ? '#8a5a3a' : '#e8e0d0'; ctx.fillRect(x, y, 4, 2); ctx.fillStyle = '#3a2416'; ctx.fillRect(x + 1, y, 1, 1); ctx.fillRect(x + (k >> 1 ? 4 : -1), y, 1, 1); // têtes vers l'extérieur
       }
     } else if (b.kind === 'stable' && lv >= 2) {
       // un cheval passe la tête et l'agite
@@ -1848,22 +1916,31 @@ export class RtsScene extends MiniScene {
       const nx = upNext(b);
       if (b.up > 0 && nx) {
         ctx.fillStyle = OUT; ctx.fillRect(x, y, b.w * TS, 2);
-        ctx.fillStyle = '#8ad870'; ctx.fillRect(x, y, rd(b.w * TS * clamp(1 - b.up / nx[1], 0, 1)), 2);
+        ctx.fillStyle = '#8ad870'; ctx.fillRect(x, y, rd(b.w * TS * clamp(1 - (b.up - this.snapEl) / nx[1], 0, 1)), 2);
       }
     }
   }
 
+  // virevoltant : il roule en rebondissant, son ombre reste au sol
+  drawWeed(ctx, w, now) {
+    const x = rd(w.x), y = rd(w.y), hop = rd(Math.abs(Math.sin(now / 240 + w.sp)) * 3);
+    ctx.fillStyle = OUT; ctx.globalAlpha = 0.25; ctx.fillRect(x - 3, y + 5, 7, 1); ctx.globalAlpha = 1;
+    S.tumbleweed(ctx, x, y - hop, now);
+  }
+
   smoke(ctx, x, y, now, seed) {
+    ctx.fillStyle = '#dcd6c8'; // transparence par globalAlpha : pas de nouvelle couleur rgba() à chaque image
     for (let k = 0; k < 3; k++) {
       const ph = (now / 1400 + k / 3 + seed * 0.13) % 1;
-      ctx.fillStyle = `rgba(220,214,200,${0.5 * (1 - ph)})`;
+      ctx.globalAlpha = 0.5 * (1 - ph);
       const r = 1 + ph * 2.5;
       ctx.fillRect(rd(x + Math.sin(ph * 5 + seed) * 2 - r), rd(y - ph * 14 - r), rd(r * 2), rd(r * 2));
     }
+    ctx.globalAlpha = 1;
   }
 
   drawUnit(ctx, u, now) {
-    const f = u.moving ? Math.floor(now / 160 + u.id) % 2 : 0;
+    const f = u.moving ? 1 + (Math.floor(now / 160 + u.id) % 2) : 0;
     const col = this.color(u.owner);
     const spr = unitSprite(u.kind, col, f, this.techOf(u.owner, u.kind), u.rank);
     // pastille à la couleur du joueur sous les pieds : on voit d'un coup d'œil qui est qui
@@ -1872,7 +1949,8 @@ export class RtsScene extends MiniScene {
     ctx.fillRect(rd(u.x) - rw - 1, rd(u.y) - 1, rw * 2 + 3, 3);
     ctx.fillStyle = col;
     ctx.fillRect(rd(u.x) - rw, rd(u.y) - 1, rw * 2 + 1, 2);
-    const x = rd(u.x - (u.face < 0 ? spr.width - spr.ox : spr.ox)), y = rd(u.y - spr.oy);
+    // retournée, la copie est symétrique autour de la colonne de l'origine : l'unité ne saute pas d'un pixel en se tournant
+    const x = rd(u.x) - (u.face < 0 ? spr.width - 1 - spr.ox : spr.ox), y = rd(u.y) - spr.oy;
     ctx.drawImage(u.face < 0 ? flipped(spr) : spr, x, y);
   }
 
@@ -1880,12 +1958,14 @@ export class RtsScene extends MiniScene {
     for (const f of this.fx) {
       const k = f.t / f.life;
       if (f.k === 'dust') {
-        ctx.fillStyle = `rgba(216,192,140,${0.7 * (1 - k)})`;
+        ctx.fillStyle = '#d8c08c'; ctx.globalAlpha = 0.7 * (1 - k);
         for (let i = 0; i < 5; i++) ctx.fillRect(rd(f.x + Math.cos(i * 1.3) * k * 8), rd(f.y - 1 + Math.sin(i * 1.3) * k * 3), 2, 1);
+        ctx.globalAlpha = 1;
       } else if (f.k === 'hat') {
         ctx.globalAlpha = 1 - k;
         ctx.fillStyle = f.col;
-        ctx.fillRect(rd(f.x) - 2, rd(f.y + Math.min(8, k * 30)), 5, 1); ctx.fillRect(rd(f.x) - 1, rd(f.y + Math.min(8, k * 30)) - 1, 3, 1);
+        const y = rd(f.y + Math.min(f.fall, k * 40));
+        ctx.fillRect(rd(f.x) - 2, y, 5, 1); ctx.fillRect(rd(f.x) - 1, y - 1, 3, 1);
         ctx.globalAlpha = 1;
       } else if (f.k === 'spark') {
         ctx.fillStyle = k < 0.4 ? '#fff0a0' : '#f08030';
@@ -1893,7 +1973,9 @@ export class RtsScene extends MiniScene {
       } else if (f.k === 'blast') {
         S.disc(ctx, rd(f.x), rd(f.y), Math.max(1, rd(f.r * (0.4 + k))), k < 0.3 ? '#fff0b0' : k < 0.6 ? '#f8a040' : '#a84a2a');
       } else if (f.k === 'smoke') {
-        S.disc(ctx, rd(f.x + k * 6), rd(f.y - k * 16), Math.max(1, rd(f.r * (0.6 + k))), `rgba(90,80,70,${0.5 * (1 - k)})`);
+        ctx.globalAlpha = 0.5 * (1 - k);
+        S.disc(ctx, rd(f.x + k * 6), rd(f.y - k * 16), Math.max(1, rd(f.r * (0.6 + k))), '#5a5046');
+        ctx.globalAlpha = 1;
       } else if (f.k === 'stick') {
         const x = f.x0 + (f.x1 - f.x0) * k, y = f.y0 + (f.y1 - f.y0) * k - Math.sin(k * Math.PI) * 14;
         ctx.fillStyle = '#d83020'; ctx.fillRect(rd(x), rd(y), 2, 1);
@@ -2284,7 +2366,7 @@ export class RtsScene extends MiniScene {
         }
         ctx.drawImage(icon('up'), b.x + 1, b.y + 1);
         canvasText(ctx, nx ? `NIV.${selB.lv + 1}` : 'MAX', b.x + b.w - 2, b.y + 2, { align: 'right', color: '#fdf6e0' });
-        if (selB?.up > 0 && nx) this.bar(ctx, b.x + 4, b.y + 18, b.w - 8, 1 - selB.up / nx[1], '#8ad870');
+        if (selB?.up > 0 && nx) this.bar(ctx, b.x + 4, b.y + 18, b.w - 8, 1 - (selB.up - this.snapEl) / nx[1], '#8ad870');
       } else if (b.type === 'demolish') {
         ctx.drawImage(icon('dyn'), b.x + 7, b.y + 1);
       } else if (b.type === 'gift') {

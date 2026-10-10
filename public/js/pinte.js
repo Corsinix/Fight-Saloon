@@ -5,9 +5,13 @@ import * as S from './sprites.js';
 import { sfx } from './audio.js';
 import { canvasText, textSprite } from './scene.js';
 import { MiniScene, pixelSprite } from './miniscene.js';
+import { textW as measureW, wrap } from './uikit.js';
 import { Room } from './room.js';
 import { W, H } from './worlds.js';
-import { PINTE, Slide, gapCm, BEERS, beerOf, modName, modLabel, MODS, METAS, META, onMat, COUNTERS, counterOf, speedFor } from './pintegame.js';
+import {
+  PINTE, PROPS, Slide, gapCm, BEERS, beerOf, modName, modLabel, MODS, METAS, META, onMat, COUNTERS, counterOf, speedFor,
+  dirAt, powAt, solo, reachesAt,
+} from './pintegame.js';
 
 const P = PINTE;
 const OUT = S.OUT;
@@ -15,30 +19,54 @@ const X0 = 30, TOP = 122; // bout gauche du comptoir et bord arrière, à l'écr
 const EDGE = X0 + P.L, FLOOR = 206;
 const sx = (x) => Math.round(X0 + x), sy = (y) => Math.round(TOP + y);
 const GRAV = 0.0009; // chute (px/ms²)
-const pingpong = (el, period) => { const k = ((el / period) * 2) % 2; return k < 1 ? k : 2 - k; };
-// l'aiguille part du milieu ; sur les comptoirs à ricochets elle balaie plus large, et plus lentement
-const dirMsOf = (g) => P.dirMs * Math.max(1, (g.maxa / P.MAXA) * 0.8);
-const dirAt = (el, g) => g.maxa * (2 * pingpong(el + dirMsOf(g) / 4, dirMsOf(g)) - 1);
-const powAt = (el) => pingpong(el, P.powMs);
-
-// Directions « sûres » (zone verte) : lancée à fond dans cette direction, la chope ne tombe pas sur le côté.
-// Calculé une fois par comptoir, par la même glissade que le jeu.
-const safes = new Map();
-function isSafe(g, a) {
-  let t = safes.get(g.id);
-  if (!t) {
-    const mods = { lay: g.id }, v = speedFor(1, mods);
-    t = [];
-    for (let k = 0; k <= 100; k++) {
-      const an = g.maxa * (k / 50 - 1);
-      const q = new Slide([{ id: 0, b: 'blonde', x: P.START, y: P.D / 2, vx: v * Math.cos(an), vy: v * Math.sin(an) }], mods).run().p[0];
-      t.push(!q.out || q.out === 'end');
-    }
-    safes.set(g.id, t);
-  }
-  return t[clampI(Math.round((a / g.maxa + 1) * 50), 0, 100)];
-}
 const clampI = (v, a, b) => Math.max(a, Math.min(b, v));
+const inBox = (z, x, y) => x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h;
+// la glissade démarre à l'instant du lancer chez l'hôte (ev.at) ; un message très en retard rattrape au plus 400 ms
+const startAt = (ev, now) => (ev.at == null ? now : clampI(ev.at, now - 400, now));
+
+// ------------------------------------------------------------ jauges
+// Elles disent la vérité de la manche : le comptoir, ses surprises (chat, bouteilles, vent, sciure, cire…) et la bière
+// servie, calculés par la même glissade que le jeu, pour une chope seule (celles déjà posées ne comptent pas).
+// Cadran : une direction est verte si une puissance au moins y amène la chope à 50 cm du bout ou moins.
+// Jauge (une fois la direction bloquée) : rouge, elle tombe ; vert, elle reste sur le comptoir ; or, à 20 cm ou moins.
+const DIRS = 50, NEAR = 25, CLOSE = 10, POWS = 90;
+class Zones {
+  constructor(mods, b) {
+    this.mods = mods;
+    this.b = b;
+    this.g = counterOf(mods);
+    this.dir = new Array(DIRS + 1).fill(null);
+    this.k = 0;
+    this.bar = null;
+  }
+
+  get done() { return this.k > DIRS; }
+  // quelques directions à chaque image, pour ne jamais figer l'écran
+  work(n) {
+    for (; n > 0 && this.k <= DIRS; n--, this.k++) this.dir[this.k] = reachesAt(this.g.maxa * (2 * this.k / DIRS - 1), this.mods, this.b, NEAR);
+  }
+
+  // true / false, ou null si pas encore calculé
+  dirOk(a) { return this.dir[clampI(Math.round((a / this.g.maxa + 1) * DIRS / 2), 0, DIRS)]; }
+
+  // la jauge de puissance pour la direction a : une colonne de couleur par puissance (gardée tant que a ne change pas)
+  barFor(a) {
+    if (this.bar?.a === a) return this.bar.c;
+    const { bw, bh } = BAR, c = this.bar?.c || S.makeCanvas(bw + 4, bh + 4), ctx = c.getContext('2d');
+    ctx.fillStyle = OUT; ctx.fillRect(0, 0, bw + 4, bh + 4);
+    const r = BEERS[this.b]?.r || P.R;
+    for (let j = 0; j < POWS; j++) {
+      const q = solo((j + 0.5) / POWS, a, this.mods, this.b);
+      ctx.fillStyle = !q ? '#b04030' : P.L - q.x - r <= CLOSE ? '#e8b838' : '#6a8a3a';
+      const x0 = Math.round((j * bw) / POWS), x1 = Math.round(((j + 1) * bw) / POWS);
+      ctx.fillRect(2 + x0, 2, x1 - x0, bh);
+    }
+    // reflet en haut de la jauge
+    ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(2, 2, bw, 1);
+    this.bar = { a, c };
+    return c;
+  }
+}
 
 // contour du dessus du comptoir, à l'écran (pour y limiter flaque, sciure, givre…)
 function surfacePath(ctx, g) {
@@ -52,15 +80,30 @@ function surfacePath(ctx, g) {
   ctx.closePath();
 }
 // haut et bas du comptoir à l'écran
-const spanOf = (g) => ({ top: sy(Math.min(...g.back.map((q) => q[1]))), bot: sy(Math.max(...g.front.map((q) => q[1]))) });
+// (gardés par comptoir : demandés à chaque image)
+const spans = new Map();
+const spanOf = (g) => {
+  let s = spans.get(g.id);
+  if (!s) spans.set(g.id, (s = { top: sy(Math.min(...g.back.map((q) => q[1]))), bot: sy(Math.max(...g.front.map((q) => q[1]))) }));
+  return s;
+};
 
 // ------------------------------------------------------------ décor
 // Le comptoir est dessiné colonne par colonne d'après sa forme (bords, rambardes) : un dessin par comptoir.
 // Les rambardes avant passent devant les chopes : elles ont leur propre calque (front).
+// Le dessus du comptoir : bois verni (par défaut), pin clair, marbre veiné, zinc, tapis de billard
+const LOOKS = {
+  acajou: { top: '#9a5a30', grain: ['#8a4e28', '#a8683a'], lip: '#5a3018', lipHi: '#7a4424', shine: 'rgba(255,220,170,0.18)' },
+  pin: { top: '#b8844a', grain: ['#a6723c', '#c8985c'], lip: '#6a4220', lipHi: '#8a5a30', shine: 'rgba(255,230,190,0.2)' },
+  marbre: { top: '#d8d0c2', grain: ['#b4aca0', '#ece6da'], lip: '#6a5a4a', lipHi: '#8a7a6a', shine: 'rgba(255,255,255,0.3)' },
+  zinc: { top: '#8c969c', grain: ['#7e888e', '#a2acb2'], lip: '#4a5054', lipHi: '#6a7276', shine: 'rgba(255,255,255,0.28)' },
+  tapis: { top: '#2e6a3c', grain: ['#296236', '#347244'], lip: '#5a3018', lipHi: '#7a4424', shine: 'rgba(200,255,200,0.08)' },
+};
 const counterArts = new Map();
 function counter(g) {
   let art = counterArts.get(g.id);
   if (art) return art;
+  const look = LOOKS[g.look] || LOOKS.acajou;
   const c = S.makeCanvas(W, 216), fc = S.makeCanvas(W, 216);
   const ctx = c.getContext('2d'), fx = fc.getContext('2d');
   const R = (x, y, w, h, col, k = ctx) => { k.fillStyle = col; k.fillRect(x, y, w, h); };
@@ -86,9 +129,9 @@ function counter(g) {
   // colonne par colonne : rebord arrière, dessus en bois verni, rebord avant en laiton, façade à panneaux
   for (let X = 0; X < EDGE; X++) {
     const b = bAt(X), f = fAt(X), x = Math.max(0, X - X0);
-    R(X, b - 4, 1, 1, OUT); R(X, b - 3, 1, 3, '#5a3018'); R(X, b - 3, 1, 1, '#7a4424');
-    R(X, b, 1, f - b, '#9a5a30');
-    R(X, b + 5, 1, 1, 'rgba(255,220,170,0.18)');
+    R(X, b - 4, 1, 1, OUT); R(X, b - 3, 1, 3, look.lip); R(X, b - 3, 1, 1, look.lipHi);
+    R(X, b, 1, f - b, look.top);
+    R(X, b + 5, 1, 1, look.shine);
     R(X, f, 1, 2, '#c8a040'); R(X, f, 1, 1, '#f0d070'); R(X, f + 2, 1, 1, OUT);
     R(X, f + 3, 1, FLOOR - f - 3, '#6a3a1e');
     const px = (X - 4) % 46, pt = f + 9, pb = FLOOR - 16;
@@ -117,10 +160,22 @@ function counter(g) {
   const { top: st, bot: sb } = spanOf(g);
   for (let y = st; y < sb; y++) {
     for (let x = Math.floor(rnd() * 20); x < EDGE; x += 12 + Math.floor(rnd() * 30)) {
-      R(x, y, 4 + Math.floor(rnd() * 14), 1, rnd() < 0.5 ? '#8a4e28' : '#a8683a');
+      R(x, y, 4 + Math.floor(rnd() * 14), 1, look.grain[rnd() < 0.5 ? 0 : 1]);
     }
   }
   ctx.restore();
+  // marbre : quelques veines en biais ; billard : les mouches blanches du tapis
+  if (g.look === 'marbre' || g.look === 'tapis') {
+    ctx.save();
+    surfacePath(ctx, g);
+    ctx.clip();
+    for (let k = 0; k < (g.look === 'marbre' ? 14 : 6); k++) {
+      const x0 = X0 + 40 + Math.floor(rnd() * (P.L - 60)), y0 = st + Math.floor(rnd() * (sb - st));
+      if (g.look === 'tapis') { R(x0, y0, 1, 1, 'rgba(240,250,240,0.5)'); continue; }
+      for (let j = 0; j < 8 + rnd() * 10; j++) R(x0 + j, y0 + Math.round(j * 0.5 + Math.sin(j) * 0.8), 1, 1, 'rgba(120,110,100,0.45)');
+    }
+    ctx.restore();
+  }
   // repères à la craie : 10, 25, 50 et 100 cm du bout
   for (const cm of [10, 25, 50, 100]) {
     const X = Math.round(EDGE - cm / P.CM);
@@ -168,7 +223,8 @@ const BEER_ART = {
     R(-3, -9, 6, 8, '#7a8a2a'); R(-3, -9, 1, 8, '#9aaa40'); R(2, -9, 1, 8, '#5a6a1a');
     R(-3, -10, 6, 1, '#b8c060');
     R(-2, -7, 1, 1, '#2a180c'); R(0, -7, 1, 1, '#2a180c'); R(2, -7, 1, 1, '#2a180c');
-    R(-1, -12, 1, 1, '#d8e8b0'); R(1, -13, 1, 1, '#d8e8b0');
+    // bulles dans l'alcool (au-dessus du verre, elles flottaient seules, cerclées de noir)
+    R(-2, -9, 1, 1, '#d8e8b0'); R(1, -8, 1, 1, '#d8e8b0');
     R(-4, -1, 8, 1, '#a8b8a0');
   }),
   // bière au piment : rousse, un piment rouge accroché au bord
@@ -215,15 +271,46 @@ const bottle = () => (bottleArt ||= pixelSprite(10, 22, 5, 20, (R) => {
   R(-3, -7, 6, 3, '#e8d8a8'); R(-2, -6, 4, 1, '#8a3a24');
 }));
 
-// tireuse à bière en laiton (comptoir à rambardes)
-let tapArt = null;
-const tap = () => (tapArt ||= pixelSprite(16, 30, 8, 28, (R) => {
-  R(-6, -3, 12, 3, '#8a6a2a'); R(-6, -3, 12, 1, '#c8a040');
-  R(-2, -20, 4, 17, '#c8a040'); R(-2, -20, 1, 17, '#f0d070'); R(1, -20, 1, 17, '#8a6a2a');
-  R(-5, -22, 10, 3, '#c8a040'); R(-5, -22, 10, 1, '#f0d070');
-  R(-4, -27, 2, 5, '#2a180c'); R(-4, -28, 2, 1, '#d02a1a'); R(2, -27, 2, 5, '#2a180c'); R(2, -28, 2, 1, '#e8a830');
-  R(-5, -17, 3, 1, '#8a6a2a'); R(-5, -16, 1, 2, '#8a6a2a'); R(3, -17, 3, 1, '#8a6a2a'); R(5, -16, 1, 2, '#8a6a2a');
-}));
+// obstacles des comptoirs (pieds en 0,0), dessinés une fois ; h : hauteur, pour la bulle d'aide au survol
+const PROP_ART = {
+  // tireuse à bière en laiton
+  tap: () => pixelSprite(16, 30, 8, 28, (R) => {
+    R(-6, -3, 12, 3, '#8a6a2a'); R(-6, -3, 12, 1, '#c8a040');
+    R(-2, -20, 4, 17, '#c8a040'); R(-2, -20, 1, 17, '#f0d070'); R(1, -20, 1, 17, '#8a6a2a');
+    R(-5, -22, 10, 3, '#c8a040'); R(-5, -22, 10, 1, '#f0d070');
+    R(-4, -27, 2, 5, '#2a180c'); R(-4, -28, 2, 1, '#d02a1a'); R(2, -27, 2, 5, '#2a180c'); R(2, -28, 2, 1, '#e8a830');
+    R(-5, -17, 3, 1, '#8a6a2a'); R(-5, -16, 1, 2, '#8a6a2a'); R(3, -17, 3, 1, '#8a6a2a'); R(5, -16, 1, 2, '#8a6a2a');
+  }),
+  // tonneau debout, cerclé de fer, la bonde sur le côté
+  fut: () => pixelSprite(18, 20, 9, 18, (R) => {
+    R(-6, -15, 12, 15, '#8a5a30'); R(-7, -13, 14, 11, '#8a5a30');
+    R(-5, -15, 1, 15, '#a8743e'); R(-6, -13, 1, 11, '#a8743e'); R(-2, -15, 1, 15, '#6a4220'); R(2, -15, 1, 15, '#6a4220');
+    R(4, -15, 2, 15, '#6a4220'); R(5, -13, 2, 11, '#5a3418');
+    R(-7, -12, 14, 2, '#3a3438'); R(-7, -12, 14, 1, '#6a6268'); R(-7, -5, 14, 2, '#3a3438'); R(-7, -5, 14, 1, '#6a6268');
+    R(-6, -16, 12, 1, '#5a3a22'); R(-5, -17, 10, 1, '#a8743e');
+    R(1, -9, 2, 2, '#3a2214');
+  }),
+  // caisse enregistreuse en laiton : clavier, fenêtre du prix, manivelle
+  caisse: () => pixelSprite(26, 28, 12, 26, (R) => {
+    R(-10, -9, 20, 9, '#b08830'); R(-10, -9, 20, 1, '#f0d070'); R(-10, -1, 20, 1, '#7a5a20');
+    R(-8, -7, 16, 3, '#3a2214');
+    for (let k = 0; k < 5; k++) { R(-7 + k * 3, -7, 2, 1, '#fdf6e0'); R(-7 + k * 3, -5, 2, 1, '#e8d8b0'); }
+    R(-7, -18, 14, 9, '#c8a040'); R(-7, -18, 14, 1, '#f0d070'); R(-7, -18, 1, 9, '#f0d070'); R(6, -18, 1, 9, '#8a6a2a');
+    R(-5, -16, 10, 1, '#8a6a2a'); R(-5, -13, 10, 1, '#8a6a2a');
+    R(-4, -23, 8, 5, '#c8a040'); R(-3, -22, 6, 3, '#fdf6e0'); R(-2, -21, 1, 1, '#2a180c'); R(1, -21, 1, 1, '#2a180c');
+    R(-4, -24, 8, 1, '#f0d070');
+    R(7, -14, 3, 1, '#8a6a2a'); R(9, -18, 1, 4, '#8a6a2a'); R(9, -20, 2, 2, '#d02a1a');
+  }),
+  // plot de billard : poteau de laiton, anneau de caoutchouc rouge
+  plot: () => pixelSprite(12, 14, 6, 12, (R) => {
+    R(-4, -4, 8, 4, '#c03a2a'); R(-4, -4, 8, 1, '#f06a50'); R(-4, -1, 8, 1, '#802018');
+    R(-2, -9, 4, 5, '#c8a040'); R(-2, -9, 1, 5, '#f0d070'); R(1, -9, 1, 5, '#8a6a2a');
+    R(-3, -10, 6, 1, '#f0d070');
+  }),
+};
+const PROP_H = { tap: 28, fut: 17, caisse: 24, plot: 10 };
+const propArts = new Map();
+const propArt = (k) => propArts.get(k) || propArts.set(k, PROP_ART[k]()).get(k);
 
 // cloison en travers du comptoir : une planche coiffée de laiton
 function drawWall(ctx, w) {
@@ -269,12 +356,15 @@ function drawMat(ctx, mt) {
   ctx.fillRect(x - Math.round(r * 1.6) - 1, y, 1, 1); ctx.fillRect(x + Math.round(r * 1.6) + 1, y, 1, 1);
 }
 
+// rot : la chope qui tombe tourne par quarts de tour (une rotation quelconque déforme les pixels)
+const QUARTS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 function drawMug(ctx, x, y, col, rot = 0, b = 'blonde') {
   const m = mug(col, b);
-  if (!rot) return ctx.drawImage(m, Math.round(x) - m.ox, Math.round(y) - m.oy);
+  const k = ((Math.round(rot / (Math.PI / 2)) % 4) + 4) % 4;
+  if (!k) return ctx.drawImage(m, Math.round(x) - m.ox, Math.round(y) - m.oy);
+  const [c, s] = QUARTS[k];
   ctx.save();
-  ctx.translate(Math.round(x), Math.round(y) - 6);
-  ctx.rotate(rot);
+  ctx.transform(c, s, -s, c, Math.round(x), Math.round(y) - 6);
   ctx.drawImage(m, -m.ox, -m.oy + 6);
   ctx.restore();
 }
@@ -289,33 +379,43 @@ const textW = (str, size = 8) => textSprite(String(str), size, '#fdf6e0', '#1a0f
 
 const hash = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
 
-// Décor des modificateurs posé sur le comptoir (sciure, vent, cire, gel, virage)
-function drawMods(ctx, m, now, env, g) {
+// Ce qui ne bouge pas (flaque, sciure, givre, cire) est dessiné une fois par manche, limité au dessus du comptoir
+const modsArts = S.lru(4);
+function modsArt(m, g) {
+  if (!m || !(m.puddle || m.saw || m.slick)) return null;
+  const key = `${g.id}|${m.puddle ? `${m.puddle.a},${m.puddle.w}` : ''}|${m.saw ? `${m.saw.a},${m.saw.w}` : ''}|${m.slick || ''}`;
+  let c = modsArts.get(key);
+  if (c) return c;
+  c = S.makeCanvas(W, H);
+  const ctx = c.getContext('2d');
+  surfacePath(ctx, g);
+  ctx.clip();
+  drawPuddle(ctx, m.puddle, 0, g, true);
+  drawMods(ctx, m, 0, null, g, true);
+  modsArts.set(key, c);
+  return c;
+}
+
+// Décor des modificateurs posé sur le comptoir (sciure, vent, cire, gel, virage) ;
+// still : seulement la partie fixe (voir modsArt), sinon seulement ce qui bouge ; wide : le vent qui traverse la salle
+function drawMods(ctx, m, now, env, g, still = false, wide = false) {
   if (!m) return;
   const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
   const { top: TOP, bot: FRONT } = spanOf(g), D = FRONT - TOP;
   if (m.slick) {
     // gel : givre bleuté ; cire : le comptoir brille et un reflet passe
-    if (m.slick < 0.7) {
+    if (!still) {
+      const gx = ((now * 0.12) % (EDGE + 160)) - 80;
+      for (let y = TOP; y < FRONT; y++) R(gx + (y - TOP) * 0.6, y, 5, 1, 'rgba(255,255,255,0.22)');
+    } else if (m.slick < 0.7) {
       R(0, TOP, EDGE, D, 'rgba(200,230,255,0.28)');
       for (let k = 0; k < 90; k++) R(hash(k) * EDGE, TOP + hash(k + 50) * D, 1, 1, 'rgba(255,255,255,0.75)');
       for (let x = 0; x < EDGE; x += 3) R(x, TOP, 2, 1 + Math.floor(hash(x) * 3), 'rgba(240,250,255,0.6)');
     } else R(0, TOP, EDGE, D, 'rgba(255,240,210,0.1)');
-    const gx = ((now * 0.12) % (EDGE + 160)) - 80;
-    for (let y = TOP; y < FRONT; y++) R(gx + (y - TOP) * 0.6, y, 5, 1, 'rgba(255,255,255,0.22)');
   }
-  if (m.saw) {
-    const x0 = sx(m.saw.a), w = m.saw.w;
-    R(x0, TOP + 1, w, D - 2, 'rgba(216,192,136,0.4)');
-    // bords irréguliers : la sciure déborde un peu de sa zone
-    for (let y = TOP + 1; y < FRONT - 1; y += 2) {
-      const l = Math.round(hash(y + m.saw.a) * 3), r = Math.round(hash(y * 1.7 + w) * 3);
-      R(x0 - l, y, l, 2, 'rgba(216,192,136,0.4)'); R(x0 + w, y, r, 2, 'rgba(216,192,136,0.4)');
-    }
-    for (let k = 0; k < w * 5; k++) {
-      const h = hash(k + m.saw.a);
-      R(x0 + h * w, TOP + 1 + hash(k * 3.1 + 7) * (D - 2), 1 + (h > 0.75), 1, h < 0.4 ? '#f0dca0' : h < 0.75 ? '#d0aa6a' : '#9a7444');
-    }
+  if (still) {
+    if (m.saw) drawSaw(R, m.saw, TOP, FRONT, D);
+    return;
   }
   // courant d'air (zone) ou vent qui traverse toute la salle : poussière, neige ou pluie qui file
   const speck = env === 'neige' ? 'rgba(255,255,255,0.85)' : env === 'poussiere' ? 'rgba(200,150,90,0.8)' : env === 'orage' ? 'rgba(170,190,230,0.7)' : 'rgba(225,235,250,0.6)';
@@ -330,7 +430,7 @@ function drawMods(ctx, m, now, env, g) {
     const cx = Math.round(x0 + m.wind.w / 2), y0 = dir > 0 ? sy(g.frontAt(m.wind.a + m.wind.w / 2)) - 5 : sy(g.backAt(m.wind.a + m.wind.w / 2)) + 4;
     if (Math.floor(now / 300) % 2) for (let k = 0; k < 3; k++) R(cx - 2 + k, y0 + dir * k, 5 - 2 * k, 1, 'rgba(240,235,220,0.8)');
   }
-  if (m.push && g.clip === false) {
+  if (m.push && wide) {
     const dir = Math.sign(m.push);
     for (let k = 0; k < 26; k++) {
       const ph = (now * 0.16 + hash(k) * (W + 40)) % (W + 40);
@@ -348,6 +448,21 @@ function drawMods(ctx, m, now, env, g) {
   }
 }
 
+// sciure répandue sur le comptoir (partie fixe)
+function drawSaw(R, saw, TOP, FRONT, D) {
+  const x0 = sx(saw.a), w = saw.w;
+  R(x0, TOP + 1, w, D - 2, 'rgba(216,192,136,0.4)');
+  // bords irréguliers : la sciure déborde un peu de sa zone
+  for (let y = TOP + 1; y < FRONT - 1; y += 2) {
+    const l = Math.round(hash(y + saw.a) * 3), r = Math.round(hash(y * 1.7 + w) * 3);
+    R(x0 - l, y, l, 2, 'rgba(216,192,136,0.4)'); R(x0 + w, y, r, 2, 'rgba(216,192,136,0.4)');
+  }
+  for (let k = 0; k < w * 5; k++) {
+    const h = hash(k + saw.a);
+    R(x0 + h * w, TOP + 1 + hash(k * 3.1 + 7) * (D - 2), 1 + (h > 0.75), 1, h < 0.4 ? '#f0dca0' : h < 0.75 ? '#d0aa6a' : '#9a7444');
+  }
+}
+
 // la fenêtre de la salle bat au vent quand il y a un courant d'air
 function drawShutters(ctx, room, now) {
   const w = room?.def.windows[0];
@@ -356,8 +471,11 @@ function drawShutters(ctx, room, now) {
   const half = w.w / 2;
   [[w.x, 1], [w.x + w.w, -1]].forEach(([hx, d], i) => {
     const open = Math.abs(Math.sin(now / 170 + i * 1.3)) * 0.85 + 0.15; // 1 = rabattu contre le mur
-    const ww = half * (1 - open) + 3;
-    const x = d > 0 ? hx - (open > 0.6 ? ww : 0) : hx - (open > 0.6 ? 0 : ww);
+    // le volet pivote sur ses gonds : il s'amincit jusqu'à n'être plus qu'une tranche, puis passe côté mur
+    // (sans ce passage par la tranche, il sautait d'un côté à l'autre du gond)
+    const sw = Math.cos(open * Math.PI), wall = sw < 0;
+    const ww = Math.round(wall ? -sw * half * 0.2 : sw * half) + 2;
+    const x = d > 0 ? hx - (wall ? ww : 0) : hx - (wall ? 0 : ww);
     R(x, w.y, ww, w.h, '#6a4022');
     for (let y = w.y + 3; y < w.y + w.h; y += 5) R(x, y, ww, 1, '#4a2a14');
     R(x, w.y, 1, w.h, '#2a180c'); R(x + ww - 1, w.y, 1, w.h, '#2a180c');
@@ -373,23 +491,57 @@ function drawCoin(ctx, c, now) {
   if (Math.floor(now / 120) % 9 === 0) { R(x + 2, y - 5, 1, 3, '#fff8d0'); R(x + 1, y - 4, 3, 1, '#fff8d0'); }
 }
 
-function drawPuddle(ctx, pd, now, g) {
+// flaque de bière : la nappe (still, partie fixe, voir modsArt), sinon ses reflets qui courent
+function drawPuddle(ctx, pd, now, g, still = false) {
   if (!pd) return;
   const x0 = sx(pd.a), w = Math.round(pd.w);
   const { top: TOP, bot: FRONT } = spanOf(g);
-  for (let y = TOP + 2; y < FRONT - 1; y++) {
+  for (let y = TOP + 2; still && y < FRONT - 1; y++) {
     const k = y - TOP;
     const l = Math.round(Math.sin(k * 0.9 + pd.a) * 2 + Math.sin(k * 0.4) * 2);
     const r = Math.round(Math.cos(k * 0.7 + pd.w) * 2 + Math.sin(k * 0.3 + 1) * 2);
     ctx.fillStyle = 'rgba(232,168,48,0.5)';
     ctx.fillRect(x0 + l + 2, y, w - l + r - 4, 1);
   }
+  if (still) return;
   ctx.fillStyle = 'rgba(255,240,200,0.7)';
   for (let k = 0; k < 4; k++) {
     const gx = x0 + 5 + ((k * 17 + Math.floor(now / 90)) % Math.max(1, w - 10));
     ctx.fillRect(gx, sy(g.mid(gx - X0)) - 8 + ((k * 7) % 16), 2, 1);
   }
 }
+
+// cadran de direction et jauge de puissance (couleurs : voir Zones)
+const DIAL = { cx: 64, cy: 192, r: 20, k: (G) => (G.rails ? 1.3 : 0.7) / G.maxa };
+const BAR = { bx: 112, by: 182, bw: 180, bh: 8 };
+// jauge éteinte : avant de bloquer la direction, ou dans le noir
+let barOff = null;
+function barDark() {
+  if (barOff) return barOff;
+  const { bw, bh } = BAR;
+  barOff = S.makeCanvas(bw + 4, bh + 4);
+  const ctx = barOff.getContext('2d');
+  ctx.fillStyle = OUT; ctx.fillRect(0, 0, bw + 4, bh + 4);
+  ctx.fillStyle = '#4a3020'; ctx.fillRect(2, 2, bw, bh);
+  ctx.fillStyle = '#5a3a26'; ctx.fillRect(2, 2, bw, 1);
+  return barOff;
+}
+
+// ------------------------------------------------------------ bulles d'aide (survol, ou toucher la légende)
+const TIP_W = 196;
+const TIP_DIR = { title: 'DIRECTION', body: 'VERT : UNE PUISSANCE AU MOINS AMÈNE TA CHOPE PRÈS DU BOUT. ROUGE : ELLE TOMBE OU RESTE LOIN, QUOI QUE TU FASSES', col: '#b8e070' };
+const TIP_POW = { title: 'PUISSANCE', body: 'OR : AU RAS DU BOUT. VERT : ELLE RESTE SUR LE COMPTOIR. ROUGE : ELLE TOMBE. (LES CHOPES DÉJÀ POSÉES NE COMPTENT PAS)', col: '#e8b838' };
+const wraps = new Map();
+const wrapped = (text) => {
+  let l = wraps.get(text);
+  if (!l) { if (wraps.size > 200) wraps.clear(); wraps.set(text, (l = wrap(text, TIP_W - 10))); }
+  return l;
+};
+// « TITRE : EXPLICATION » coupé en deux (le titre en couleur)
+const split = (txt, col) => {
+  const k = txt.indexOf(' : ');
+  return k < 0 ? { title: txt, col } : { title: txt.slice(0, k), body: txt.slice(k + 3), col };
+};
 
 // ------------------------------------------------------------ scène
 export class PinteScene extends MiniScene {
@@ -428,7 +580,16 @@ export class PinteScene extends MiniScene {
 
   setup(seed) {
     this.showEnv = true;
-    this.room = new Room(seed, this.state.variant);
+    // mode histoire : la salle peut être celle de l'épisode (deco.room : le Buckshot de Rosa, room.js), et un calque
+    // propre au lieu se pose sur le décor (deco.set : Le Dernier Verre de Red Rock, le bureau du shérif ; routesdeco.js)
+    const deco = this.hooks.story?.deco;
+    this.room = new Room(seed, this.state.variant, deco?.room ? { room: deco.room } : null);
+    this.sd = null;
+    if (deco?.set) {
+      const room = this.room;
+      import('./routesdeco.js').then((m) => m.pinteDeco(deco, room.tint)).then((c) => { if (this.room === room) this.sd = c; })
+        .catch((e) => console.warn('décor de l’épisode', e));
+    }
     // le comptoir est celui de la salle : son ambiance (météo) est celle qu'on annonce et qui choisit les surprises
     this.env = this.room.env;
     this.amb = this.room.amb;
@@ -438,20 +599,33 @@ export class PinteScene extends MiniScene {
     this.aim = null;
     this.remoteAim = null;
     this.best = null;
+    this.zones = null; // jauges de la manche et de la bière servie (voir Zones)
+    this.hits = []; // zones de l'écran qui ont une bulle d'aide (légende, cadran, jauge), refaites à chaque image
+    this.pinned = null; // bulle ouverte d'un toucher sur la légende
   }
 
   applySync(st) {
     if (st.round) this.cur = st.round;
   }
 
-  popup(...args) { if (this.cur?.phase !== 'score') super.popup(...args); }
+  // texte flottant gardé dans l'écran (au bout du comptoir, « DANS LE VIDE ! » débordait à droite)
+  popup(x, y, text, col, big = false) {
+    if (this.cur?.phase === 'score') return;
+    const half = Math.ceil(measureW(text, big ? 16 : 8) / 2) + 2;
+    super.popup(clampI(Math.round(x), half, W - half), y, text, col, big);
+  }
 
   get g() { return counterOf(this.cur?.mods); }
   get thrower() { const c = this.cur; return c && c.phase === 'aim' ? c.order[c.turn] : null; }
   get myTurn() { return this.thrower === this.me && this.t >= this.cur.turnAt && this.playing; }
 
   // ---------------------------------------------------------- entrées
-  onFire() { this.press(); }
+  // un clic (ou un toucher) sur la légende ouvre sa bulle d'aide au lieu de lancer
+  onFire(pos) {
+    const h = pos && this.hits.find((z) => z.legend && inBox(z, pos.x, pos.y));
+    if (h) { this.pinned = { tip: h.tip, x: pos.x, y: pos.y, until: this.now + 3500 }; return; }
+    this.press();
+  }
   onKey(k) { if (k === ' ' || k === 'enter') this.press(); }
 
   press() {
@@ -468,6 +642,8 @@ export class PinteScene extends MiniScene {
       a.stage = 'sent';
       sfx('click');
       this.hooks.send({ kind: 'throw', n: c.n, turn: c.turn, power: a.p, angle: a.a });
+      // les autres voient la jauge s'arrêter tout de suite, sans attendre le lancer renvoyé par l'hôte
+      this.sendLive({ n: c.n, turn: c.turn, s: 'go', a: a.a, p: a.p, t }, true);
     }
   }
 
@@ -493,14 +669,14 @@ export class PinteScene extends MiniScene {
       this.cur = c;
       this.aim = null;
       this.remoteAim = null;
-      this.slide = { sim: new Slide(ev.start, ev.mods || c.mods), at: this.t, seen: 0, who: ev.who, id: ev.start[ev.start.length - 1].id };
+      this.slide = { sim: new Slide(ev.start, ev.mods || c.mods), at: startAt(ev, this.t), seen: 0, who: ev.who, id: ev.start[ev.start.length - 1].id };
       sfx('rope');
     } else if (ev.type === 'pBrawl') {
       // la bagarre est annoncée, puis le comptoir est bousculé (même glissade que chez l'hôte)
       this.cur = c;
       this.aim = null;
       this.remoteAim = null;
-      this.slide = { sim: new Slide(ev.start, ev.mods || c.mods), at: this.t + (ev.delay || 0), seen: 0, who: null, id: null, brawl: true };
+      this.slide = { sim: new Slide(ev.start, ev.mods || c.mods), at: startAt(ev, this.t) + (ev.delay || 0), seen: 0, who: null, id: null, brawl: true };
       sfx('yell');
       sfx('crate', 0.25);
     } else if (ev.type === 'pSkip') {
@@ -522,14 +698,24 @@ export class PinteScene extends MiniScene {
   // ---------------------------------------------------------- simulation
   update(dt) {
     const t = this.t;
-    for (const p of this.parts) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt; }
-    this.parts = this.parts.filter((p) => p.t < p.max);
+    // compactées sur place (pas de nouveau tableau à chaque image)
+    let np = 0;
+    for (const p of this.parts) {
+      p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt;
+      if (p.t < p.max) this.parts[np++] = p;
+    }
+    this.parts.length = np;
     // la glissade avance au rythme de l'horloge de la partie
     const sl = this.slide;
     if (sl) {
       const el = t - sl.at;
       if (sl.brawl && el >= 0 && !sl.shook) { sl.shook = true; this.shake = 5; sfx('thud'); sfx('glass', 0.05); }
-      while (!sl.sim.done && sl.sim.t <= el) sl.sim.step();
+      // la simulation avance par pas de P.DT ms : chaque chope garde sa position du pas d'avant (px, py),
+      // pour être dessinée entre les deux (sans quoi elle avance de 2 ou 3 pas selon l'image, par saccades)
+      while (!sl.sim.done && sl.sim.t <= el) {
+        for (const q of sl.sim.p) { q.px = q.x; q.py = q.y; }
+        sl.sim.step();
+      }
       for (; sl.seen < sl.sim.log.length; sl.seen++) this.slideEvent(sl.sim.log[sl.seen], sl);
       const saw = sl.sim.m.saw;
       if (saw) {
@@ -544,12 +730,13 @@ export class PinteScene extends MiniScene {
         }
       }
       if (sl.sim.done && el >= sl.sim.t) {
-        const q = sl.sim.p.find((x) => x.id === sl.id);
-        if (q && !q.out) {
+        // l'écart annoncé est celui de l'hôte (c'est lui qui compte les points), pas celui de la glissade rejouée ici
+        const q = sl.id == null ? null : this.cur?.pints?.find((x) => x.id === sl.id);
+        if (q) {
           const cm = gapCm(q);
           this.popup(sx(q.x), sy(q.y) - 22, cm === 0 ? 'AU RAS !' : `${cm} CM`, this.color(q.o), cm <= 5);
           if (cm <= 5) sfx('good');
-          if (onMat(sl.sim.m, q)) {
+          if (onMat(this.cur.mods, q)) {
             this.popup(sx(q.x), sy(q.y) - 34, `SOUS-BOCK : +${P.MAT}`, MODS.sousbock.col, true);
             sfx('coin');
           }
@@ -566,9 +753,17 @@ export class PinteScene extends MiniScene {
         f.broken = true;
         sfx('glass');
         if (f.edge !== 'back') this.smash(pos.x, f.floor);
+        // tombée derrière le comptoir : on ne la voit pas se briser, mais des éclats et de la mousse jaillissent
+        else this.splash(pos.x, sy(this.g.backAt(f.x)) - 4);
       }
     }
     this.falls = this.falls.filter((f) => !f.broken);
+    // jauges de la bière servie à ce tour (ou au suivant, pendant la glissade) : quelques directions par image
+    const c = this.cur, turn = c && (c.phase === 'aim' ? c.turn : c.turn + 1), b = c?.beers?.[turn];
+    if (b && c.phase !== 'score') {
+      if (this.zones?.n !== c.n || this.zones.b !== b) this.zones = Object.assign(new Zones(c.mods, b), { n: c.n });
+      if (!this.zones.done) this.zones.work(4);
+    }
     // mon tour : l'aiguille de direction se met en marche
     if (this.myTurn && !this.aim) {
       this.aim = { stage: 'dir', t0: t };
@@ -611,14 +806,23 @@ export class PinteScene extends MiniScene {
     } else if (e.type === 'bonk') {
       sfx('clank', 0.05);
       if (q && e.v > 0.03) this.popup(sx(q.x), sy(q.y) - 20, 'BONK !', '#b8e070');
+    } else if (e.type === 'boing') {
+      sfx('smack');
+      sfx('ding', 0.03);
+      if (q && e.v > 0.02) this.popup(sx(q.x), sy(q.y) - 20, 'BOING !', '#f06a50', e.v > 0.12);
+      // le plot heurté (le plus proche de la chope) rougeoie un instant : voir drawProp
+      const o = q && this.g.props.filter((p) => p.k === 'plot').sort((a, b) => Math.abs(a.x - q.x) + Math.abs(a.y - q.y) - Math.abs(b.x - q.x) - Math.abs(b.y - q.y))[0];
+      if (o) (sl.boing ||= []).push({ x: o.x, y: o.y, at: this.now });
     } else if (e.type === 'coin' && q) {
       sl.coinGone = true;
       sfx('coin');
       this.popup(sx(q.x), sy(q.y) - 22, `+${P.COIN}`, '#f8d070', true);
       this.sparkle(sx(sl.sim.m.coin.x), sy(sl.sim.m.coin.y));
-    } else if (e.type === 'fall' && q) {
+    } else if (e.type === 'fall' && q && !this.cur?.pints?.some((x) => x.id === q.id)) {
+      // (l'hôte l'a gardée sur le comptoir : on ne montre pas une chute qui n'a pas eu lieu)
+      // q.x, q.y : position à la fin du pas (e.t est son début) ; la chute part de là, sans à-coup
       this.falls.push({
-        x: q.x, y: q.y, vx: q.vx, vy: q.vy, o: q.o, b: q.b, edge: e.edge, at: sl.at + e.t,
+        x: q.x, y: q.y, vx: q.vx, vy: q.vy, o: q.o, b: q.b, edge: e.edge, at: sl.at + e.t + P.DT,
         floor: e.edge === 'back' ? sy(this.g.backAt(q.x)) + 32 : e.edge === 'front' ? FLOOR + 6 : FLOOR + 3,
       });
       const mine = q.o === this.me;
@@ -635,10 +839,25 @@ export class PinteScene extends MiniScene {
     }
   }
 
+  // position d'une chope pendant la glissade, à l'instant de l'image : entre le pas d'avant et le pas en cours
+  slidePos(q) {
+    const sl = this.slide;
+    if (q.px == null || (q.px === q.x && q.py === q.y)) return q;
+    const k = Math.max(0, Math.min(1, (this.t - sl.at - (sl.sim.t - P.DT)) / P.DT));
+    return { ...q, x: q.px + (q.x - q.px) * k, y: q.py + (q.y - q.py) * k };
+  }
+
   // position à l'écran d'une chope qui tombe, el ms après avoir quitté le comptoir
   fallPos(f, el) {
     const slow = Math.min(el, 400);
-    const x = sx(f.x + f.vx * slow * 0.7) + (f.edge === 'end' ? Math.round(el * 0.02) : 0);
+    const drift = (e) => f.vx * Math.min(e, 400) * 0.7 + (f.edge === 'end' ? e * 0.02 : 0);
+    // lancée fort, elle sortait de l'écran par la droite avant de toucher le plancher (et s'y brisait sans qu'on
+    // le voie) : son élan est réduit juste assez pour qu'elle atterrisse dans l'image
+    if (f.k == null) {
+      const d = drift(Math.sqrt((2 * Math.max(0, f.floor - sy(f.y))) / GRAV));
+      f.k = d > 0 ? clampI((W - 10 - (X0 + f.x)) / d, 0, 1) : 1;
+    }
+    const x = Math.round(X0 + f.x + drift(el) * f.k);
     const y = sy(f.y + f.vy * slow * 0.7) + 0.5 * GRAV * el * el;
     return { x, y, rot: (el / 140) * (f.edge === 'back' ? -1 : 1) };
   }
@@ -668,24 +887,38 @@ export class PinteScene extends MiniScene {
     this.shake = 3;
   }
 
+  // éclats de verre et mousse qui sautent par-dessus le rebord arrière, puis s'éteignent avant de retomber
+  splash(x, y) {
+    for (let i = 0; i < 10; i++) {
+      this.parts.push({
+        x: x - 4 + Math.random() * 8, y, vx: (Math.random() - 0.5) * 0.1, vy: -0.08 - Math.random() * 0.06, g: 0.0006,
+        t: 0, max: 260 + Math.random() * 120, col: ['#e8f4fa', '#fdf6e0', '#e8a830'][i % 3], r: 1,
+      });
+    }
+  }
+
   // ---------------------------------------------------------- rendu
   render(ctx) {
     if (!this.state || !this.room) return;
+    this.hits.length = 0;
     const now = this.now, t = this.t, c = this.cur;
     const m = c?.mods;
     this.room.drawBack(ctx, now);
+    if (this.sd) ctx.drawImage(this.sd, 0, 0);
     if (m?.wind && t >= 0) drawShutters(ctx, this.room, now);
     for (const f of this.falls) if (f.edge === 'back') this.drawFall(ctx, f, t);
     this.drawThrower(ctx);
     const g = this.g, art = counter(g);
     ctx.drawImage(art.back, 0, 0);
+    const still = modsArt(m, g);
+    if (still) ctx.drawImage(still, 0, 0);
     ctx.save();
     surfacePath(ctx, g);
     ctx.clip();
     drawPuddle(ctx, m?.puddle, now, g);
-    drawMods(ctx, m, now, this.env?.id, { ...g, clip: true });
+    drawMods(ctx, m, now, this.env?.id, g);
     ctx.restore();
-    if (m?.push) drawMods(ctx, { push: m.push }, now, this.env?.id, { ...g, clip: false });
+    if (m?.push) drawMods(ctx, { push: m.push }, now, this.env?.id, g, false, true);
     if (m?.mat) drawMat(ctx, m.mat);
     this.drawGuide(ctx);
     // pièce d'or : encore là tant que personne ne l'a empochée (pendant une glissade, jusqu'au passage de la chope)
@@ -693,19 +926,21 @@ export class PinteScene extends MiniScene {
     const coin = sl ? (!sl.coinGone && sl.sim.coin) : m?.coin && m.coin.by == null ? m.coin : null;
     if (coin) drawCoin(ctx, coin, now);
     // chopes et bouteilles du comptoir, de l'arrière vers l'avant
-    const pints = sl ? sl.sim.p.filter((q) => !q.out) : (c?.pints || []).slice();
+    const pints = sl ? sl.sim.p.filter((q) => !q.out).map((q) => this.slidePos(q)) : (c?.pints || []).slice();
     if (c && c.phase === 'aim' && t >= c.turnAt - 300) pints.push({ x: P.START, y: P.D / 2, o: c.order[c.turn], b: c.beers?.[c.turn] });
     const items = [...pints, ...(m?.bottles || []).map((o) => ({ ...o, bottle: true }))];
     if (m?.cat) items.push({ ...m.cat, cat: true });
-    for (const o of g.taps) items.push({ ...o, tap: true });
+    for (const o of g.props) items.push({ ...o, prop: o.k });
     for (const w of g.walls || []) items.push({ y: Math.max(w[1], w[3]), x: w[0], wall: w });
     items.sort((a, b) => a.y - b.y);
     for (const q of items) {
       if (q.wall) { drawWall(ctx, q.wall); continue; }
-      const r = q.bottle ? P.BOTTLE_R : q.cat ? P.CAT_R : q.tap ? P.TAP_R : beerOf(q).r;
+      const r = q.bottle ? P.BOTTLE_R : q.cat ? P.CAT_R : q.prop ? q.r : beerOf(q).r;
+      // ombre portée au pied, un peu vers la droite (lumière en haut à gauche) : plus haut, le sprite la cachait toute
       ctx.fillStyle = 'rgba(40,20,10,0.35)';
-      ctx.fillRect(sx(q.x) - r, sy(q.y) - 1, 2 * r + 1, 2);
-      if (q.tap) { const tp = tap(); ctx.drawImage(tp, sx(q.x) - tp.ox, sy(q.y) - tp.oy); } else if (q.bottle) { const bt = bottle(); ctx.drawImage(bt, sx(q.x) - bt.ox, sy(q.y) - bt.oy); } else if (q.cat) this.drawCat(ctx, q, now);
+      ctx.fillRect(sx(q.x) - r, sy(q.y), 2 * r + 2, 2);
+      if (q.prop) this.drawProp(ctx, q, now);
+      else if (q.bottle) { const bt = bottle(); ctx.drawImage(bt, sx(q.x) - bt.ox, sy(q.y) - bt.oy); } else if (q.cat) this.drawCat(ctx, q, now);
       else drawMug(ctx, sx(q.x), sy(q.y), this.color(q.o), 0, q.b);
     }
     ctx.drawImage(art.front, 0, 0);
@@ -723,6 +958,76 @@ export class PinteScene extends MiniScene {
     if (c.phase === 'score') this.drawScore(ctx, c);
     else { this.drawGauges(ctx); this.drawLegend(ctx, c); }
     this.drawBanner(ctx, c, t);
+    this.drawTip(ctx);
+  }
+
+  // obstacle du comptoir ; le plot de billard rougeoie un instant quand une chope rebondit dessus
+  drawProp(ctx, o, now) {
+    const a = propArt(o.prop), x = sx(o.x), y = sy(o.y);
+    ctx.drawImage(a, x - a.ox, y - a.oy);
+    const hit = o.prop === 'plot' && this.slide?.boing?.find((h) => h.x === o.x && h.y === o.y);
+    if (hit && now - hit.at < 200) {
+      ctx.fillStyle = 'rgba(255,200,160,0.7)';
+      ctx.fillRect(x - 5, y - 5, 10, 1); ctx.fillRect(x - 5, y - 1, 10, 1);
+    }
+  }
+
+  // ---------------------------------------------------------- bulles d'aide
+  // Sous le pointeur (souris) : la légende, le cadran, la jauge, puis ce qui est posé sur le comptoir.
+  tipAt(mx, my) {
+    for (const z of this.hits) if (inBox(z, mx, my)) return z.tip;
+    const c = this.cur, m = c?.mods;
+    if (!c || c.phase === 'score' || (c.turn === 0 && this.t < c.turnAt)) return null;
+    const g = this.g;
+    // un objet dont le pied est en (x, y) : r de demi-largeur, h de haut
+    const on = (o, r, h) => Math.abs(mx - sx(o.x)) <= r + 1 && my <= sy(o.y) + 2 && my >= sy(o.y) - h;
+    if (!this.slide) {
+      for (const q of c.pints || []) {
+        if (!on(q, beerOf(q).r + 1, 15)) continue;
+        const who = q.o === this.me ? 'TA CHOPE' : `LA CHOPE DE ${this.name(q.o).toUpperCase()}`, cm = gapCm(q);
+        return { title: who, body: `${beerOf(q).name} : ${cm ? `À ${cm} CM DU BOUT` : 'AU RAS DU BOUT !'}`, col: this.color(q.o) };
+      }
+    }
+    if (m?.cat && on(m.cat, 9, 13)) return { title: 'LE CHAT DU SALOON', body: 'IL DORT SUR LE BORD. UNE CHOPE QUI LE HEURTE PERD PRESQUE TOUT SON ÉLAN : PASSE DE L\'AUTRE CÔTÉ', col: MODS.chat.col };
+    for (const o of m?.bottles || []) if (on(o, 4, 18)) return { title: 'BOUTEILLE OUBLIÉE', body: 'ELLE NE BOUGE PAS : LA CHOPE REBONDIT DESSUS', col: MODS.bouteille.col };
+    for (const o of g.props) if (on(o, o.r + 1, PROP_H[o.k])) return { title: PROPS[o.k].name, body: PROPS[o.k].desc, col: COUNTERS[g.id].col };
+    for (const w of g.walls || []) {
+      if (mx >= sx(Math.min(w[0], w[2])) - 2 && mx <= sx(Math.max(w[0], w[2])) + 2 && my >= sy(Math.min(w[1], w[3])) - 8 && my <= sy(Math.max(w[1], w[3])) + 1) {
+        return { title: 'CLOISON', body: 'LA CHOPE RICOCHE DESSUS : SERS-T\'EN POUR CONTOURNER', col: COUNTERS[g.id].col };
+      }
+    }
+    if (m?.mat && on(m.mat, 10, 6)) return { title: 'SOUS-BOCK', body: `ARRÊTE TA CHOPE DESSUS : +${P.MAT} PTS`, col: MODS.sousbock.col };
+    const coin = m?.coin && m.coin.by == null && m.coin;
+    if (coin && on(coin, 4, 6)) return { title: 'PIÈCE D\'OR', body: `LA PREMIÈRE CHOPE QUI PASSE DESSUS : +${P.COIN} PTS`, col: MODS.piece.col };
+    // zones du comptoir, sous le pointeur
+    const x = mx - X0;
+    if (x < 0 || x > P.L || my < sy(g.backAt(x)) || my > sy(g.frontAt(x))) return null;
+    const inZ = (z) => z && x >= z.a && x <= z.a + z.w;
+    if (inZ(m?.puddle)) return { title: 'FLAQUE DE BIÈRE', body: 'LA CHOPE Y GLISSE : ELLE VA PLUS LOIN', col: MODS.flaque.col };
+    if (inZ(m?.saw)) return { title: 'SCIURE', body: 'ÇA FREINE DUR : IL FAUT LANCER PLUS FORT POUR LA TRAVERSER', col: MODS.sciure.col };
+    if (inZ(m?.wind)) return { title: 'COURANT D\'AIR', body: `IL POUSSE LA CHOPE VERS ${m.wind.fy > 0 ? 'TOI' : 'LE MUR'}`, col: MODS.vent.col };
+    return null;
+  }
+
+  drawTip(ctx) {
+    let tip = null, mx = 0, my = 0;
+    if (this.pinned && this.now < this.pinned.until) ({ tip, x: mx, y: my } = this.pinned);
+    else {
+      this.pinned = null;
+      if (this.touch || !this.mouse.in) return;
+      ({ x: mx, y: my } = this.mouse);
+      tip = this.tipAt(mx, my);
+    }
+    if (!tip) return;
+    const head = wrapped(tip.title), lines = tip.body ? wrapped(tip.body) : [];
+    const w = Math.min(TIP_W + 6, Math.max(...head.map((l) => measureW(l)), ...lines.map((l) => measureW(l))) + 14);
+    const h = 3 + head.length * 10 + lines.length * 10;
+    // à côté du pointeur, sans sortir de l'écran (au-dessus quand il est bas)
+    const x = clampI(Math.round(mx + 8), 3, W - w - 4);
+    const y = my + 12 + h > H - 2 ? Math.max(2, Math.round(my - h - 6)) : Math.round(my + 12);
+    plate(ctx, x, y, w, h, tip.col || '#fdf6e0');
+    head.forEach((l, k) => canvasText(ctx, l, x + 5, y + 3 + k * 10, { color: tip.col || '#fdf6e0', align: 'left' }));
+    lines.forEach((l, k) => canvasText(ctx, l, x + 5, y + 3 + (head.length + k) * 10, { color: '#fdf6e0', align: 'left' }));
   }
 
   // le chat dort (il respire, des Z montent) ; heurté, il sursaute un instant
@@ -771,57 +1076,77 @@ export class PinteScene extends MiniScene {
     }
     const d = this.remoteAim;
     if (!d) return null;
-    return d.s === 'dir' ? { a: dirAt(t - d.t, this.g), p: null } : { a: d.a, p: powAt(t - d.t) };
+    if (d.s === 'dir') return { a: dirAt(t - d.t, this.g), p: null };
+    return d.s === 'go' ? { a: d.a, p: d.p } : { a: d.a, p: powAt(t - d.t) };
+  }
+
+  // la direction a mène-t-elle près du bout ? (null : pas encore calculé, ou pas de jauge pour cette bière)
+  dirOk(a) {
+    const z = this.zones, c = this.cur;
+    return z && c && z.n === c.n && z.b === c.beers?.[c.turn] ? z.dirOk(a) : null;
   }
 
   // trajectoire visée : des points à la craie sur le comptoir, qui suivent les ricochets sur les rambardes
+  // (avec tout ce qui est posé sur le comptoir et souffle dessus : chat, bouteilles, vent, pente…)
   drawGuide(ctx) {
     const aim = this.aimNow();
     if (!aim || this.cur.mods?.meta === 'noir') return;
-    const g = this.g, mods = { lay: g.id, bottles: this.cur.mods?.bottles }, v = speedFor(1, mods);
-    ctx.fillStyle = isSafe(g, aim.a) ? 'rgba(253,246,224,0.7)' : 'rgba(240,112,90,0.8)';
-    const sim = new Slide([{ id: 0, b: 'blonde', x: P.START, y: P.D / 2, vx: v * Math.cos(aim.a), vy: v * Math.sin(aim.a) }], mods);
-    const q = sim.p[0], len = g.rails ? 200 : 120;
-    let run = 0, next = 14, px = q.x, py = q.y;
-    while (run < len && !sim.done && !q.out) {
-      sim.step();
-      run += Math.hypot(q.x - px, q.y - py);
-      px = q.x; py = q.y;
-      if (run >= next) { next += 7; ctx.fillRect(sx(q.x), sy(q.y), 2, 1); }
+    const g = this.g;
+    // (sur le marbre et le zinc, clairs, la craie blanche ne se voyait pas : trait de crayon sombre)
+    const pale = g.look === 'marbre' || g.look === 'zinc';
+    ctx.fillStyle = this.dirOk(aim.a) === false ? (pale ? 'rgba(176,48,32,0.9)' : 'rgba(240,112,90,0.8)') : pale ? 'rgba(40,26,18,0.65)' : 'rgba(253,246,224,0.7)';
+    // points gardés tant que la direction ne change pas (toute la phase de puissance)
+    let gd = this.guide;
+    if (!gd || gd.a !== aim.a || gd.cur !== this.cur) {
+      const mods = this.cur.mods || { lay: g.id }, v = speedFor(1, mods);
+      const sim = new Slide([{ id: 0, b: this.cur.beers?.[this.cur.turn] || 'blonde', x: P.START, y: P.D / 2, vx: v * Math.cos(aim.a), vy: v * Math.sin(aim.a) }], mods);
+      const q = sim.p[0], len = g.rails ? 200 : 120, pts = [];
+      let run = 0, next = 14, px = q.x, py = q.y;
+      while (run < len && !sim.done && !q.out) {
+        sim.step();
+        run += Math.hypot(q.x - px, q.y - py);
+        px = q.x; py = q.y;
+        if (run >= next) { next += 7; pts.push(sx(q.x), sy(q.y)); }
+      }
+      gd = this.guide = { a: aim.a, cur: this.cur, pts };
     }
+    for (let i = 0; i < gd.pts.length; i += 2) ctx.fillRect(gd.pts[i], gd.pts[i + 1], 2, 1);
   }
 
   drawGauges(ctx) {
     const g = this.aimNow();
     if (!g) return;
     const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
-    // direction : cadran, zone verte = la chope reste sur le comptoir jusqu'au bout
-    const G = this.g, cx = 64, cy = 192, r = 20, k = (G.rails ? 1.3 : 0.7) / G.maxa;
+    // dans le noir, pas de couleurs : on vise au jugé
+    const dark = this.cur.mods?.meta === 'noir';
+    // direction : cadran, vert là où une puissance au moins amène la chope près du bout, l'aiguille par-dessus
+    const G = this.g, { cx, cy, r, k } = DIAL, kk = k(G);
     R(cx - r - 4, cy - r - 4, 2 * r + 9, r + 6, 'rgba(26,15,10,0.7)');
-    for (let s = -1; s <= 1; s += 0.02) {
-      const ang = s * G.maxa;
-      const v = -Math.PI / 2 + ang * k;
-      R(cx + Math.cos(v) * r, cy + Math.sin(v) * r, 2, 2, isSafe(G, ang) ? '#b8e070' : '#f0705a');
+    for (let s = 0; s <= DIRS; s++) {
+      const ang = G.maxa * (2 * s / DIRS - 1), v = -Math.PI / 2 + ang * kk, ok = dark ? null : this.dirOk(ang);
+      R(cx + Math.cos(v) * r, cy + Math.sin(v) * r, 2, 2, ok == null ? '#8a7a64' : ok ? '#b8e070' : '#f0705a');
     }
-    const v = -Math.PI / 2 + g.a * k;
+    const v = -Math.PI / 2 + g.a * kk;
     for (let d = 0; d < r - 2; d++) R(cx + Math.cos(v) * d, cy + Math.sin(v) * d, 1, 1, '#fdf6e0');
     R(cx - 1, cy - 1, 3, 3, '#f8d070');
     canvasText(ctx, 'DIRECTION', cx, cy - r - 14, { color: g.p == null ? '#fdf6e0' : '#a89880' });
-    // puissance : la jauge fait l'aller-retour
-    const bx = 112, by = 182, bw = 180, bh = 8;
-    R(bx - 2, by - 2, bw + 4, bh + 4, OUT);
-    for (let x = 0; x < bw; x++) {
-      const u = x / bw;
-      R(bx + x, by, 1, bh, u < 0.5 ? '#6a8a3a' : u < 0.8 ? '#c8a040' : '#b04030');
-    }
+    // puissance : la jauge s'allume une fois la direction bloquée (ses couleurs dépendent de la direction), puis
+    // l'index fait l'aller-retour
+    const { bx, by, bw, bh } = BAR, z = this.zones, c = this.cur;
+    const live = g.p != null && !dark && z && z.n === c.n && z.b === c.beers?.[c.turn];
+    ctx.drawImage(live ? z.barFor(g.a) : barDark(), bx - 2, by - 2);
     if (g.p != null) {
       const px = bx + Math.round(g.p * (bw - 1));
+      R(px - 2, by - 4, 5, bh + 8, OUT);
       R(px - 1, by - 4, 3, bh + 8, '#fdf6e0');
       R(px - 2, by - 5, 5, 1, '#fdf6e0');
-    } else {
-      R(bx, by, bw, bh, 'rgba(26,15,10,0.55)');
     }
     canvasText(ctx, 'PUISSANCE', bx + bw / 2, by - 14, { color: g.p != null ? '#fdf6e0' : '#a89880' });
+    // bulles d'aide du cadran et de la jauge
+    this.hits.push(
+      { x: cx - r - 4, y: cy - r - 16, w: 2 * r + 9, h: r + 18, tip: dark ? { title: 'DIRECTION', body: 'LES LAMPES SONT ÉTEINTES : TU VISES AU JUGÉ', col: METAS.noir.col } : TIP_DIR },
+      { x: bx - 2, y: by - 16, w: bw + 4, h: bh + 20, tip: dark ? { title: 'PUISSANCE', body: 'DANS LE NOIR, LA JAUGE NE DIT RIEN', col: METAS.noir.col } : TIP_POW },
+    );
   }
 
   drawBanner(ctx, c, t) {
@@ -881,22 +1206,35 @@ export class PinteScene extends MiniScene {
     const head = pre + (mine ? `ON TE SERT ${B.name}` : B.name);
     const tw = Math.max(textW(head), textW(B.desc)), w = tw + 36, x = Math.round(W / 2 - w / 2);
     plate(ctx, x, y, w, 26, B.col);
-    drawMug(ctx, x + 13, y + 22, this.color(this.thrower), 0, b);
+    // la chope du mineur, plus haute, est posée plus bas : sa mousse dépassait du cartouche
+    const col = this.color(this.thrower);
+    drawMug(ctx, x + 13, y + Math.max(22, mug(col, b).oy), col, 0, b);
     const cx = x + 28 + tw / 2;
     canvasText(ctx, head, cx, y + 4, { color: B.col });
     canvasText(ctx, B.desc, cx, y + 15, { color: '#fdf6e0' });
   }
 
-  // rappel du comptoir, des surprises et de l'événement de la manche, en haut à droite
+  // rappel du comptoir, des surprises et de l'événement de la manche, en haut à droite ; chaque ligne a sa bulle
+  // d'aide (survol, ou toucher) qui dit exactement ce qu'il y a
   drawLegend(ctx, c) {
-    const lay = c.mods?.lay && c.mods.lay !== 'droit' ? COUNTERS[c.mods.lay] : null;
-    const ev = c.mods?.meta && METAS[c.mods.meta];
-    const lines = [...(lay ? [[lay.label, lay.col]] : []), ...(c.mods?.list || []).map((id) => [modLabel(id, c.mods), MODS[id].col])];
-    if (ev) lines.push([ev.label, ev.col]);
-    if (!lines.length || this.t < c.turnAt) return;
+    const m = c.mods, lay = m?.lay && m.lay !== 'droit' ? COUNTERS[m.lay] : null;
+    const ev = m?.meta && METAS[m.meta];
+    const lines = [
+      ...(lay ? [[lay.label, lay.col, split(lay.name, lay.col)]] : []),
+      ...(m?.list || []).map((id) => [modLabel(id, m), MODS[id].col, { title: modLabel(id, m), body: modName(id, m), col: MODS[id].col }]),
+    ];
+    if (ev) lines.push([ev.label, ev.col, { title: ev.title, body: ev.name, col: ev.col }]);
+    // caché pendant l'annonce de la manche seulement (entre deux lancers, il disparaissait 300 ms : clignotement)
+    if (!lines.length || (c.turn === 0 && this.t < c.turnAt)) return;
     const w = Math.max(...lines.map(([txt]) => textW(txt))) + 8;
+    const hover = !this.touch && this.mouse.in ? this.mouse : null;
     plate(ctx, W - 2 - w, 2, w, lines.length * 10 + 3, '#8a5a34');
-    lines.forEach(([txt, col], k) => canvasText(ctx, txt, W - 6, 4 + k * 10, { align: 'right', color: col }));
+    lines.forEach(([txt, col, tip], k) => {
+      const z = { x: W - 2 - w, y: 3 + k * 10, w, h: 10, tip, legend: true };
+      this.hits.push(z);
+      if (hover && inBox(z, hover.x, hover.y)) { ctx.fillStyle = 'rgba(253,246,224,0.15)'; ctx.fillRect(z.x, z.y, w, 10); }
+      canvasText(ctx, txt, W - 6, 4 + k * 10, { align: 'right', color: col });
+    });
   }
 
   // fin de manche : écart de chaque chope, et la tournée pour la plus proche

@@ -192,4 +192,24 @@ export default [
       '..~~..,,,,#.....',
     ],
   },
+  // ---- mode histoire (story : jamais tirée au hasard ; story/decos/batailles.js l'impose à l'épisode « mission-colline ») :
+  // le parvis de la mission San Rosario, la colline au pied du clocher ; marks : bâtiments dessinés d'un seul tenant
+  // sur leurs cases de mur (brawlart.js markSprite), en cases de la carte complète
+  {
+    id: 'mission-clocher', env: 'mission', name: 'LE CLOCHER DE SAN ROSARIO', story: true,
+    marks: [{ k: 'church', x: 13, y: 5, w: 5, h: 2 }, { k: 'cloister', x: 13, y: 14, w: 5, h: 2 }],
+    rows: [
+      '..*.......#....S',
+      '.S........#.....',
+      '......,,,.......',
+      '.##..,,..x......',
+      '.#...,......,...',
+      '..**.,......,###',
+      '..**.,..x...,###',
+      '.....,..**..,...',
+      '..x..,,,,,,,,...',
+      '.##......*......',
+      '.........*.....,',
+    ],
+  },
 ];

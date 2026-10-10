@@ -1065,6 +1065,14 @@ export class FpsGame {
   mods(t = this.t) { return fpsMods(this.world.events, t); }
 
   start() {
+    // épisode du mode histoire (net.js : this.story, posé avant start) : la carte du lieu de l'aventure, imposée par
+    // son décor (story/decos : deco.map) ; chaque scène la reconstruit de même (fps.js, hooks.story.deco)
+    const sm = this.story?.deco?.map;
+    if (sm && FPS_MAPS[sm] && sm !== this.world.map) {
+      this.world = fpsWorld(this.seed, this.p.length, this.kind, sm);
+      this.horses = this.world.horses.map((h) => ({ id: h.id, x: h.x, y: h.y, a: h.a, hp: FPS.horse.hp, rider: -1, deadAt: 0 }));
+      this.carts = this.world.carts.map((c) => ({ id: c.id, s: c.s, rider: -1 }));
+    }
     this.startAt = Date.now() + this.countdown;
     this.push({ type: 'mgStart', kind: this.kind, seed: this.seed, countdown: this.countdown, duration: this.duration });
     return this.flush();
@@ -1762,7 +1770,7 @@ export class FpsGame {
     if (by >= 0 && this.p[by]) {
       const mods = this.mods(t);
       pts = Math.round(k.pts * mods.npcPts);
-      if (n.kind === 'diablo' && n.ev && this.ledger.claim(n.ev, 'boss', by)) pts += FPS_DIABLO.pts;
+      if (n.kind === 'diablo' && n.ev && this.ledger.claim(n.ev, 'boss', by)) { pts += FPS_DIABLO.pts; this.bossBy ??= by; } // lu par le mode histoire
       addPts(this.p[by], pts);
       this.p[by].stats.hits++;
     }

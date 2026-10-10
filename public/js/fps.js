@@ -90,6 +90,54 @@ const VIEW_BACK = Object.freeze({ angle: 'back', flip: false });
 const VIEW_SIDE = Object.freeze({ angle: 'side', flip: false });
 const VIEW_SIDE_FLIP = Object.freeze({ angle: 'side', flip: true });
 
+// L'Hacienda del Diablo (mode histoire, deco.hacienda) : la carte « San Miguel » (pueblo) devenue le repaire d'El Diablo.
+// Chaux passée à l'ocre rouge (variante 1 des murs du village), enseignes remplacées par ses bannières au crâne cornu,
+// et une bannière de plus toutes les quelques cases d'acrotère (puebloDiablo : fpsartPueblo.js). Le volcan : buildSky.
+function haciendaLook(w) {
+  w.name = 'HACIENDA DEL DIABLO';
+  w.tex.forEach((t, k) => {
+    if (!t) return;
+    if (t[0].startsWith('puebloWhite')) w.tex[k] = [t[0], 1];
+    else if (t[0] === 'puebloSign') w.tex[k] = ['puebloDiablo', 1];
+  });
+  let ban = w.tex.findIndex((t) => t && t[0] === 'puebloDiablo');
+  if (ban < 0) { ban = w.tex.length; w.tex.push(['puebloDiablo', 1]); }
+  const C = w.cells;
+  for (let i = 0; i < C.up.length; i++) {
+    const t = w.tex[C.up[i]];
+    if (t && t[0] === 'puebloWhiteUp' && (i % w.w) % 5 === 2 && C.h[i] > 1) C.up[i] = ban;
+  }
+}
+
+// Le volcan de la Bouche de l'Enfer, au nord du ciel panoramique (hacienda du mode histoire) : cône tronqué, flanc
+// ouest éclairé, ravines, lueur du cratère et panache de cendres. hz : ligne d'horizon du panorama, ph : sa hauteur.
+function drawVolcano(ctx, pw, hz, ph, night) {
+  const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); };
+  const cx = Math.round(pw * 0.75), half = Math.round(ph * 1.5), top = Math.round(hz - ph * 0.62), rim = Math.max(3, Math.round(ph * 0.09));
+  const lit = night ? '#3a2228' : '#6a4038', mid = night ? '#2a181e' : '#4e2c2c', dark = night ? '#1c1014' : '#3a2024';
+  // le panache : boules de cendre qui montent et s'élargissent vers l'est
+  for (let k = 0; k < 8; k++) {
+    const r = Math.round(rim * (0.8 + k * 0.35)), x = cx + Math.round(k * k * rim * 0.28), y = top - Math.round(k * rim * 1.05) - 2;
+    S.disc(ctx, x, y, r + 1, night ? '#2a2228' : '#5a4a48');
+    S.disc(ctx, x - 1, y - 1, r, night ? '#38303a' : k < 2 ? '#7a6a64' : '#8a7a72');
+  }
+  for (let x = cx - half; x <= cx + half; x++) {
+    const u = Math.abs(x - cx);
+    const y = u <= rim ? top + (u === rim ? 1 : 0) : Math.round(top + ((u - rim) / (half - rim)) ** 1.25 * (hz - top));
+    if (y >= hz) continue;
+    const xx = ((x % pw) + pw) % pw;
+    R(xx, y - 1, 1, 1, '#1a0f0a');
+    R(xx, y, 1, hz - y, x < cx - rim * 0.5 ? lit : x < cx + rim ? mid : dark);
+    if ((x * 7) % 11 < 2 && u > rim) R(xx, y + 2, 1, Math.round((hz - y) * 0.7), dark); // ravines
+  }
+  // le cratère rougeoie, deux coulées de lave sur le flanc
+  R(cx - rim + 1, top - 1, rim * 2 - 1, 2, night ? '#e8602a' : '#c8482a');
+  R(cx - rim + 2, top - 2, rim * 2 - 3, 1, night ? '#f8b050' : '#e87a3a');
+  for (const [dx, len] of [[-2, 0.35], [3, 0.22]]) {
+    for (let k = 0; k < Math.round((hz - top) * len); k++) R(cx + dx + Math.round(Math.sin(k / 2.5) * 1.2) + Math.sign(dx) * Math.round(k * 0.18), top + 1 + k, 1, 1, night ? '#e8602a' : '#b8402a');
+  }
+}
+
 // Fond et brouillard selon l'ambiance (heure, météo) : multiplicateurs de couleur dehors et dedans.
 function lightOf(env) {
   const hex = (h) => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
@@ -144,6 +192,26 @@ function dimmed(c) {
     DIM.set(c, d);
   }
   return d;
+}
+// Copie teintée à demi par la lumière du dehors (out : multiplicateurs de lightOf), pour les ambiances sombres (nuit,
+// orage) : l'arme en main ne reste pas en plein jour par-dessus un décor bleu. Le jour, l'aube, le crépuscule : telle
+// quelle. Faite une fois par canvas et par ambiance (key).
+const LIT = new WeakMap();
+function nightLit(c, out, key) {
+  if (0.3 * out[0] + 0.55 * out[1] + 0.15 * out[2] > 0.62) return c;
+  let m = LIT.get(c);
+  if (!m) LIT.set(c, m = {});
+  if (!m[key]) {
+    const d = S.makeCanvas(c.width, c.height), x = d.getContext('2d');
+    x.drawImage(c, 0, 0);
+    x.globalCompositeOperation = 'multiply';
+    x.fillStyle = `rgb(${out.map((v) => Math.round(255 * (0.5 + 0.5 * v))).join(',')})`;
+    x.fillRect(0, 0, c.width, c.height);
+    x.globalCompositeOperation = 'destination-in'; // la forme de l'original (le multiply a rempli le fond)
+    x.drawImage(c, 0, 0);
+    m[key] = d;
+  }
+  return m[key];
 }
 
 export class FpsScene extends MiniScene {
@@ -241,8 +309,13 @@ export class FpsScene extends MiniScene {
 
   // ---------------------------------------------------------- mise en place
   setup(seed) {
-    this.world = fpsWorld(seed, this.n, this.kind);
+    // épisode du mode histoire : la carte du lieu (deco.map, imposée aussi par l'arbitre : fpsgame.js start) et ses
+    // retouches (deco.hacienda : le village devient l'hacienda d'El Diablo) ; hors histoire, rien ne change
+    const deco = this.hooks.story?.deco || null;
+    this.deco = deco;
+    this.world = deco?.map ? fpsWorld(seed, this.n, this.kind, deco.map) : fpsWorld(seed, this.n, this.kind);
     const w = this.world;
+    if (deco?.hacienda) haciendaLook(w);
     this.light = lightOf(this.env);
     this.mods = fpsMods(w.events, 0);
     // les joueurs (leur look), notre peau et notre tenue (armes en main) ; les images des looks d'une partie
@@ -1322,6 +1395,8 @@ export class FpsScene extends MiniScene {
       m.x = r.x; m.y = r.y;
     }
     m.bob += m.v * dt * 0.0042;
+    // ampleur du balancement (vue, arme en main) : elle suit la vitesse en douceur, l'arme ne saute pas à l'arrêt
+    m.bobK = (m.bobK || 0) + (clamp(m.v / 3, 0, 1) - (m.bobK || 0)) * Math.min(1, dt / 120);
     // bruits de pas (un par oscillation de la vue), éperons un pas sur deux ; à cheval, galop à trois temps
     const q = Math.floor(m.bob / Math.PI);
     if (q !== m.stepQ) {
@@ -1507,6 +1582,7 @@ export class FpsScene extends MiniScene {
     if (this.mods.melee && !W8.melee) return;
     if (W8.melee) {
       m.lastFire = t;
+      m.f++; // les autres voient le geste (pose « melee »), comme pour les bots
       m.swing = { at: t, done: false };
       if (W8.tether) m.reeling = { at: t, w: m.w };
       sfx(W8.sfx, 0, true);
@@ -1517,6 +1593,7 @@ export class FpsScene extends MiniScene {
     const a = mode === 'alt' ? ammo?.alt : ammo;
     if (!a || a.mag <= 0) {
       m.lastFire = t;
+      m.dryAt = t; // clic à vide : ni éclair ni recul sur l'arme en main
       sfx('dry');
       this.startReload();
       return;
@@ -1695,7 +1772,7 @@ export class FpsScene extends MiniScene {
     const m = this.my;
     if (!m.alive) return m.deadAt > -1e8 ? Math.max(0.12, FPS.eye - (this.t - m.deadAt) / 1500) : FPS.eye;
     const base = m.m ? (m.m[0] === 'h' ? FPS.eyeHorse : FPS.eyeCart) : FPS.eye + (FPS.crouch.eye - FPS.eye) * (m.crouchK || 0);
-    return base + Math.sin(m.bob) * (m.m ? 0.03 : 0.018) * clamp(m.v / 3, 0, 1);
+    return base + Math.sin(m.bob) * (m.m ? 0.03 : 0.018) * (m.bobK || 0);
   }
 
   // ---------------------------------------------------------- rendu
@@ -1728,6 +1805,7 @@ export class FpsScene extends MiniScene {
     const c = S.makeCanvas(PW, PH + up);
     const ctx = c.getContext('2d');
     S.drawDesert(ctx, 0, up, PW, Math.round(PH / 0.6) + 1, { ...desertOpts(this.env, { sunX: 0.3, sunY: 0.32 }), cacti: false });
+    if (this.deco?.volcano) drawVolcano(ctx, PW, up + PH, PH, this.env.id === 'nuit' || this.env.id === 'orage');
     const d = pix(c).d;
     const band = Math.max(4, Math.round(PH * 0.15)); // la bande du haut du ciel (avant le soleil)
     for (let y = up - 1; y >= 0; y--) {
@@ -2023,10 +2101,11 @@ export class FpsScene extends MiniScene {
         for (let Y = y0, off = y0 * RW + X; Y <= y1; Y++, off += RW) {
           const zv = zb[off];
           if (zv && zv < ty) continue;
-          const c = sd[spV[Y] + u];
-          if (!(c >>> 24)) continue;
+          const c = sd[spV[Y] + u], al = c >>> 24;
+          if (!al) continue;
           if (red) buf[off] = 0xff3030e0; // touché : un éclair rouge
-          else buf[off] = 0xff000000 | (((((c >>> 16) & 255) * sB + aB) | 0) << 16) | (((((c >>> 8) & 255) * sG + aG) | 0) << 8) | (((c & 255) * sR + aR) | 0);
+          else if (al === 254) buf[off] = c | 0xff000000; // feu (alpha 254, voir ppEmit dans fpsart.js) : pleine lumière
+          else buf[off] =0xff000000 | (((((c >>> 16) & 255) * sB + aB) | 0) << 16) | (((((c >>> 8) & 255) * sG + aG) | 0) << 8) | (((c & 255) * sR + aR) | 0);
           zb[off] = ty;
         }
       }
@@ -2070,7 +2149,7 @@ export class FpsScene extends MiniScene {
       if (gunK && `d${o.k}` === gunK) continue;
       const st = o.pr?.st; // décor interactif : réverbère sans vitre, lustre tombé, coffre éventré
       let f = 0;
-      if (o.spin) f = Math.floor(now / 140) % 4;
+      if (o.spin) f = Math.floor(now / 140); // decoSprite boucle sur ses images (3 pour un drapeau : pas de « % 4 » qui bégaie)
       else if (o.id === 'cow' || o.id === 'chicken') f = Math.floor(now / 700 + o.k) % 2;
       else if (o.batwing) f = this.batwingFrame(o, now, occ);
       else if ((o.lamp || o.id === 'lantern') && st !== 'broken' && st !== 'fallen') f = lit || roofed(w, o.x, o.y) ? 1 : 0;
@@ -2129,7 +2208,10 @@ export class FpsScene extends MiniScene {
       else if (now - n.fireAt < 160) { pose = n.kind === 'dynamiter' ? 'throw' : 'shoot'; fr = 1; }
       else if (n.st === 2) { pose = n.kind === 'dynamiter' ? 'throw' : 'shoot'; fr = 0; }
       else if (n.st === 1) { pose = 'walk'; fr = Math.floor(n.walk) % 4; }
-      const cv = A.banditFrame(n.kind, n.look, pose, fr, back && n.alive);
+      // abattu de dos : il tombe de dos (images de dos, retournées comme le corps couché), sans se retourner d'un coup ;
+      // le côté vu au moment de la chute est gardé (le corps ne se retourne pas quand on en fait le tour)
+      if (!n.alive && n.dieBack == null) n.dieBack = back;
+      const cv = A.banditFrame(n.kind, n.look, pose, fr, n.alive ? back : n.dieBack);
       sprite(n.x, n.y, 0, cv, n.alive && now - n.hurtAt < 70 ? O_RED : NO_OPT);
     }
     // les autres joueurs
@@ -2138,14 +2220,23 @@ export class FpsScene extends MiniScene {
       if (!r.seen && !r.alive) continue;
       if (r.m && r.alive) continue; // dessiné avec sa monture
       if (!r.alive && (r.dieAt == null || now - r.dieAt > 6000)) continue;
-      const back = Math.cos(r.a - Math.atan2(v.y - r.y, v.x - r.x)) < 0;
+      let back = Math.cos(r.a - Math.atan2(v.y - r.y, v.x - r.x)) < 0;
+      // abattu : le côté vu à la chute est gardé jusqu'au retour (le corps ne se retourne pas quand on en fait le tour)
+      if (!r.alive && r.dieBackAt !== r.dieAt) { r.dieBackAt = r.dieAt; r.dieBack = back; }
+      if (!r.alive) back = r.dieBack;
       let pose = 'idle', fr = 0;
       if (!r.alive) { pose = 'die'; fr = Math.min(3, Math.floor((now - r.dieAt) / 150)); }
       else if (now - r.hurtAt < 140) pose = 'hurt';
-      else if (now - r.flashAt < 140) { pose = WEAPONS[r.w]?.melee ? 'melee' : 'shoot'; fr = now - r.flashAt < 70 ? 1 : 0; }
+      else if (now - r.flashAt < 140) {
+        // arme à feu : l'éclair d'abord (image 1), puis la visée ; arme blanche : le bras levé (image 0) puis le coup
+        // porté (image 1), sans revenir au bras levé après le coup
+        const melee = WEAPONS[r.w]?.melee, el = now - r.flashAt;
+        pose = melee ? 'melee' : 'shoot'; fr = melee ? (el < 50 ? 0 : 1) : el < 70 ? 1 : 0;
+      }
       else if (now - r.moveAt < 160) { pose = 'walk'; fr = Math.floor(now / 130) % 4; }
-      const cv = A.cowboyFrame(this.looks[i], pose, fr, back);
-      so.red = r.alive && now - r.hurtAt < 60; so.wh = r.c && r.alive && cv ? (cv.height / 64) * 0.6 : undefined; so.ww = so.full = so.dim = so.flip = undefined;
+      // accroupi : jambes pliées (le sprite garde ses proportions)
+      const cv = A.cowboyFrame(this.looks[i], pose, fr, back, !!r.c && r.alive);
+      so.red = r.alive && now - r.hurtAt < 60; so.wh = so.ww = so.full = so.dim = so.flip = undefined;
       sprite(r.x, r.y, 0, cv, so);
     }
     // dynamite : en vol, puis la mèche grésille au sol
@@ -2188,6 +2279,7 @@ export class FpsScene extends MiniScene {
     for (const f of this.fx) {
       const el = now - f.at;
       if (f.kind === 'boom') sprite(f.x, f.y, -0.1, A.fxSprite('boom', Math.min(4, Math.floor(el / 130))), f.big ? O_BOOM_BIG : O_BOOM);
+      else if (f.kind === 'flash') { if (el < 240) sprite(f.x, f.y, (f.z || 0.5) - 0.08, A.fxSprite('flash', Math.floor(el / 120)), O_FX); } // 2 images : il ne repart pas de la première
       else sprite(f.x, f.y, (f.z || 0.5) - 0.08, A.fxSprite(f.kind, Math.min(2, Math.floor(el / 120))), O_FX);
     }
     // mortier en main : la même mire, au point de chute que règle le regard
@@ -2238,7 +2330,7 @@ export class FpsScene extends MiniScene {
       const tx = inv * (v.dirY * dx - v.dirX * dy);
       const X = Math.round((v.RW / 2) * (1 + tx / ty));
       if (X < 0 || X >= v.RW) continue;
-      const top = r.m ? (r.m[0] === 'h' ? 1.4 : 0.95) : r.c ? 0.72 : 1.05;
+      const top = r.m ? (r.m[0] === 'h' ? 1.4 : 0.95) : r.c ? 0.86 : 1.05;
       // visible si le corps ou la tête n'est pas caché par quelque chose de plus proche
       let seen = false;
       for (let k = 0; k < 2 && !seen; k++) {
@@ -2390,7 +2482,7 @@ export class FpsScene extends MiniScene {
     const h = this.horses[+m.m.slice(1)];
     if (!h) return;
     const hurt = this.now - (h.hurtAt || -1e9) < 160; // rougi le temps du coup (faible : c'est la barre du HUD qui clignote)
-    const cv0 = A.horseNeckView(h.coat || 0, hurt), cv = this.mods.dark ? dimmed(cv0) : cv0;
+    const cv0 = A.horseNeckView(h.coat || 0, hurt), cv = this.mods.dark ? dimmed(cv0) : nightLit(cv0, this.light.out, this.env.id);
     const gal = clamp(m.v / 4, 0, 1);
     const nod = Math.round(Math.abs(Math.sin(m.bob * 0.5)) * 4 * gal), sway = Math.round(Math.sin(m.bob * 0.25) * 3 * gal);
     // on lève les yeux : l'encolure descend avec le décor (vers le bas, elle reste en place : rien en dessous)
@@ -2407,7 +2499,7 @@ export class FpsScene extends MiniScene {
       // la pièce : elle recule au coup puis revient en batterie
       const since = t - m.gunAt, kick = since < 600 ? Math.round(Math.sin(Math.min(1, since / 600) * Math.PI) * 14) : 0;
       const cv0 = cannonView((m.gunD - FPS.cannon.near) / (FPS.cannon.range - FPS.cannon.near), since < 90);
-      const cv = this.mods.dark ? dimmed(cv0) : cv0;
+      const cv = this.mods.dark ? dimmed(cv0) : since < 90 ? cv0 : nightLit(cv0, this.light.out, this.env.id); // le coup part : la bouche éclaire la pièce
       ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2), H - CANNON_H + kick);
       return;
     }
@@ -2430,26 +2522,30 @@ export class FpsScene extends MiniScene {
     else if (W8?.melee && m.swing && swingEl < Math.min(W8.rate, swingMs)) { state = 'swing'; fr = swingEl < steps[0] ? 0 : swingEl < steps[0] + steps[1] ? 1 : 2; }
     else if (THROWN[id]) { state = t - m.throwAt < 250 ? 'throw' : id === 'trap' ? 'idle' : 'lit'; fr = Math.floor(this.now / 90) % 2; }
     else if (W8?.charge && m.drawn) { state = 'draw'; fr = t - m.drawn.at >= W8.charge ? 1 : 0; }
-    else if (W8 && since < (W8.kick ? 260 : 170)) {
+    else if (W8 && m.dryAt !== m.lastFire && since < (W8.kick ? 260 : 170)) {
       state = m.altAt === m.lastFire ? 'alt' : m.fanAt === m.lastFire ? 'fan' : 'fire';
       fr = id === 'gatling' ? Math.floor(this.now / 40) % 4 : since < 70 ? 0 : 1;
-      recoil = W8.kick ? (since < 120 ? 14 : 7) : state === 'alt' ? (since < 70 ? 8 : 4) : since < 70 ? 4 : 2;
+      // recul : au plus fort au coup, puis l'arme revient en place sans à-coup
+      recoil = Math.round((W8.kick ? 14 : state === 'alt' ? 8 : 4) * (1 - since / (W8.kick ? 260 : 170)) ** 1.5);
     }
-    else if (id === 'gatling' && since < 400) { state = 'fire'; fr = Math.floor(this.now / 70) % 4; }
+    else if (id === 'gatling' && m.dryAt !== m.lastFire && since < 400) { state = 'spin'; fr = Math.floor(this.now / 70) % 4; } // les canons tournent encore, sans éclair
     else if (id === 'lasso') fr = Math.floor(this.now / 180) % 4; // le nœud coulant qui tournoie (4 temps du tour)
     else if (id === 'diablo') fr = Math.floor(this.now / 300) % 2; // la braise du pistolet du Diable pulse
     const cv0 = A.viewModel(id === 'akimbo' ? 'colt' : id, state, fr, this.skin, this.cloth); // deux colts : le colt, dessiné deux fois
     if (!cv0) return;
-    const cv = this.mods.dark ? dimmed(cv0) : cv0;
+    // de nuit, teintée par l'ambiance ; l'éclair du coup (image 0 du tir) l'éclaire en plein
+    const flashing = (state === 'fire' || state === 'alt' || state === 'fan') && (fr === 0 || id === 'gatling');
+    const cv = this.mods.dark ? dimmed(cv0) : flashing ? cv0 : nightLit(cv0, this.light.out, this.env.id);
     const draw = m.drawAt ? clamp((t - m.drawAt) / 180, 0, 1) : 1;
-    const bx = Math.sin(m.bob * 0.5) * 4 * clamp(m.v / 3, 0, 1);
-    const by = Math.abs(Math.cos(m.bob * 0.5)) * 3 * clamp(m.v / 3, 0, 1) + (1 - draw) * 40 + recoil;
+    const bk = m.bobK || 0;
+    const bx = Math.sin(m.bob * 0.5) * 4 * bk;
+    const by = Math.abs(Math.cos(m.bob * 0.5)) * 3 * bk + (1 - draw) * 40 + recoil;
     if (W8?.dual) {
       ctx.drawImage(cv, Math.round(W / 2 - cv.width / 2 + 52 + bx), Math.round(H - cv.height + by));
       ctx.save();
       ctx.scale(-1, 1);
       // la main gauche tire en alternance (petit décalage)
-      ctx.drawImage(cv, Math.round(-(W / 2 + cv.width / 2 - 52) - bx), Math.round(H - cv.height + by + (since < 170 ? 2 : 0)));
+      ctx.drawImage(cv, Math.round(-(W / 2 + cv.width / 2 - 52) - bx), Math.round(H - cv.height + by + (state === 'fire' ? 2 : 0)));
       ctx.restore();
     } else {
       // une vue pleine largeur (l'arc : 384 px) est déjà projetée depuis le viseur au centre : pas de décalage VM_X

@@ -6,6 +6,7 @@
 // draw(ctx, el) ajoute par-dessus les bandes noires, les textes, les arrêts sur image et les sons.
 // Les plans sont posés sur la carte tirée de la graine : on cherche pour chacun un passage dégagé.
 import { canvasText } from './scene.js';
+import { revealText } from './uikit.js';
 import { sfx } from './audio.js';
 import * as S from './sprites.js';
 import { W, H, rng } from './worlds.js';
@@ -267,11 +268,8 @@ export class FpsCut {
     ctx.fillStyle = INK;
     ctx.fillRect(0, 0, W, b);
     ctx.fillRect(0, H - b, W, b);
-    // légendes tapées à la machine dans la bande du bas
-    const typed = (str, e) => {
-      const n = Math.floor(clamp01(e / 900) * str.length);
-      if (n > 0) canvasText(ctx, str.slice(0, n), 10, H - 15, { color: '#e2d2a6', align: 'left' });
-    };
+    // légendes tapées à la machine dans la bande du bas (la phrase entière en cache, découverte lettre à lettre)
+    const typed = (str, e) => revealText(ctx, str, 10, H - 15, Math.floor(clamp01(e / 900) * str.length), { color: '#e2d2a6' });
     if (el < T.street) typed(this.cap1, el - 300);
     else if (el < T.gang) typed(this.cap2, el - T.street - 150);
     if (el > 400) canvasText(ctx, 'CLIC : PASSER', W - 6, 7, { color: '#8a7a68', align: 'right' });

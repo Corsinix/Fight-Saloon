@@ -11,11 +11,11 @@ import { canvasText } from './scene.js';
 import { SKIN, HAIR_COLORS } from './data.js';
 import { MiniScene, ring, pixelSprite } from './miniscene.js';
 import { skyDeco } from './env.js';
-import { horseSprite, riderLook } from './lasso.js';
+import { horseSprite, riderLook, STAND } from './lasso.js';
 import { W, H } from './worlds.js';
 import {
   WAGON, BANDIT_LOOKS, STAGES, BONUS, IN, SNIPE, AMB_ROCK, stageAt, wagonWorld, banditX, banditBox, anchor, climbK,
-  sniperUp, inPos, inProj, inK, ambushRise, targetBox, headBox, faceOf, active, dynThrows, dynPos, bonusPos, nextStrike,
+  sniperRise, faceDir, inPos, inProj, inK, ambushRise, targetBox, headBox, faceOf, active, dynThrows, dynPos, bonusPos, nextStrike,
 } from './wagongame.js';
 import { HORIZON, drawTrail, trailWarm, trailProp } from './trail.js';
 
@@ -57,12 +57,13 @@ const HORSES = [['#8a4a24', '#2e1a10'], ['#3a2c26', '#120c08'], ['#e8dcc8', '#8a
 const TEAM = [['#a86a3a', '#4a2a14'], ['#6a4a34', '#2a1a10']]; // l'attelage de la roulotte
 
 // bandit à pied, tourné vers la droite, pieds en (0, 0)
-// pose : 'walk' (frame 0..3), 'stand', 'strike' (frame 0..1, il s'acharne sur la roulotte), 'throw', 'aim' (fusil épaulé)
-function drawBandit(R, L, kind, pose, frame) {
+// pose : 'walk' (frame 0..3), 'stand', 'strike' (frame 0..1, il s'acharne sur la roulotte ; legs 0..3 : il court à sa
+// hauteur, ses jambes ne s'arrêtent pas), 'throw', 'aim' (fusil épaulé)
+function drawBandit(R, L, kind, pose, frame, legs = 0) {
   const big = kind === 'brute' || kind === 'boss';
   const wd = big ? 2 : 0, lift = big ? 3 : 0;
   const skin = SKIN[L.skin], hair = HAIR_COLORS[L.hair], coat = L.coat, coatD = S.shade(coat, -0.3);
-  const s = pose === 'walk' ? [-1, 0, 1, 0][frame] : 0;
+  const s = pose === 'walk' ? [-1, 0, 1, 0][frame] : pose === 'strike' ? [-1, 0, 1, 0][legs] : 0;
   const legH = 11 + lift, bodyH = 12 + lift;
   R(-3 + s - wd / 2, -legH - 1, 3, legH, S.shade(L.pants, -0.2)); R(1 - s + wd / 2, -legH - 1, 3, legH, L.pants);
   R(-3 + s - wd / 2, -2, 4, 2, '#2a1a10'); R(1 - s + wd / 2, -2, 4, 2, '#2a1a10');
@@ -98,10 +99,10 @@ function drawBandit(R, L, kind, pose, frame) {
   }
 }
 
-function banditSprite(look, kind, pose, frame) {
-  return cached(`b${kind}|${look}|${pose}|${frame}`, () => {
+function banditSprite(look, kind, pose, frame, legs = 0) {
+  return cached(`b${kind}|${look}|${pose}|${frame}|${legs}`, () => {
     const L = kind === 'boss' ? BOSS_LOOK : LOOKS[look % LOOKS.length];
-    return pixelSprite(44, 58, 20, 54, (R) => drawBandit(R, L, kind, pose, frame));
+    return pixelSprite(44, 58, 20, 54, (R) => drawBandit(R, L, kind, pose, frame, legs));
   });
 }
 
@@ -127,27 +128,37 @@ function flipped(spr) {
   return spr.flip;
 }
 
-// silhouette dorée d'un sprite : le liseré qui signale un bandit porteur de bonus
-function goldOf(spr) {
-  if (!spr.gold) {
+// silhouette d'un sprite d'une seule couleur (gardée avec lui) : le liseré doré d'un bandit porteur de bonus,
+// l'éclair rouge d'un bandit touché, l'éclair blanc de la roulotte qui encaisse
+function silOf(spr, col) {
+  const sil = spr.sil || (spr.sil = {});
+  if (!sil[col]) {
     const c = S.makeCanvas(spr.width, spr.height);
     const g = c.getContext('2d');
     g.drawImage(spr, 0, 0);
     g.globalCompositeOperation = 'source-in';
-    g.fillStyle = '#f8d070';
+    g.fillStyle = col;
     g.fillRect(0, 0, c.width, c.height);
-    spr.gold = c;
+    sil[col] = c;
   }
-  return spr.gold;
+  return sil[col];
 }
-function goldRim(ctx, spr, x, y, w, h, now) {
-  const g = goldOf(spr);
+// seed : l'étincelle reste au même endroit du sprite tant qu'il bouge (elle ne saute pas à chaque pixel parcouru)
+// (blit : pour un sprite dessiné en morceaux, voir drawInBandit)
+function goldRim(ctx, spr, x, y, w, h, now, seed = 0, blit = (img, dx, dy) => ctx.drawImage(img, rd(x) + dx, rd(y) + dy, rd(w), rd(h))) {
+  const g = silOf(spr, '#f8d070');
   ctx.globalAlpha = 0.6 + 0.4 * Math.sin(now / 120);
-  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) ctx.drawImage(g, rd(x) + dx, rd(y) + dy, rd(w), rd(h));
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) blit(g, dx, dy);
   ctx.globalAlpha = 1;
   // une étincelle de temps en temps
   const k = Math.floor(now / 160) % 5;
-  if (k < 2) { ctx.fillStyle = '#fff8d0'; ctx.fillRect(rd(x + w * (0.2 + 0.6 * hash(Math.floor(now / 800) + rd(x)))), rd(y + h * 0.3 * k), 1, 1); }
+  if (k < 2) { ctx.fillStyle = '#fff8d0'; ctx.fillRect(rd(x + w * (0.2 + 0.6 * hash(Math.floor(now / 800) + seed * 7))), rd(y + h * 0.3 * k), 1, 1); }
+}
+// éclair d'un bandit touché : sa silhouette rougit un instant (pas un rectangle sur le décor)
+function hitTint(ctx, spr, x, y, w, h) {
+  ctx.globalAlpha = 0.55;
+  ctx.drawImage(silOf(spr, '#ff5040'), rd(x), rd(y), rd(w), rd(h));
+  ctx.globalAlpha = 1;
 }
 
 // mule chargée de caisses de dynamite, tournée vers la droite, pieds en (0, 0)
@@ -203,7 +214,8 @@ function barricadeSprite() {
 
 // cavalier qui galope droit sur nous (vue de face), sabots en (0, 0) ; kind : 'chaser', 'zigzag', 'thrower' ou 'boss'
 function riderFront(look, frame, kind) {
-  return cached(`rf${kind}${look}${frame}`, () => pixelSprite(52, 84, 26, 80, (R) => {
+  // (assez haut pour le bâton de dynamite brandi et sa mèche, jusqu'à y = -82, avec le contour)
+  return cached(`rf${kind}${look}${frame}`, () => pixelSprite(52, 88, 26, 84, (R) => {
     const boss = kind === 'boss', zig = kind === 'zigzag';
     const L = boss ? BOSS_LOOK : zig ? ZIG_LOOK : LOOKS[look % LOOKS.length];
     const [coat, mane] = boss ? ['#2a2422', '#0e0a08'] : zig ? ['#d8a860', '#f4e6c8'] : HORSES[look % HORSES.length];
@@ -275,9 +287,16 @@ function bustSprite(look, pose) {
   });
 }
 
-// cheval de l'attelage vu de dos (vue de l'intérieur, vers l'avant), sabots en (0, 0)
+// cheval de l'attelage vu de dos (vue de l'intérieur, vers l'avant), sabots en (0, 0). Il est dessiné directement
+// 1,2 fois plus grand (formes agrandies, contour d'un pixel ajouté ensuite) : agrandir le sprite fini à l'écran
+// donnerait des pixels inégaux et un contour tantôt d'un, tantôt de deux pixels
+const HR_K = 1.2;
 function horseRear(i, f) {
-  return cached(`hr${i}${f}`, () => pixelSprite(40, 60, 20, 57, (R) => {
+  return cached(`hr${i}${f}`, () => pixelSprite(50, 72, 25, 69, (R0) => {
+    const R = (x, y, w, h, col) => {
+      const x0 = rd(x * HR_K), y0 = rd(y * HR_K);
+      R0(x0, y0, Math.max(1, rd((x + w) * HR_K) - x0), Math.max(1, rd((y + h) * HR_K) - y0), col);
+    };
     const [coat, mane] = TEAM[i];
     const dark = S.shade(coat, -0.28), light = S.shade(coat, 0.16), strap = '#3a2214';
     const b = f % 2 ? -1 : 0, up = [[0, 3], [3, 0], [0, 3], [3, 0]][f];
@@ -420,6 +439,28 @@ function horizonStrip(face, canyon) {
   });
 }
 
+// les parois du canyon (deux murs verticaux à 176 px de part et d'autre de la piste, hauts de 240 px), dessinées une
+// fois colonne par colonne, au pixel près (un tracé de polygone serait lissé) ; la brume au fond à part, elle passe
+// par-dessus les fissures
+function canyonWalls() {
+  return cached('walls', () => {
+    const X = 176, TOP = 240;
+    const wall = S.makeCanvas(W, H), haze = S.makeCanvas(W, H);
+    const g = wall.getContext('2d'), z = haze.getContext('2d');
+    const sNear = inProj(0, -20).s, sFar = inProj(0, IN.far).s, sHaze = inProj(0, 500).s;
+    const row = (c, x, y0, y1, col) => { c.fillStyle = col; c.fillRect(x, rd(y0), 1, rd(y1) - rd(y0)); };
+    for (let x = 0; x < W; x++) {
+      const sc = Math.min(sNear, Math.abs(x + 0.5 - W / 2) / X); // échelle de la paroi dans cette colonne
+      if (sc < sFar) continue;
+      const y = (h) => IN.hz + (IN.camH - h) * sc;
+      row(g, x, y(TOP), y(0), '#9a5236');
+      for (const [h, col] of [[30, '#7a3e28'], [74, '#b0603e'], [120, '#7a3e28'], [170, '#b0603e']]) row(g, x, y(h) - 1, y(h) + 1, col); // strates
+      if (sc < sHaze) row(z, x, y(TOP), y(0), 'rgba(216,168,136,0.35)');
+    }
+    return [wall, haze];
+  });
+}
+
 // l'intérieur de la roulotte autour de l'ouverture de la bâche (face 1 : l'avant et le siège du cocher,
 // -1 : l'arrière et le hayon). L'ouverture est transparente.
 const ARCH = { cy: 112, hw: 164, top: 14 };
@@ -508,9 +549,13 @@ export class WagonScene extends MiniScene {
   }
 
   title() { return 'DÉFENDS LA ROULOTTE'; }
+  // départ et arrivée du voyage : Dusty Gulch et Red Rock, ou ceux de l'épisode du mode histoire (la route de la mission)
+  get story() { const d = this.hooks.story?.deco; return d?.set === 'mission' ? d : null; }
+  get from() { return this.story ? this.story.from || 'RED ROCK' : WAGON.from; }
+  get to() { return this.story ? this.story.to || 'SAN ROSARIO' : WAGON.to; }
   help() {
     return [
-      `DE ${WAGON.from} À ${WAGON.to}, PROTÈGE LA ROULOTTE !`,
+      `DE ${this.from} À ${this.to}, PROTÈGE LA ROULOTTE !`,
       this.touch ? 'TOUCHE L\'ÉCRAN : TIRER - BOUTON : RECHARGER' : 'CLIC : TIRER - R OU CLIC DROIT : RECHARGER',
       this.touch ? 'DANS LA ROULOTTE : BOUTON DU BAS POUR TE RETOURNER' : 'DANS LA ROULOTTE : ESPACE POUR TE RETOURNER',
       'BANDITS DORÉS : ILS LÂCHENT UN BONUS, TIRE DESSUS !',
@@ -556,8 +601,8 @@ export class WagonScene extends MiniScene {
     for (let i = 0; i < this.n; i++) if (i !== this.me) this.remote[i] = { x: W / 2, y: H / 2, tx: W / 2, ty: H / 2, shot: -1e9, f: 0 };
     // sprites préparés pendant le compte à rebours, quelques-uns par image
     this.warmQueue = [...trailWarm(), () => flipped(wagonSprite()), SNIPE_ROCK, AMB_BOULDER, barricadeSprite, () => interior(1), () => interior(-1),
-      () => groundPal(false), () => groundPal(true), () => horizonStrip(1, false), () => horizonStrip(-1, false), () => horizonStrip(1, true), () => horizonStrip(-1, true)];
-    for (const [coat, mane] of TEAM) for (let f = 0; f < 4; f++) this.warmQueue.push(() => horseSprite(coat, mane, f, null));
+      () => groundPal(false), () => groundPal(true), canyonWalls, () => horizonStrip(1, false), () => horizonStrip(-1, false), () => horizonStrip(1, true), () => horizonStrip(-1, true)];
+    for (const [coat, mane] of TEAM) for (const f of [0, 1, 2, 3, STAND]) this.warmQueue.push(() => horseSprite(coat, mane, f, null));
     for (let f = 0; f < 4; f++) this.warmQueue.push(() => muleSprite(f), () => horseRear(0, f), () => horseRear(1, f), () => riderFront(0, f, 'boss'), () => riderFront(0, f, 'zigzag'));
     for (const k of Object.keys(BONUS)) this.warmQueue.push(() => bonusIcon(k));
     for (let l = 0; l < BANDIT_LOOKS; l++) {
@@ -565,8 +610,15 @@ export class WagonScene extends MiniScene {
         this.warmQueue.push(() => riderSprite(l, f), () => banditSprite(l, 'walker', 'walk', f), () => banditSprite(l, 'brute', 'walk', f));
         this.warmQueue.push(() => riderFront(l, f, 'chaser'), () => riderFront(l, f, 'thrower'));
       }
-      this.warmQueue.push(() => banditSprite(l, 'walker', 'strike', 0), () => banditSprite(l, 'walker', 'strike', 1), () => banditSprite(l, 'brute', 'strike', 0), () => banditSprite(l, 'brute', 'strike', 1));
+      for (let f = 0; f < 8; f++) this.warmQueue.push(() => banditSprite(l, 'walker', 'strike', f >> 2, f & 3), () => banditSprite(l, 'brute', 'strike', f >> 2, f & 3));
       this.warmQueue.push(() => flipped(banditSprite(l, 'walker', 'aim', 0)), () => bustSprite(l, 'aim'), () => bustSprite(l, 'grab'));
+    }
+    // mode histoire : le décor de la route de la mission (routesdeco.js), chargé pendant la cinématique
+    this.sd = null;
+    if (this.story) {
+      const world = this.world;
+      import('./routesdeco.js').then((m) => m.wagonDeco(this.story, this.env)).then((d) => { if (this.world === world) this.sd = d; })
+        .catch((e) => console.warn('décor de l’épisode', e));
     }
   }
 
@@ -844,7 +896,7 @@ export class WagonScene extends MiniScene {
       if (ev.bonus === 'tnt') { this.tntAt = t; sfx('boom'); this.shake = 12; }
     } else if (ev.type === 'matchEnd') {
       this.banner = ev.result === 'saved'
-        ? { text: `ARRIVÉE À ${WAGON.to} ! +${ev.bonus}`, col: '#b8e070', at: t, stay: true }
+        ? { text: `ARRIVÉE À ${this.to} ! +${ev.bonus}`, col: '#b8e070', at: t, stay: true }
         : { text: 'LA ROULOTTE EST TOMBÉE…', col: '#f0705a', at: t, stay: true };
       if (ev.result === 'lost') { sfx('boom'); this.shake = 10; this.stopAt = Math.min(t, this.duration); }
     } else if (ev.type === 'left') {
@@ -992,7 +1044,7 @@ export class WagonScene extends MiniScene {
     amb.sky(out, now);
     const ctx = amb.begin(out);
     const tt = clamp(t, 0, this.duration);
-    const glows = drawTrail(ctx, this.cam(t), now);
+    const glows = drawTrail(ctx, this.cam(t), now, this.sd);
     const fly = this.flying(tt, 0);
     // ombres de la dynamite
     for (const d of fly) {
@@ -1028,13 +1080,15 @@ export class WagonScene extends MiniScene {
     for (const s of this.shotFx) {
       const b = this.world.targets[s.id];
       if (b.kind !== 'sniper' || t - s.at > 90) continue;
-      S.drawFlash(out, banditX(b, t) - 20, b.y - SNIPE.feet - 23, 7, s.at);
+      // au bout du canon, qui descend avec lui quand il se baisse après le coup
+      const sy = b.y - SNIPE.feet + Math.round((1 - this.sniperRise(b, t, this.dead.get(b.id))) * SNIPE.drop);
+      S.drawFlash(out, banditX(b, t) - 20, sy - 23, 7, s.at);
     }
   }
 
   drawHorse(ctx, i, x, y, t, now) {
     const [coat, mane] = TEAM[i];
-    const f = this.rolling(t) ? Math.floor(now / 110 + i * 2) % 4 : 1;
+    const f = this.rolling(t) ? Math.floor(now / 110 + i * 2) % 4 : STAND;
     const spr = horseSprite(coat, mane, f, null);
     ctx.fillStyle = 'rgba(70,50,20,0.28)';
     ctx.fillRect(x - 14, y - 1, 30, 2);
@@ -1052,17 +1106,26 @@ export class WagonScene extends MiniScene {
     const flash = t - this.wagonFlash < 90;
     // la caisse cahote un peu sur la piste
     const bump = this.rolling(t) && Math.floor(now / 180) % 3 === 0 ? -1 : 0;
-    ctx.drawImage(spr, x - spr.ox, y - spr.oy + bump + (flash ? 1 : 0));
+    const by = y + bump + (flash ? 1 : 0); // la caisse et tout ce qui est dessus
+    ctx.drawImage(spr, x - spr.ox, by - spr.oy);
+    if (this.story) { // la roulotte de Sœur Inès : une croix rouge peinte sur la bâche
+      ctx.fillStyle = '#7a1e14'; ctx.fillRect(x - 2, by - 63, 5, 19); ctx.fillRect(x - 7, by - 58, 15, 5);
+      ctx.fillStyle = '#b8342a'; ctx.fillRect(x - 1, by - 62, 3, 17); ctx.fillRect(x - 6, by - 57, 13, 3);
+    }
     const ang = this.cam(t) / 14;
     for (const cx of [-34, 34]) wheel(ctx, x + cx, y - 14, 14, ang);
-    // accrocs et brûlures sur la bâche, au fil des dégâts
+    // accrocs et brûlures sur la bâche, au fil des dégâts : toujours sur la toile (elle est plus basse vers les bords),
+    // et ils cahotent avec elle
     const lost = Math.floor((1 - this.wagonHp / WAGON.hp) * 12);
     for (let k = 0; k < lost; k++) {
-      const hx = x - 40 + ((k * 37) % 80), hy = y - 62 + ((k * 23) % 26);
+      const dx = -40 + ((k * 37) % 80), i = 45 - dx; // colonnes de la bâche (le sprite est retourné)
+      const top = Math.round(36 * Math.min(Math.sin((Math.PI * i) / 92), Math.sin((Math.PI * (i - 3)) / 92)) ** 0.55);
+      const hy = by - 36 - Math.floor((((k * 23) % 26) / 26) * (top - 6));
       ctx.fillStyle = k % 3 ? '#3a2a1a' : '#6a5a48';
-      ctx.fillRect(hx, hy, 3 + (k % 2), 2 + (k % 3 === 0 ? 1 : 0));
+      ctx.fillRect(x + dx, hy, 3 + (k % 2), 2 + (k % 3 === 0 ? 1 : 0));
     }
-    if (flash) { ctx.fillStyle = 'rgba(255,240,220,0.35)'; ctx.fillRect(x - 52, y - 70, 104, 56); }
+    // elle encaisse : sa silhouette blanchit un instant (pas un rectangle sur le ciel)
+    if (flash) { ctx.globalAlpha = 0.35; ctx.drawImage(silOf(spr, '#fff0dc'), x - spr.ox, by - spr.oy); ctx.globalAlpha = 1; }
   }
 
   drawFire(ctx, now) {
@@ -1087,14 +1150,31 @@ export class WagonScene extends MiniScene {
     const at = d ? d.at : t;
     const a = anchor(b, at);
     const ck = climbK(b, at);
-    const x = Math.round(a.x - (d ? this.cam(t) - this.cam(d.at) : 0));
+    const x = d ? Math.round(a.x + this.cam(d.at)) - Math.floor(this.cam(t)) : Math.round(a.x); // calé sur le sol (drawTrail)
     const el = d ? t - (d.seen ?? t) : 0;
     const y = Math.round(d && ck > 0 ? a.y + (b.y - a.y) * clamp(el / 400, 0, 1) : a.y); // il tombe de la bâche
     const atWagon = t >= b.reach;
-    let spr, stick = false, right = b.side < 0;
+    // tourné vers où il va par rapport au sol (faceDir, comme ses boîtes) : un cavalier collé au convoi le suit
+    let spr, stick = false, right = faceDir(b, at) > 0, seat = 0;
     if (b.kind === 'mule') spr = muleSprite(d ? 1 : Math.floor(now / 110 + b.id) % 4);
-    else if ((b.kind === 'rider' || b.kind === 'dyn' || b.kind === 'climber') && ck === 0) {
-      spr = riderSprite(b.look, d ? 1 : Math.floor(now / 85 + b.id) % 4);
+    else if ((b.kind === 'rider' || b.kind === 'dyn' || b.kind === 'climber') && ck === 0 && d) {
+      // abattu en selle : il vide les étriers et tombe sur la piste, son cheval file sans lui (dans le sens où il
+      // regarde : vers l'avant de la roulotte il la dépasse, sinon il galope moins vite qu'elle et reste derrière)
+      // (vitesses à l'écran, où le sol file vers la gauche à WAGON.scroll)
+      const dir = right ? 1 : -1, e = t - (d.seen ?? t), hx = a.x + (dir > 0 ? -0.015 : -0.07) * e;
+      if (hx > -40 && hx < W + 40) {
+        ctx.fillStyle = 'rgba(70,50,20,0.28)'; ctx.fillRect(rd(hx) - 10, y - 1, 20, 2);
+        const [coat, mane] = HORSES[b.look % HORSES.length];
+        const hs = horseSprite(coat, mane, Math.floor(now / 85 + b.id) % 4, null);
+        const img = right ? hs : flipped(hs);
+        ctx.globalAlpha = e > 3000 ? clamp(1 - (e - 3000) / 1000, 0, 1) : 1;
+        ctx.drawImage(img, rd(hx) - img.ox, y - img.oy);
+        ctx.globalAlpha = 1;
+      }
+      spr = banditSprite(b.look, 'walker', 'walk', 1);
+      seat = rd(13 * (1 - clamp(el / 300, 0, 1))); // de la selle jusqu'au sol
+    } else if ((b.kind === 'rider' || b.kind === 'dyn' || b.kind === 'climber') && ck === 0) {
+      spr = riderSprite(b.look, Math.floor(now / 85 + b.id) % 4);
       if (b.kind === 'dyn' && atWagon && !d) {
         const ph = ((t - b.reach - 500) % WAGON.throwEvery + WAGON.throwEvery) % WAGON.throwEvery;
         stick = t > b.reach + 150 && (ph > WAGON.throwEvery - 450 || ph < 60);
@@ -1112,65 +1192,70 @@ export class WagonScene extends MiniScene {
       spr = banditSprite(b.look, 'walker', onRoof && !d ? 'strike' : 'walk', onRoof && !d ? Math.floor((t - b.reach) / 300) % 2 : 1);
       right = x < WAGON.x;
     } else {
-      const strike = atWagon && !d;
-      spr = banditSprite(b.look, b.kind, strike ? 'strike' : 'walk', strike ? Math.floor((t - b.reach) / 300) % 2 : Math.floor(now / (b.kind === 'walker' ? 140 : 190) + b.id) % 4);
+      // contre la roulotte, il court à sa hauteur en frappant : le sol défile sous ses pieds, ses jambes aussi
+      // (abattu, il ne marche plus : jambes jointes)
+      const strike = atWagon && !d, step = d ? 1 : Math.floor(now / (b.kind === 'walker' ? 140 : 190) + b.id) % 4;
+      spr = strike ? banditSprite(b.look, b.kind, 'strike', Math.floor((t - b.reach) / 300) % 2, step) : banditSprite(b.look, b.kind, 'walk', step);
     }
     const img = right ? spr : flipped(spr);
     const dir = right ? 1 : -1;
     const k = d ? clamp(el / 300, 0, 1) : 0;
     ctx.fillStyle = 'rgba(70,50,20,0.28)';
     if (ck === 0 || d) ctx.fillRect(x - 10, (d ? b.y : y) - 1, 20, 2);
-    if (b.bonus && !d) goldRim(ctx, img, x - img.ox, y - img.oy, img.width, img.height, now);
+    if (b.bonus && !d) goldRim(ctx, img, x - img.ox, y - img.oy, img.width, img.height, now, b.id);
     ctx.globalAlpha = el > 3000 ? clamp(1 - (el - 3000) / 1000, 0, 1) : 1;
     ctx.save();
-    ctx.translate(x, y - Math.round(k * 6));
+    ctx.translate(x, y - seat - Math.round(k * 6));
     ctx.rotate((-dir * k * Math.PI) / 2);
     ctx.drawImage(img, -img.ox, -img.oy);
     ctx.restore();
     ctx.globalAlpha = 1;
     if (d) return;
-    if (stick) { // le dynamiteur brandit son bâton, mèche allumée
-      const sx = x - dir * 4, sy = y - 54;
+    if (this.hitFx.some((h) => h.id === b.id)) hitTint(ctx, img, x - img.ox, y - img.oy, img.width, img.height);
+    if (stick) { // le dynamiteur brandit son bâton, mèche allumée, dans la main du bras levé
+      const sx = x + dir * 3, sy = y - 44;
       ctx.fillStyle = OUT; ctx.fillRect(sx - 2, sy - 1, 4, 8);
       ctx.fillStyle = '#c0302a'; ctx.fillRect(sx - 1, sy, 2, 6);
       ctx.fillStyle = Math.floor(now / 50) % 2 ? '#fff2b0' : '#f8a040'; ctx.fillRect(sx, sy - 2, 1, 2);
     }
-    if (b.kind === 'mule') { // la mèche grésille
+    if (b.kind === 'mule') { // la mèche grésille, au bout de celle du sprite (qui suit le pas de la mule)
+      const fx = right ? x - 1 : x, fy = y - 36 - (Math.floor(now / 110 + b.id) % 2);
       ctx.fillStyle = Math.floor(now / 50) % 2 ? '#fff2b0' : '#f8a040';
-      ctx.fillRect(x - dir, y - 36, 1, 1);
-      if (Math.floor(now / 90) % 2) { ctx.fillRect(x - dir * 2, y - 37, 1, 1); ctx.fillRect(x, y - 38, 1, 1); }
-    }
-    if (this.hitFx.some((h) => h.id === b.id)) {
-      const r = banditBox(b, t);
-      ctx.fillStyle = 'rgba(255,80,60,0.45)';
-      ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.fillRect(fx, fy, 1, 1);
+      if (Math.floor(now / 90) % 2) { ctx.fillRect(fx - dir, fy - 1, 1, 1); ctx.fillRect(fx + dir, fy - 2, 1, 1); }
     }
     // jauge des costauds
     if (b.hp > 1) {
       const hp = this.hp.get(b.id) ?? b.hp;
       const r = banditBox(b, t);
-      const w = 14;
-      ctx.fillStyle = OUT; ctx.fillRect(r.x + r.w / 2 - w / 2 - 1, r.y - 6, w + 2, 4);
-      ctx.fillStyle = '#5a1a14'; ctx.fillRect(r.x + r.w / 2 - w / 2, r.y - 5, w, 2);
-      ctx.fillStyle = '#e8604c'; ctx.fillRect(r.x + r.w / 2 - w / 2, r.y - 5, Math.round((w * hp) / b.hp), 2);
+      const w = 14, gx = rd(r.x + r.w / 2 - w / 2), gy = rd(r.y);
+      ctx.fillStyle = OUT; ctx.fillRect(gx - 1, gy - 6, w + 2, 4);
+      ctx.fillStyle = '#5a1a14'; ctx.fillRect(gx, gy - 5, w, 2);
+      ctx.fillStyle = '#e8604c'; ctx.fillRect(gx, gy - 5, Math.round((w * hp) / b.hp), 2);
     }
   }
 
   // le tireur embusqué : derrière son rocher, il se lève, épaule, tire et se recache
+  // 0 : caché derrière son rocher, 1 : debout. Il tire au bout de sa période debout et ne se baisse qu'après le coup
+  // de feu, pour que l'éclair parte bien du canon : la courbe est celle de l'arbitre (sniperRise de wagongame.js),
+  // qui le rend touchable exactement tant qu'on le voit ; abattu, il retombe derrière son rocher
+  sniperRise(b, t, d) {
+    if (d) return 1 - clamp((t - (d.seen ?? t)) / 300, 0, 1);
+    return sniperRise(b, t);
+  }
+
   drawSniper(ctx, b, t, now, d) {
-    const x = Math.round(d ? banditX(b, d.at) - (this.cam(t) - this.cam(d.at)) : banditX(b, t)), y = b.y;
-    const e = (t - b.t0) % SNIPE.period;
-    let rise = 0;
-    if (d) rise = 1 - clamp((t - (d.seen ?? t)) / 300, 0, 1);
-    else if (sniperUp(b, t)) rise = Math.min(1, (e - SNIPE.hide) / 150, (SNIPE.period - e) / 150);
+    const x = d ? Math.round(banditX(b, d.at) + this.cam(d.at)) - Math.floor(this.cam(t)) : Math.round(banditX(b, t)), y = b.y;
+    const rise = this.sniperRise(b, t, d);
     const spr = flipped(banditSprite(b.look, 'walker', 'aim', 0));
     // ses pieds : debout sur une marche derrière le rocher, ou plus bas quand il se cache
     const sy = y - SNIPE.feet + Math.round((1 - rise) * SNIPE.drop);
     // on ne dessine que ce qui dépasse du sommet du rocher : ni jambes, ni rien qui déborde sur les côtés
     ctx.save();
     ctx.beginPath(); ctx.rect(x - 60, 0, 120, y - SNIPE.rock + 2); ctx.clip();
-    if (b.bonus && !d && rise > 0.5) goldRim(ctx, spr, x - spr.ox, sy - spr.oy, spr.width, spr.height, now);
+    if (b.bonus && !d && rise > 0.5) goldRim(ctx, spr, x - spr.ox, sy - spr.oy, spr.width, spr.height, now, b.id);
     ctx.drawImage(spr, x - spr.ox, sy - spr.oy);
+    if (!d && this.hitFx.some((h) => h.id === b.id)) hitTint(ctx, spr, x - spr.ox, sy - spr.oy, spr.width, spr.height);
     ctx.restore();
     const rock = SNIPE_ROCK();
     ctx.drawImage(rock, x - rock.ox, y - rock.oy);
@@ -1181,7 +1266,6 @@ export class WagonScene extends MiniScene {
       ctx.fillStyle = '#f0705a'; ctx.fillRect(x - 22, sy - 25, 1, 1); ctx.fillRect(x - 19, sy - 22, 1, 1);
     }
     if (!d && rise >= 1 && x > 20 && x < W - 20) this.threatMark(ctx, x, y - 54, b.bonus, now);
-    if (this.hitFx.some((h) => h.id === b.id)) { const r = banditBox(b, t); if (r) { ctx.fillStyle = 'rgba(255,80,60,0.45)'; ctx.fillRect(r.x, r.y, r.w, r.h); } }
   }
 
   // bâton de dynamite (z : échelle)
@@ -1278,13 +1362,16 @@ export class WagonScene extends MiniScene {
         S.disc(ctx, rd(g.x), rd(g.y), Math.max(1, rd(16 * g.s * (0.6 + u))), `rgba(236,214,166,${(0.4 * (1 - u)).toFixed(2)})`);
       }
     }
-    // cailloux et brins d'herbe sèche qui filent sous la roulotte : ils viennent vers nous devant, s'éloignent derrière
-    if (this.rolling(t)) {
+    // cailloux et brins d'herbe sèche qui filent sous la roulotte : ils viennent vers nous devant, s'éloignent derrière.
+    // Les cailloux sont posés sur la piste (ils défilent comme elle, et restent là si la roulotte s'arrête) ; les brins,
+    // emportés par le vent, vont plus vite
+    {
+      const roll = this.rolling(t);
       for (let i = 0; i < 46; i++) {
-        const ph = (travel * 1.7 + hash(i * 5 + 1) * IN.far) % IN.far;
-        const d = f > 0 ? IN.far - ph : ph;
-        if (d < 6) continue;
         const air = i % 3 === 0;
+        const ph = (travel * (air ? 1.7 : 1) + hash(i * 5 + 1) * IN.far) % IN.far;
+        const d = f > 0 ? IN.far - ph : ph;
+        if (d < 6 || (air && !roll)) continue;
         const g = inProj((hash(i * 5 + 2) - 0.5) * 420, d, air ? 6 + hash(i * 5 + 3) * 50 : 0);
         const sz = Math.max(1, rd(2.4 * g.s));
         ctx.fillStyle = air ? `rgba(240,224,190,${(0.25 + 0.4 * g.s).toFixed(2)})` : i % 2 ? '#9a7a4a' : '#e8d4a4';
@@ -1315,15 +1402,18 @@ export class WagonScene extends MiniScene {
       const dd = this.dead.get(b.id);
       if (dd ? dd.by < 0 || tt - (dd.seen ?? tt) > 1500 : !active(b, tt)) continue;
       const p = inPos(b, dd ? dd.at : tt);
-      const d = dd ? p.d - b.end * WAGON.rush * (tt - dd.at) : p.d;
-      if (d > 2 && d < IN.far + 200) items.push({ d, b, p, dd });
+      // abattu, il reste sur la piste que la roulotte quitte ; le pillard qui escalade lâche prise et tombe derrière le
+      // rebord (sinon, devant, la roulotte lui passerait dessus avant qu'on le voie tomber)
+      const d = dd && b.kind !== 'boarder' ? p.d - b.end * WAGON.rush * (tt - dd.at) : p.d;
+      // (le pillard qui escalade est accroché à la roulotte : devant les cailloux qui passent dessous)
+      if (d > 2 && d < IN.far + 200) items.push({ d, z: b.kind === 'boarder' ? 1 : d, b, p, dd });
     }
     for (const s of this.flying(tt, f)) items.push({ d: 0, stick: s });
     for (const p of this.pickups(tt, f)) items.push({ d: -1, pick: p });
-    items.sort((a, b) => b.d - a.d);
+    items.sort((a, b) => (b.z ?? b.d) - (a.z ?? a.d));
     for (const it of items) {
       if (it.prop) this.drawProp(ctx, it);
-      else if (it.town) this.drawTown(ctx, it.d);
+      else if (it.town) { if (this.story) this.drawMission(ctx, it.d); else this.drawTown(ctx, it.d); }
       else if (it.b) this.drawInBandit(ctx, it, tt, now);
       else if (it.stick) this.drawDyn(ctx, it.stick, now, Math.max(1, inK(it.stick.s)));
       else this.drawPickup(ctx, it.pick, now);
@@ -1333,21 +1423,10 @@ export class WagonScene extends MiniScene {
 
   // les parois du canyon : deux murs de grès de part et d'autre de la piste
   drawWalls(ctx, f, travel) {
-    const X = 176, TOP = 240;
+    const X = 176;
+    const [wall, haze] = canyonWalls();
+    ctx.drawImage(wall, 0, 0);
     for (const s of [-1, 1]) {
-      const a = inProj(s * X, -20), b = inProj(s * X, IN.far), c = inProj(s * X, IN.far, TOP), e = inProj(s * X, -20, TOP);
-      const edge = s < 0 ? -10 : W + 10;
-      ctx.fillStyle = '#9a5236';
-      ctx.beginPath();
-      ctx.moveTo(edge, e.y); ctx.lineTo(e.x, e.y); ctx.lineTo(c.x, c.y); ctx.lineTo(b.x, b.y); ctx.lineTo(a.x, a.y); ctx.lineTo(edge, a.y);
-      ctx.closePath();
-      ctx.fill();
-      // strates
-      for (const [h, col] of [[30, '#7a3e28'], [74, '#b0603e'], [120, '#7a3e28'], [170, '#b0603e']]) {
-        const p = inProj(s * X, -20, h), q = inProj(s * X, IN.far, h);
-        ctx.strokeStyle = col; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(edge, p.y); ctx.lineTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
-      }
       // fissures qui défilent
       const STEP = 70;
       for (let j = 0; j < IN.far / STEP + 1; j++) {
@@ -1357,10 +1436,8 @@ export class WagonScene extends MiniScene {
         ctx.fillStyle = `rgba(60,24,12,${(0.6 * (1 - d / IN.far)).toFixed(2)})`;
         ctx.fillRect(rd(g.x), rd(top.y), Math.max(1, rd(3 * g.s)), rd(g.y - top.y));
       }
-      // la brume au fond
-      ctx.fillStyle = 'rgba(216,168,136,0.35)';
-      ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.lineTo(inProj(s * X, 500, TOP).x, inProj(s * X, 500, TOP).y); ctx.lineTo(inProj(s * X, 500).x, inProj(s * X, 500).y); ctx.closePath(); ctx.fill();
     }
+    ctx.drawImage(haze, 0, 0); // la brume au fond, par-dessus les fissures lointaines
   }
 
   drawProp(ctx, it) {
@@ -1370,9 +1447,33 @@ export class WagonScene extends MiniScene {
     ctx.globalAlpha = 1;
   }
 
-  drawTown(ctx, d) {
+  // mode histoire : au bout de la piste, la Mission San Rosario — l'enceinte blanche et son portique, et derrière,
+  // l'église à pignon chantourné, le campanile et sa cloche, le couvent à arcades
+  drawMission(ctx, d) {
+    const part = (lx, dd, rects) => {
+      const g = inProj(lx, dd), k = 2 * g.s;
+      for (const [x, y, w, h, c] of rects) { ctx.fillStyle = c; ctx.fillRect(rd(g.x + x * k), rd(g.y + y * k), Math.max(1, rd(w * k)), Math.max(1, rd(h * k))); }
+    };
+    const WH = '#eadfc8', SH = '#c4b49c', DK = '#4a3020', BOIS = '#6a4428';
+    const far = d + 300;
+    // le campanile, à gauche
+    part(-120, far, [[-22, -150, 44, 150, OUT], [-21, -149, 42, 149, WH], [8, -149, 13, 149, SH], [-25, -156, 50, 7, OUT], [-24, -155, 48, 5, WH],
+      [-11, -136, 22, 24, DK], [-7, -130, 14, 14, '#c8a040'], [-5, -128, 4, 6, '#f0d070'], [-2, -176, 4, 20, BOIS], [-8, -170, 16, 4, BOIS]]);
+    // le couvent à arcades, à droite
+    part(140, far, [[-62, -50, 124, 50, OUT], [-61, -49, 122, 49, WH], [-61, -49, 122, 4, SH],
+      ...[-48, -24, 0, 24].map((x) => [x - 8, -36, 16, 36, DK]), [-61, -4, 122, 4, SH]]);
+    // l'église : façade, retable ocre autour de la porte, pignon à volutes, croix
+    part(0, far, [[-72, -96, 144, 96, OUT], [-71, -95, 142, 95, WH], [-54, -110, 108, 16, OUT], [-53, -109, 106, 15, WH], [-32, -124, 64, 16, OUT],
+      [-31, -123, 62, 15, WH], [-12, -134, 24, 12, OUT], [-11, -133, 22, 11, WH], [-3, -160, 6, 28, BOIS], [-11, -152, 22, 6, BOIS],
+      [-26, -80, 52, 80, '#dab48e'], [-16, -50, 32, 50, DK], [-12, -56, 24, 6, DK], [-8, -74, 16, 14, DK], [50, -95, 21, 95, SH]]);
+    // l'enceinte basse, de part et d'autre du portique
+    for (const s of [-1, 1]) part(s * 150, d, [[-96, -26, 192, 26, OUT], [-95, -25, 190, 25, WH], [-95, -25, 190, 3, SH]]);
+    this.drawTown(ctx, d, true);
+  }
+
+  drawTown(ctx, d, gate = false) {
     const HOUSES = [[-236, 72, 58, '#a8584a'], [-150, 66, 48, '#9a7a4a'], [-84, 50, 64, '#7a6a9a'], [84, 60, 52, '#c8b48a'], [156, 74, 60, '#8a4a2a'], [240, 62, 46, '#b89a6a']];
-    for (const [lx, w, h, col] of HOUSES) {
+    for (const [lx, w, h, col] of gate ? [] : HOUSES) { // (gate : le portique seul, devant la mission)
       const g = inProj(lx, d), k = 2 * g.s;
       const R = (x, y, ww, hh, c) => { ctx.fillStyle = c; ctx.fillRect(rd(g.x + x * k), rd(g.y + y * k), Math.max(1, rd(ww * k)), Math.max(1, rd(hh * k))); };
       R(-w / 2 - 1, -h - 4, w + 2, h + 4, OUT);
@@ -1386,8 +1487,8 @@ export class WagonScene extends MiniScene {
     const R = (x, y, ww, hh, c) => { ctx.fillStyle = c; ctx.fillRect(rd(g.x + x * k), rd(g.y + y * k), Math.max(1, rd(ww * k)), Math.max(1, rd(hh * k))); };
     for (const s of [-1, 1]) { R(s * 50 - 2, -70, 4, 70, OUT); R(s * 50 - 1, -70, 2, 70, '#6a4024'); }
     R(-56, -78, 112, 14, OUT); R(-55, -77, 110, 12, '#d8bc80'); R(-55, -77, 110, 1, '#f0d8a0'); R(-55, -66, 110, 1, '#9a7a4a');
-    const pw = 110 * k, size = pw > WAGON.to.length * 11 + 10 ? 16 : pw > WAGON.to.length * 5.5 + 6 ? 8 : 0;
-    if (size) canvasText(ctx, WAGON.to, g.x, g.y - 71.5 * k - (size === 16 ? 7 : 4), { size, color: '#3a2214', shadow: '#b89a60' });
+    const to = this.to, pw = 110 * k, size = pw > to.length * 11 + 10 ? 16 : pw > to.length * 5.5 + 6 ? 8 : 0;
+    if (size) canvasText(ctx, to, g.x, g.y - 71.5 * k - (size === 16 ? 7 : 4), { size, color: '#3a2214', shadow: '#b89a60' });
   }
 
   // chevron au-dessus d'un assaillant qui attaque (doré s'il porte un bonus) : on les repère de loin
@@ -1404,13 +1505,22 @@ export class WagonScene extends MiniScene {
     const el = dd ? t - (dd.seen ?? t) : 0, fall = dd ? clamp(el / 400, 0, 1) : 0;
     ctx.globalAlpha = dd ? clamp(1 - (el - 700) / 700, 0, 1) : 1;
     const hit = !dd && this.hitFx.some((h) => h.id === b.id);
-    const draw = (spr, ox, oy, rot = 0) => { // sprite posé sur le point au sol, éventuellement basculé (abattu)
+    // sprite posé sur le point au sol, éventuellement basculé (abattu). lean : le haut du sprite (au-dessus de
+    // y = -42, le cavalier) décalé de lean pixels, sans rotation (un sprite réduit qu'on fait tourner s'émiette)
+    const draw = (spr, ox, oy, rot = 0, lean = 0, target = true) => {
       const w = Math.max(1, rd(spr.width * k)), h = Math.max(1, rd(spr.height * k));
+      const x0 = rd(-spr.ox * k), y0 = rd(-spr.oy * k), cut = spr.oy - 42, cy = rd(cut * k);
+      const blit = (img, dx, dy) => {
+        if (!lean) { ctx.drawImage(img, x0 + dx, y0 + dy, w, h); return; }
+        ctx.drawImage(img, 0, 0, img.width, cut, x0 + dx + lean, y0 + dy, w, cy);
+        ctx.drawImage(img, 0, cut, img.width, img.height - cut, x0 + dx, y0 + dy + cy, w, h - cy);
+      };
       ctx.save();
       ctx.translate(rd(g.x), rd(g.y + oy * k));
       if (rot) ctx.rotate(rot);
-      if (b.bonus && !dd) goldRim(ctx, spr, -spr.ox * k, -spr.oy * k, w, h, now);
-      ctx.drawImage(spr, rd(-spr.ox * k), rd(-spr.oy * k), w, h);
+      if (b.bonus && !dd) goldRim(ctx, spr, x0, y0, w, h, now, b.id, blit);
+      blit(spr, 0, 0);
+      if (hit && target) { ctx.globalAlpha = 0.55; blit(silOf(spr, '#ff5040'), 0, 0); ctx.globalAlpha = 1; }
       ctx.restore();
     };
     const glint = (x, y) => { // reflet du canon juste avant le coup de feu
@@ -1423,15 +1533,15 @@ export class WagonScene extends MiniScene {
     if (b.kind === 'chaser' || b.kind === 'thrower' || b.kind === 'boss' || b.kind === 'zigzag') {
       shadow(12);
       const frame = dd ? 1 : Math.floor(now / 90 + b.id) % 4;
-      // le bandido se penche dans ses virages
-      const lean = b.kind === 'zigzag' && !dd ? (p.lean || 0) * 0.16 : 0;
-      draw(riderFront(b.look, frame, b.kind), 0, 0, lean + (b.lx > 0 || p.lx > 0 ? 1 : -1) * fall * 1.2);
-      if (b.kind !== 'thrower') glint(8, -56);
+      // le bandido se penche dans ses virages : le cavalier se décale d'un côté au-dessus de son cheval
+      const lean = b.kind === 'zigzag' && !dd ? (p.lean || 0) * Math.max(1, rd(2 * k)) : 0;
+      draw(riderFront(b.look, frame, b.kind), 0, 0, (b.lx > 0 || p.lx > 0 ? 1 : -1) * fall * 1.2, lean);
+      if (b.kind !== 'thrower') glint(8 + lean / k, -56);
     } else if (b.kind === 'crosser') { // de profil : il traverse la piste au galop
       shadow(16);
       const spr = riderSprite(b.look, dd ? 1 : Math.floor(now / 80 + b.id) % 4);
       draw(b.dir > 0 ? spr : flipped(spr), 0, 0, -b.dir * fall * 1.2);
-      glint(b.dir * 6, -38);
+      glint(b.dir > 0 ? 2 : -4, -39); // au poing du bras levé (riderSprite)
     } else if (b.kind === 'ambush') {
       // debout, il dépasse du rocher jusqu'aux mains ; caché, il est tout entier dessous : on ne dessine que ce qui dépasse
       const rise = dd ? 1 - fall : ambushRise(b, t);
@@ -1440,7 +1550,7 @@ export class WagonScene extends MiniScene {
       ctx.beginPath(); ctx.rect(-W, -H, 3 * W, rd(g.y - top * k) + H); ctx.clip();
       draw(bustSprite(b.look, 'aim'), 0, -AMB_ROCK.up + (1 - rise) * (56 - top + AMB_ROCK.up));
       ctx.restore();
-      draw(AMB_BOULDER(), 0, 0);
+      draw(AMB_BOULDER(), 0, 0, 0, 0, false);
       if (rise >= 1) glint(-1, -AMB_ROCK.up - 15);
     } else if (b.kind === 'barricade') {
       draw(barricadeSprite(), 0, 0);
@@ -1452,10 +1562,6 @@ export class WagonScene extends MiniScene {
       draw(bustSprite(b.look, 'grab'), 0, -p.lift + fall * 30);
     }
     ctx.globalAlpha = 1;
-    if (hit) {
-      const r = targetBox(b, t);
-      if (r) { ctx.fillStyle = 'rgba(255,80,60,0.45)'; ctx.fillRect(r.x, r.y, r.w, r.h); }
-    }
     // de loin, un chevron les signale
     if (!dd && it.d > 220 && b.kind !== 'barricade') {
       const r = targetBox(b, t);
@@ -1480,7 +1586,7 @@ export class WagonScene extends MiniScene {
     const p = inPos(b, t), g = inProj(p.lx, p.d), k = inK(g.s) * (b.kind === 'boss' ? BOSS_K : 1);
     if (b.kind === 'ambush') S.drawFlash(ctx, g.x, g.y - (AMB_ROCK.up + 14) * k, Math.max(4, 8 * k), s.at);
     else if (b.kind === 'boarder') S.drawFlash(ctx, g.x + 16 * k, g.y - 40 * k, Math.max(4, 6 * k), s.at);
-    else if (b.kind === 'crosser') S.drawFlash(ctx, g.x + b.dir * 8 * k, g.y - 38 * k, Math.max(4, 6 * k), s.at);
+    else if (b.kind === 'crosser') S.drawFlash(ctx, g.x + (b.dir > 0 ? 3 : -3) * k, g.y - 39 * k, Math.max(4, 6 * k), s.at);
     else S.drawFlash(ctx, g.x + 9 * k, g.y - 55 * k, Math.max(4, 7 * k), s.at);
   }
 
@@ -1488,11 +1594,11 @@ export class WagonScene extends MiniScene {
   drawInFrame(ctx, f, t, now) {
     const roll = this.rolling(t);
     if (f > 0) {
+      // (le sprite porte déjà son rebond ; les deux chevaux à contretemps, comme de côté)
       const fr = roll ? Math.floor(now / 110) % 4 : 1;
       for (const i of [0, 1]) {
-        const spr = horseRear(i, (fr + i * 2) % 4), k = 1.2;
-        const x = W / 2 + (i ? 24 : -24), y = 206 + (roll && Math.floor(now / 110 + i) % 2 ? -1 : 0);
-        ctx.drawImage(spr, rd(x - spr.ox * k), rd(y - spr.oy * k), rd(spr.width * k), rd(spr.height * k));
+        const spr = horseRear(i, roll ? (fr + i) % 4 : 0);
+        ctx.drawImage(spr, W / 2 + (i ? 24 : -24) - spr.ox, 206 - spr.oy);
       }
       // les rênes
       ctx.fillStyle = '#3a2214';
@@ -1501,6 +1607,7 @@ export class WagonScene extends MiniScene {
     const bump = roll && Math.floor(now / 180) % 3 === 0 ? 1 : 0;
     const oy = bump + (t - this.wagonFlash < 90 ? 1 : 0);
     ctx.drawImage(interior(f), 0, oy);
+    if (oy) ctx.drawImage(interior(f), 0, 0, W, oy, 0, 0, W, oy); // (la bâche décalée ne laisse pas voir le ciel en haut)
     // la bâche se crible de trous au fil des dégâts : le jour passe au travers
     const holes = Math.floor((1 - this.wagonHp / WAGON.hp) * 26);
     for (let i = 0, n = 0; n < holes && i < 120; i++) {
@@ -1513,14 +1620,14 @@ export class WagonScene extends MiniScene {
     // la lanterne qui se balance
     const sw = Math.sin(now / 420) * 5, lx = f > 0 ? 58 : W - 60;
     ctx.fillStyle = '#3a2a1a';
-    for (let k = 0; k < 12; k++) ctx.fillRect(rd(lx + (sw * k) / 12), 18 + k, 1, 1);
-    const ly = 30, lxx = rd(lx + sw);
+    for (let k = 0; k < 12; k++) ctx.fillRect(rd(lx + (sw * k) / 12), 18 + k + oy, 1, 1);
+    const ly = 30 + oy, lxx = rd(lx + sw); // (accrochée à la bâche, elle cahote avec elle)
     ctx.fillStyle = OUT; ctx.fillRect(lxx - 4, ly, 9, 12);
     ctx.fillStyle = '#4a4f58'; ctx.fillRect(lxx - 3, ly + 1, 7, 2);
     ctx.fillStyle = '#f8d070'; ctx.fillRect(lxx - 2, ly + 3, 5, 6);
     ctx.fillStyle = '#fff2b0'; ctx.fillRect(lxx - 1, ly + 4, 2, 3);
     // les mains des pillards qui escaladent
-    const rim = f > 0 ? 189 : 187;
+    const rim = (f > 0 ? 189 : 187) + oy;
     for (const b of this.world.targets) {
       if (b.t0 > t) break;
       if (b.kind !== 'boarder' || b.end !== f || !active(b, t) || this.isDown(b.id, t)) continue;
@@ -1585,8 +1692,8 @@ export class WagonScene extends MiniScene {
     ctx.fillStyle = '#c8a070'; ctx.fillRect(x0, y0, 120, 1);
     ctx.fillStyle = '#f8d070'; ctx.fillRect(x0, y0, Math.round(120 * prog), 1);
     for (const s of STAGES.slice(1)) { ctx.fillStyle = OUT; ctx.fillRect(x0 + Math.round((120 * s.t0) / this.duration), y0 - 2, 1, 5); }
-    canvasText(ctx, WAGON.from, x0 - 5, y0 - 4, { align: 'right', color: '#e8d8b8' });
-    canvasText(ctx, WAGON.to, x0 + 125, y0 - 4, { align: 'left', color: '#e8d8b8' });
+    canvasText(ctx, this.from, x0 - 5, y0 - 4, { align: 'right', color: '#e8d8b8' });
+    canvasText(ctx, this.to, x0 + 125, y0 - 4, { align: 'left', color: '#e8d8b8' });
     const wx = Math.round(x0 + 120 * prog);
     ctx.fillStyle = OUT; ctx.fillRect(wx - 4, y0 - 5, 9, 7);
     ctx.fillStyle = '#ece2c8'; ctx.fillRect(wx - 3, y0 - 4, 7, 3);
@@ -1605,7 +1712,7 @@ export class WagonScene extends MiniScene {
     const sel = t - st.t0;
     const top = boss && t >= boss.t0 && t < boss.t1 && !this.dead.has(boss.id) ? 52 : 36;
     if (this.banner?.stay) this.drawBanner(ctx, this.banner.text, this.banner.col, Math.min(t - this.banner.at, 1000), this.banner.sub);
-    else if (st.i > 0 && sel >= 0 && sel < 2600 && t < this.duration && !this.over) this.drawNote(ctx, st.name, '#f8d070', sel, 2600, top, st.sub);
+    else if (st.i > 0 && sel >= 0 && sel < 2600 && t < this.duration && !this.over) this.drawNote(ctx, st.name, '#f8d070', sel, 2600, top, this.story && st.sub ? st.sub.replace('RED ROCK', 'LA MISSION') : st.sub);
     else if (this.banner) {
       const el = t - this.banner.at, life = this.banner.short ? 1800 : 2400;
       if (el < life) this.drawNote(ctx, this.banner.text, this.banner.col, el, life, top, this.banner.sub);

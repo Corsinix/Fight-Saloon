@@ -1,0 +1,42 @@
+<!doctype html><html><head><meta charset="utf-8"></head>
+<body style="margin:0;background:#3a2a1e;color:#fdf6e0;font:12px monospace">
+<div id="out" style="display:flex;flex-wrap:wrap;gap:8px;padding:8px"></div>
+<pre id="errlog" style="color:#f66"></pre>
+<script type="module">
+// Planche des vignettes des événements de « La piste » (pistevignettes.js) ; en jeu : mini-test.html?game=piste.
+// ?z=2 : zoom ; &ev=pont : un seul événement ; &looks=1 : les armes et armures des personnages (pistelook.js).
+import { eventArt, VIGNETTE_IDS, VIG_W, VIG_H } from './js/pistevignettes.js';
+import { EVENTS } from './js/pistekit.js';
+window.onerror = (m, s, l, c, e) => { document.getElementById('errlog').textContent += `${e?.stack || m}\n`; };
+const q = new URLSearchParams(location.search);
+const z = +(q.get('z') || 2);
+const out = document.getElementById('out');
+// &looks=1 : chaque arme × chaque armure, tel que dessiné dans la piste (pistelook.js)
+if (q.has('looks')) {
+  const { bodySprite, gunSprite } = await import('./js/pistelook.js');
+  const { lookOf } = await import('./js/brawlart.js');
+  const lk = lookOf({ skin: 2, hairColor: 1, outfitColor: 0, hat: 'cowboy', hatColor: 1, beard: 'stubble' }, 'test');
+  const cv = out.appendChild(document.createElement('canvas'));
+  const ws = ['revolver', 'winchester', 'fusil', 'sharps', 'arc', null], as = [null, 'cuir', 'duster', 'plastron'];
+  cv.width = ws.length * 36 * 2; cv.height = as.length * 30 * 2;
+  cv.style.cssText = `width:${cv.width * 3}px;height:${cv.height * 3}px;image-rendering:pixelated;background:#c4a468`;
+  const g = cv.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.setTransform(2, 0, 0, 2, 0, 0);
+  as.forEach((a, j) => ws.forEach((w, i) => {
+    const x = 14 + i * 36, y = 26 + j * 30, b = bodySprite(lk, w, a, false, 0);
+    g.drawImage(b, x - b.ox, y - b.oy, b.width / 2, b.height / 2);
+    if (w) { const gs = gunSprite(w, -0.35); g.drawImage(gs, x + 3.5 - gs.ox, y - 6.5 - gs.oy, gs.width / 2, gs.height / 2); }
+  }));
+}
+const ids = q.has('looks') ? [] : q.has('ev') ? [q.get('ev')] : VIGNETTE_IDS;
+for (const id of ids) {
+  const box = out.appendChild(document.createElement('div'));
+  box.style.cssText = 'display:flex;flex-direction:column;gap:2px';
+  const cv = box.appendChild(document.createElement('canvas'));
+  const art = eventArt(id); cv.width = art.width; cv.height = art.height;
+  cv.style.cssText = `width:${VIG_W * 2 * z}px;height:${VIG_H * 2 * z}px;image-rendering:pixelated`;
+  cv.getContext("2d").drawImage(art, 0, 0);
+  box.appendChild(document.createElement('div')).textContent = `${id} · ${EVENTS[id]?.title || '?'}`;
+}
+</script></body></html>

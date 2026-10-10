@@ -1,7 +1,8 @@
 // Mini-jeu « La pinte » : chacun à son tour fait glisser sa chope le long du comptoir. La plus proche du bout
 // gagne la manche, mais une chope lancée trop fort (ou de travers) tombe et ne rapporte rien. Les chopes
 // restent sur le comptoir pendant la manche : on peut pousser celles des autres dans le vide.
-// Chaque manche a aussi son comptoir : droit, à rambardes, en chicane, en coude ou en goulet (il faut ricocher).
+// Chaque manche a aussi son comptoir : droit, à rambardes, en chicane, en coude, en goulet (il faut ricocher), en zinc,
+// encombré de tonneaux, d'une caisse enregistreuse ou de plots de billard…
 // Chaque lancer a sa bière (plus ou moins lourde, grosse, glissante, qui tourne ou qui fait gicler) et chaque
 // manche ses surprises (flaque, sciure, courant d'air, bouteilles, chat, sous-bock, pièce d'or…), selon la salle et la météo.
 // Ce fichier contient les règles partagées (la glissade est simulée pas à pas, de la même façon partout)
@@ -22,7 +23,6 @@ export const PINTE = {
   WET: 0.35, // dans une flaque de bière, le freinage tombe à 35 %
   SAW: 5, // dans la sciure, il est 5 fois plus fort (la jauge en tient compte : voir speedFor)
   BOTTLE_R: 3, // rayon d'une bouteille oubliée
-  TAP_R: 5, // rayon d'une tireuse à bière (comptoir à rambardes)
   RAIL_E: 0.8, // rebond sur une rambarde ou une cloison
   CAT_R: 6, // rayon du chat endormi
   COIN_R: 3, COIN: 30, // pièce d'or : rayon, et points pour celui qui l'empoche
@@ -38,6 +38,31 @@ export const PINTE = {
   CM: 2,
   dirMs: 1800, powMs: 1400, // aller-retour de l'aiguille et de la jauge
 };
+// Obstacles fixes d'un comptoir : rayon, et rebond de la chope (1 : elle s'arrête net, 2 : rebond parfait,
+// au-delà le plot la renvoie plus fort qu'elle n'est arrivée)
+export const PROPS = {
+  tap: { r: 5, e: 1.6, name: 'TIREUSE À BIÈRE', desc: 'ELLE NE BOUGE PAS : LA CHOPE REBONDIT DESSUS' },
+  fut: { r: 6, e: 1.4, name: 'TONNEAU', desc: 'IL NE BOUGE PAS : FAUFILE-TOI ENTRE LES FÛTS' },
+  caisse: { r: 9, e: 1.3, name: 'CAISSE ENREGISTREUSE', desc: 'LOURDE COMME UN COFFRE : PASSE À CÔTÉ' },
+  plot: { r: 4, e: 2.3, name: 'PLOT EN CAOUTCHOUC', desc: 'IL RENVOIE LA CHOPE PLUS FORT QU\'ELLE N\'EST ARRIVÉE' },
+};
+
+// Aiguille de direction et jauge de puissance : un aller-retour de 0 à 1 (le même chez tout le monde, bots compris).
+// L'aiguille part du milieu ; sur les comptoirs à ricochets elle balaie plus large, et plus lentement.
+export const pingpong = (el, period) => { const k = ((el / period) * 2) % 2; return k < 1 ? k : 2 - k; };
+export const dirMsOf = (g) => PINTE.dirMs * Math.max(1, (g.maxa / PINTE.MAXA) * 0.8);
+export const dirAt = (el, g) => g.maxa * (2 * pingpong(el + dirMsOf(g) / 4, dirMsOf(g)) - 1);
+export const powAt = (el) => pingpong(el, PINTE.powMs);
+// premier instant (≥ from) où pingpong(el + off, period) vaut u : le bot bloque l'aiguille pile sur son choix
+function whenAt(u, period, from, off = 0) {
+  let best = Infinity;
+  for (const k of [u, 2 - u]) {
+    const base = (k * period) / 2 - off;
+    best = Math.min(best, base + Math.ceil((from - base) / period) * period);
+  }
+  return best;
+}
+
 // 5 manches, quel que soit le nombre de joueurs (10 à 30 lancers, plus avec le double service)
 export const pinteRounds = () => 5;
 // décalage de l'ordre de passage d'une manche à l'autre : un cran, ou plus quand il y a moins de manches que de
@@ -56,9 +81,10 @@ export function speedFor(power, mods) {
 // Chaque manche a son comptoir (le droit à la 1re). Un comptoir, c'est son bord arrière et son bord avant :
 // deux lignes brisées de gauche à droite, en points [x, y, rambarde]. Si le 3e chiffre vaut 1, le tronçon qui part
 // de ce point a une rambarde en laiton : la chope ricoche dessus au lieu de tomber. S'y ajoutent des cloisons
-// [x1, y1, x2, y2] (rambardes posées en travers) et des tireuses à bière (obstacles ronds).
-// Le départ (x < 70) est toujours le même : 26 de profondeur, la chope au milieu.
-// maxa : l'aiguille de direction va plus loin, pour viser les rambardes ; reach : la jauge donne plus.
+// [x1, y1, x2, y2] (rambardes posées en travers), des tireuses à bière (taps) et d'autres obstacles ronds (props, voir PROPS).
+// Le départ (x < 60) est toujours le même : 26 de profondeur, la chope au milieu.
+// maxa : l'aiguille de direction va plus loin, pour viser les rambardes ; reach : la jauge donne plus ;
+// mu : freinage du dessus (le zinc glisse) ; look : le dessus du comptoir (bois verni, pin, marbre, zinc, tapis vert).
 export const COUNTERS = {
   droit: { name: 'LE BON VIEUX COMPTOIR DROIT', label: 'COMPTOIR DROIT', col: '#e8c890', w: 2.2,
     back: [[0, 0], [320, 0]], front: [[0, 26], [320, 26]] },
@@ -85,6 +111,20 @@ export const COUNTERS = {
   slalom: { name: 'LE SLALOM : TROIS CLOISONS, ZIGZAGUE DE RICOCHET EN RICOCHET', label: 'SLALOM', col: '#a0c8f0', w: 1.2,
     back: [[0, 0, 1], [320, 0]], front: [[0, 26, 1], [320, 26]],
     walls: [[110, 0, 110, 7], [180, 26, 180, 19], [250, 0, 250, 7]], maxa: 0.3, reach: 1.2 },
+  tonneaux: { name: 'LES TONNEAUX : TROIS FÛTS EN TRAVERS, FAUFILE-TOI ENTRE EUX', label: 'TONNEAUX', col: '#d8a868', w: 1.4, look: 'pin',
+    back: [[0, 0, 1], [60, 0, 1], [90, -8, 1], [320, -8]], front: [[0, 26, 1], [60, 26, 1], [90, 34, 1], [320, 34]],
+    props: [{ x: 135, y: -2, k: 'fut' }, { x: 195, y: 28, k: 'fut' }, { x: 255, y: -2, k: 'fut' }], maxa: 0.24 },
+  caisse: { name: 'LA CAISSE ENREGISTREUSE TRÔNE AU MILIEU : PASSE À CÔTÉ', label: 'CAISSE', col: '#e8d8b0', w: 1.4, look: 'marbre',
+    back: [[0, 0], [60, 0, 1], [90, -10, 1], [320, -10]], front: [[0, 26], [60, 26], [90, 36], [320, 36]],
+    props: [{ x: 190, y: 13, k: 'caisse' }], maxa: 0.2 },
+  zinc: { name: 'LE COMPTOIR EN ZINC : ÇA GLISSE TOUT SEUL, VAS-Y MOLLO', label: 'ZINC', col: '#c8d4dc', w: 1.4, look: 'zinc', mu: 0.7,
+    back: [[0, 0], [320, 0]], front: [[0, 26], [320, 26]] },
+  fourche: { name: 'LA FOURCHE : UNE CLOISON COUPE LE COMPTOIR EN DEUX, CHOISIS TA VOIE', label: 'FOURCHE', col: '#f0b8c8', w: 1.4,
+    back: [[0, 0], [60, 0, 1], [90, -8, 1], [320, -8]], front: [[0, 26], [60, 26, 1], [90, 34, 1], [320, 34]],
+    walls: [[120, 13, 240, 13]], maxa: 0.2 },
+  billard: { name: 'LE BILLARD : DES BANDES PARTOUT, ET LES PLOTS RENVOIENT FORT', label: 'BILLARD', col: '#90d8a0', w: 1.3, look: 'tapis',
+    back: [[0, 0, 1], [60, 0, 1], [80, -6, 1], [280, -6], [320, -6]], front: [[0, 26, 1], [60, 26, 1], [80, 32, 1], [280, 32], [320, 32]],
+    props: [{ x: 150, y: -2, k: 'plot' }, { x: 150, y: 28, k: 'plot' }, { x: 235, y: 13, k: 'plot' }], maxa: 0.22 },
 };
 
 // hauteur d'une ligne brisée en x, et la rambarde du tronçon sous x
@@ -102,7 +142,7 @@ const railOn = (pts, x) => {
   return false;
 };
 
-// Géométrie prête à l'emploi (gardée en mémoire) : bords, rambardes en segments, tireuses
+// Géométrie prête à l'emploi (gardée en mémoire) : bords, rambardes en segments, obstacles ronds
 const geoms = new Map();
 export function counterOf(mods) {
   const id = COUNTERS[mods?.lay] ? mods.lay : 'droit';
@@ -116,8 +156,9 @@ export function counterOf(mods) {
   for (const [ax, ay, bx, by] of def.walls || []) segs.push({ ax, ay, bx, by, wall: true });
   // mur invisible derrière le lanceur : une chope repoussée ne sort pas de l'écran par la gauche
   segs.push({ ax: -24, ay: -80, bx: -24, by: 80 });
+  const props = [...(def.taps || []).map((o) => ({ ...o, k: 'tap' })), ...(def.props || [])].map((o) => ({ ...o, r: PROPS[o.k].r }));
   g = {
-    ...def, id, segs, taps: def.taps || [], maxa: def.maxa || PINTE.MAXA, reach: def.reach || 1,
+    ...def, id, segs, props, maxa: def.maxa || PINTE.MAXA, reach: def.reach || 1, mu: def.mu || 1, look: def.look || 'acajou',
     rails: segs.some((w) => w.side || w.wall),
     backAt: (x) => yOn(def.back, x), frontAt: (x) => yOn(def.front, x),
     railBack: (x) => railOn(def.back, x), railFront: (x) => railOn(def.front, x),
@@ -179,9 +220,10 @@ export const MODS = {
   cire: { label: 'CIRE', name: 'LE BARMAN A CIRÉ LE COMPTOIR : TOUT GLISSE PLUS', col: '#fdf6e0' },
   gel: { label: 'GEL', name: 'LE COMPTOIR EST GELÉ : TOUT GLISSE BIEN PLUS', col: '#d8f0ff' },
   virage: { label: 'VIRAGE', name: 'LE TRAIN PREND UN VIRAGE : TOUT PENCHE', col: '#f0c890' },
+  tangage: { label: 'TANGAGE', name: 'LE BATEAU TANGUE : TOUT PENCHE', col: '#a8d0e8' },
   bouteille: { label: 'BOUTEILLES', name: 'LE BARMAN A OUBLIÉ DES BOUTEILLES SUR LE COMPTOIR', col: '#b8e070' },
   piece: { label: 'PIÈCE D\'OR', name: `UNE PIÈCE D'OR : +${PINTE.COIN} À LA CHOPE QUI PASSE DESSUS`, col: '#f8d070' },
-  chat: { label: 'CHAT', name: 'LE CHAT DU SALOON DORT SUR LE COMPTOIR : IL AMORTIT TOUT', col: '#f0b070' },
+  chat: { label: 'CHAT', name: 'LE CHAT DU SALOON DORT AU BORD DU COMPTOIR : IL AMORTIT TOUT', col: '#f0b070' },
   sousbock: { label: 'SOUS-BOCK', name: `UN SOUS-BOCK : +${PINTE.MAT} À LA CHOPE QUI S'Y ARRÊTE`, col: '#e87858' },
   double: { label: 'POINTS X2', name: 'DERNIÈRE TOURNÉE : LES POINTS COMPTENT DOUBLE', col: '#f0907a' },
 };
@@ -217,6 +259,7 @@ export function metaFor(seed, n, rounds) {
 export function modName(id, m) {
   if (id === 'souffle') return m.push > 0 ? 'PORTES BATTANTES : VENT DANS LE DOS, ÇA VA PLUS LOIN' : 'PORTES BATTANTES : VENT DE FACE, ÇA FREINE';
   if (id === 'virage') return `LE TRAIN PREND UN VIRAGE : TOUT PENCHE VERS ${m.tilt > 0 ? 'TOI' : 'LE MUR'}`;
+  if (id === 'tangage') return `LE BATEAU TANGUE : TOUT PENCHE VERS ${m.tilt > 0 ? 'TOI' : 'LE MUR'}`;
   return MODS[id].name;
 }
 export function modLabel(id, m) {
@@ -269,46 +312,69 @@ export function modsFor(seed, n, rounds, roomId = null) {
     ['chat', 1.6], ['sousbock', 1.8],
   ];
   if (room === 'train') pool.push(['virage', 4]);
+  if (room === 'bateau') pool.push(['tangage', 4]);
   // le goulet est déjà trop étroit pour y semer des bouteilles
-  if (G.id !== 'goulet') pool.push(['bouteille', 2]);
+  // le goulet, les tonneaux et le billard sont déjà trop encombrés pour y semer des bouteilles
+  if (!['goulet', 'tonneaux', 'billard'].includes(G.id)) pool.push(['bouteille', 2]);
   // deux poussées de côté à la fois, ce serait injouable
-  const clash = { vent: 'virage', virage: 'vent', cire: 'gel', gel: 'cire' };
+  const clash = { vent: ['virage', 'tangage'], virage: ['vent'], tangage: ['vent'], cire: ['gel'], gel: ['cire'] };
   const count = R() < 0.35 ? 2 : 1;
   while (m.list.length < count) {
-    const left = pool.filter(([id]) => !m.list.includes(id) && !m.list.includes(clash[id]));
+    const left = pool.filter(([id]) => !m.list.includes(id) && !(clash[id] || []).some((x) => m.list.includes(x)));
     let x = R() * left.reduce((s, [, w]) => s + w, 0);
     const pick = left.find(([, w]) => (x -= w) <= 0) || left[0];
     m.list.push(pick[0]);
   }
   const zone = (min, max) => { const w = Math.round(min + R() * (max - min)); return { a: Math.round(70 + R() * (L - 110 - w)), w }; };
   const side = () => (R() < 0.5 ? -1 : 1);
-  // objets posés sur le comptoir : jamais l'un sur l'autre, ni sur une cloison ou une tireuse
-  const taken = [...G.taps.map((o) => o.x), ...(G.walls || []).map((w) => w[0])];
-  const spot = (x0, x1, pad, keep = true) => {
+  // objets posés sur le comptoir : jamais l'un sur l'autre, ni sur une cloison ou un obstacle
+  const fixed = [...G.props.map((o) => o.x), ...(G.walls || []).flatMap((w) => [w[0], (w[0] + w[2]) / 2, w[2]])];
+  let taken;
+  const pickX = (x0, x1, keep) => {
     let x, k = 0;
     do x = Math.round(x0 + R() * (x1 - x0)); while (taken.some((t) => Math.abs(t - x) < 24) && ++k < 40);
     if (keep) taken.push(x);
-    const b = G.backAt(x) + pad, f = G.frontAt(x) - pad;
+    return x;
+  };
+  const spot = (x0, x1, pad, keep = true) => {
+    const x = pickX(x0, x1, keep), b = G.backAt(x) + pad, f = G.frontAt(x) - pad;
     return { x, y: Math.round(b + R() * Math.max(0, f - b)) };
   };
-  for (const id of m.list) {
-    if (id === 'flaque') m.puddle = zone(24, 58);
-    else if (id === 'sciure') m.saw = zone(28, 52);
-    else if (id === 'vent') m.wind = { ...zone(50, 90), fy: side() * MU * (0.2 + R() * 0.12) };
-    else if (id === 'souffle') m.push = (R() < 0.55 ? 1 : -1) * MU * (0.1 + R() * 0.06);
-    else if (id === 'cire') m.slick = 0.75;
-    else if (id === 'gel') m.slick = 0.6;
-    else if (id === 'virage') m.tilt = side() * MU * (0.1 + R() * 0.06);
-    else if (id === 'bouteille') {
-      // jamais en travers du meilleur lancer : il reste toujours un passage (une seule sur les comptoirs à ricochets)
-      m.bottles = [];
-      for (let k = !G.rails && R() < 0.45 ? 2 : 1; k > 0; k--) {
-        const o = bottleSpot(G, R, taken);
-        if (o) m.bottles.push(o);
-      }
-    } else if (id === 'chat') m.cat = { ...spot(100, L - 70, 7), face: side() };
-    else if (id === 'sousbock') m.mat = spot(L - 110, L - 40, PINTE.MAT_R + 2);
-    else if (id === 'piece') m.coin = { ...spot(140, L - 40, 5, false), by: null };
+  // le chat dort couché le long d'un bord (la queue dans le vide) : il reste toujours un passage de l'autre côté
+  const catSpot = () => {
+    const x = pickX(100, L - 70, true), s = side();
+    return { x, y: Math.round(s < 0 ? G.backAt(x) + 3 : G.frontAt(x) - 3), face: side() };
+  };
+  const place = () => {
+    taken = [...fixed];
+    for (const id of m.list) {
+      if (id === 'flaque') m.puddle = zone(24, 58);
+      else if (id === 'sciure') m.saw = zone(28, 52);
+      else if (id === 'vent') m.wind = { ...zone(50, 90), fy: side() * MU * (0.2 + R() * 0.12) };
+      else if (id === 'souffle') m.push = (R() < 0.55 ? 1 : -1) * MU * (0.1 + R() * 0.06);
+      else if (id === 'cire') m.slick = 0.75;
+      else if (id === 'gel') m.slick = 0.6;
+      else if (id === 'virage' || id === 'tangage') m.tilt = side() * MU * (0.1 + R() * 0.06);
+      else if (id === 'bouteille') {
+        // jamais en travers du meilleur lancer (une seule sur les comptoirs à ricochets)
+        m.bottles = [];
+        for (let k = !G.rails && R() < 0.45 ? 2 : 1; k > 0; k--) {
+          const o = bottleSpot(G, R, taken);
+          if (o) m.bottles.push(o);
+        }
+      } else if (id === 'chat') m.cat = catSpot();
+      else if (id === 'sousbock') m.mat = spot(L - 110, L - 40, PINTE.MAT_R + 2);
+      else if (id === 'piece') m.coin = { ...spot(140, L - 40, 5, false), by: null };
+    }
+  };
+  // Chaque manche doit se jouer : une blonde comme la chope du mineur doivent pouvoir s'arrêter au ras du bout.
+  // Sinon (chat ou bouteilles en travers, sciure et vent mal placés…), on replace tout ; en dernier recours,
+  // le chat et les bouteilles s'en vont.
+  place();
+  for (let k = 0; k < 6 && !playable(m); k++) place();
+  if ((m.cat || m.bottles) && !playable(m)) {
+    delete m.cat; delete m.bottles;
+    m.list = m.list.filter((id) => id !== 'chat' && id !== 'bouteille');
   }
   // aucune place à l'écart du passage : pas de bouteille cette manche
   if (m.bottles && !m.bottles.length) { delete m.bottles; m.list = m.list.filter((id) => id !== 'bouteille'); }
@@ -320,17 +386,23 @@ const inZone = (z, x) => !!z && x >= z.a && x <= z.a + z.w;
 const E0 = PINTE.E;
 
 // la chope s'est arrêtée sur le sous-bock (son centre dessus)
-export const onMat = (m, q) => !!m?.mat && Math.hypot(q.x - m.mat.x, q.y - m.mat.y) <= PINTE.MAT_R;
+export const onMat = (m, q) => {
+  if (!m?.mat) return false;
+  const dx = q.x - m.mat.x, dy = q.y - m.mat.y;
+  return dx * dx + dy * dy <= PINTE.MAT_R * PINTE.MAT_R;
+};
 
 // Glissade : toutes les chopes du comptoir, avançées par pas fixes (même résultat chez tout le monde).
 // Une chope tombe quand son centre passe le bout (end), l'arrière (back) ou l'avant (front) du comptoir.
+// Seulement + - × / et racine carrée (exactes partout) : pas de Math.hypot, dont l'arrondi change d'un navigateur
+// à l'autre — la glissade rejouée chez un joueur sous Firefox finissait ailleurs que chez l'hôte sous Chrome.
 export class Slide {
   constructor(pints, mods) {
     this.p = pints.map((q) => { const B = beerOf(q); return { vx: 0, vy: 0, ...q, r: B.r, m: B.m, mu: B.mu, e: B.e ?? E0, curl: B.curl || 0 }; });
     this.m = mods || {};
     this.g = counterOf(this.m);
-    // obstacles fixes : bouteilles oubliées et tireuses du comptoir
-    this.obs = [...(this.m.bottles || []).map((o) => ({ ...o, r: PINTE.BOTTLE_R })), ...this.g.taps.map((o) => ({ ...o, r: PINTE.TAP_R }))];
+    // obstacles fixes : bouteilles oubliées, tireuses, tonneaux, caisse, plots du comptoir
+    this.obs = [...(this.m.bottles || []).map((o) => ({ ...o, r: PINTE.BOTTLE_R, e: 1.6 })), ...this.g.props.map((o) => ({ ...o, e: PROPS[o.k].e }))];
     this.coin = this.m.coin && this.m.coin.by == null ? this.m.coin : null;
     this.coinBy = null;
     this.t = 0;
@@ -341,7 +413,7 @@ export class Slide {
   // freinage là où se trouve la chope (bière, flaque, sciure, cire ou gel)
   fric(q) {
     const m = this.m, P = PINTE;
-    return P.MU * q.mu * (m.slick || 1) * (inZone(m.puddle, q.x) ? P.WET : 1) * (inZone(m.saw, q.x) ? P.SAW : 1);
+    return P.MU * q.mu * this.g.mu * (m.slick || 1) * (inZone(m.puddle, q.x) ? P.WET : 1) * (inZone(m.saw, q.x) ? P.SAW : 1);
   }
 
   // rambardes et cloisons : la chope ricoche (elle ne les traverse jamais)
@@ -373,7 +445,7 @@ export class Slide {
       const fr = this.fric(q);
       // vent, pente, tord-boyaux : jamais plus fort que le frottement, pour que toute chope finisse par s'arrêter
       let fx = m.push || 0, fy = (m.tilt || 0) + (inZone(m.wind, q.x) ? m.wind.fy : 0) + q.curl * CURL * MU;
-      const f = Math.hypot(fx, fy);
+      const f = Math.sqrt(fx * fx + fy * fy);
       if (f > 0.9 * fr) { fx *= (0.9 * fr) / f; fy *= (0.9 * fr) / f; }
       q.vx += fx * DT;
       q.vy += fy * DT;
@@ -414,7 +486,7 @@ export class Slide {
     for (const q of this.p) {
       if (q.out) continue;
       this.rails(q); // une chope poussée par une autre reste derrière la rambarde
-      // bouteilles oubliées et tireuses : elles ne bougent pas, la chope rebondit dessus
+      // obstacles fixes : ils ne bougent pas, la chope rebondit dessus (les plots la renvoient plus fort)
       for (const o of this.obs) {
         const rr = q.r + o.r, dx = q.x - o.x, dy = q.y - o.y, d2 = dx * dx + dy * dy;
         if (d2 >= rr * rr) continue;
@@ -422,8 +494,8 @@ export class Slide {
         q.x = o.x + nx * rr; q.y = o.y + ny * rr;
         const vn = q.vx * nx + q.vy * ny;
         if (vn < 0) {
-          q.vx -= 1.6 * vn * nx; q.vy -= 1.6 * vn * ny;
-          this.log.push({ t: this.t, type: 'bonk', id: q.id, v: -vn });
+          q.vx -= o.e * vn * nx; q.vy -= o.e * vn * ny;
+          this.log.push({ t: this.t, type: o.k === 'plot' ? 'boing' : 'bonk', id: q.id, v: -vn });
         }
       }
       // chat endormi : il ne bouge pas, la chope s'enfonce dans sa fourrure et perd presque tout son élan
@@ -442,7 +514,8 @@ export class Slide {
       }
       // pièce d'or : la première chope qui passe dessus l'empoche pour son propriétaire
       const c = this.coin;
-      if (c && this.coinBy == null && Math.hypot(q.x - c.x, q.y - c.y) < q.r + COIN_R) {
+      const cx = c ? q.x - c.x : 0, cy = c ? q.y - c.y : 0, cr = q.r + COIN_R;
+      if (c && this.coinBy == null && cx * cx + cy * cy < cr * cr) {
         this.coinBy = q.o;
         this.log.push({ t: this.t, type: 'coin', id: q.id });
       }
@@ -461,17 +534,17 @@ export class Slide {
   }
 }
 
-// Une chope lancée seule : où elle s'arrête (null si elle tombe)
-function solo(power, angle, mods, b) {
+// Une chope lancée seule : où elle s'arrête (null si elle tombe). Sert aussi aux jauges (pinte.js).
+export function solo(power, angle, mods, b) {
   const v = speedFor(power, mods);
   const s = new Slide([{ id: 0, b, x: PINTE.START, y: PINTE.D / 2, vx: v * Math.cos(angle), vy: v * Math.sin(angle) }], mods).run();
   return s.p[0].out ? null : s.p[0];
 }
 
 // Puissance qui amène une chope seule au plus près de x (dans cette direction), sans la faire tomber
-export function powerFor(x, mods, b = 'blonde', angle = 0) {
+export function powerFor(x, mods, b = 'blonde', angle = 0, steps = 20) {
   let lo = 0, hi = 1;
-  for (let k = 0; k < 20; k++) {
+  for (let k = 0; k < steps; k++) {
     const p = (lo + hi) / 2;
     const q = solo(p, angle, mods, b);
     if (!q || q.x > x) hi = p;
@@ -479,6 +552,21 @@ export function powerFor(x, mods, b = 'blonde', angle = 0) {
   }
   return lo;
 }
+
+// Dans la direction a, une chope seule peut-elle s'arrêter à moins de `gap` unités du bout ?
+// (la puissance est cherchée par dichotomie, puis on regarde où la chope s'arrête vraiment)
+export function reachesAt(a, mods, b, gap, steps = 14) {
+  const r = BEERS[b].r, q = solo(powerFor(PINTE.L - r - 2, mods, b, a, steps), a, mods, b);
+  return !!q && PINTE.L - q.x - r <= gap;
+}
+// Une direction au moins, du milieu vers les bords
+function reaches(mods, b, gap) {
+  const g = counterOf(mods), n = 10;
+  for (let i = 0; i <= 2 * n; i++) if (reachesAt(0.95 * g.maxa * (i % 2 ? 1 : -1) * (Math.ceil(i / 2) / n), mods, b, gap)) return true;
+  return false;
+}
+// une manche jouable : la blonde comme la grosse chope du mineur peuvent finir à 30 cm du bout ou moins
+const playable = (m) => reaches(m, 'blonde', 15) && reaches(m, 'geante', 15);
 
 // directions essayées par les bots : tout l'éventail quand il y a des rambardes sur lesquelles ricocher
 function angles(mods, fine) {
@@ -508,7 +596,7 @@ function aimAt(pt, mods, b) {
   for (const a of angles(mods, true)) {
     const power = powerFor(pt.x, mods, b, a);
     const q = solo(power, a, mods, b);
-    const d = q ? Math.hypot(q.x - pt.x, q.y - pt.y) : 1e9;
+    const d = q ? Math.sqrt((q.x - pt.x) * (q.x - pt.x) + (q.y - pt.y) * (q.y - pt.y)) : 1e9;
     if (d < best.d) best = { power, angle: a, d };
   }
   return best;
@@ -604,7 +692,8 @@ export class PinteGame {
     }
     c.phase = 'slide';
     c.nextAt = t + sim.t + (fell.length ? 1500 : 900);
-    this.push({ type: 'pThrow', who: i, start, mods, dur: sim.t, round: this.publicRound() });
+    // at : l'instant du lancer, pour que chacun joue la glissade au même moment que l'hôte (malgré le réseau)
+    this.push({ type: 'pThrow', who: i, start, mods, at: t, dur: sim.t, round: this.publicRound() });
   }
 
   // Glissade jouée jusqu'au bout (who : le lanceur, null pour la bagarre) : chopes restantes, pièce d'or,
@@ -642,7 +731,7 @@ export class PinteGame {
     const { sim, fell } = this.settle(start, null);
     c.phase = 'brawl';
     c.nextAt = t + META.BRAWL + sim.t + (fell.length ? 1500 : 900);
-    this.push({ type: 'pBrawl', start, mods, delay: META.BRAWL, dur: sim.t, round: this.publicRound() });
+    this.push({ type: 'pBrawl', start, mods, at: t, delay: META.BRAWL, dur: sim.t, round: this.publicRound() });
   }
 
   tick() {
@@ -773,17 +862,23 @@ export class PinteGame {
       } else ({ power, angle } = bestThrow(P.L - B.r - (meta === 'casse' ? rnd(8, 20) : rnd(3, 14)), c.mods, b));
       // dans le noir, sa main tremble plus
       const tri = () => (Math.random() + Math.random() - 1) * (meta === 'noir' ? 1.6 : 1);
-      c.bot = {
-        angle: clamp(angle + tri() * 0.025, -counterOf(c.mods).maxa, counterOf(c.mods).maxa), power: clamp(power + tri() * 0.04, 0, 1),
-        dirAt: c.turnAt + rnd(500, 900), stage: 0,
-      };
-      c.bot.powAt = c.bot.dirAt + rnd(900, 1700);
-      c.bot.goAt = c.bot.powAt + rnd(700, 1300);
+      const g = counterOf(c.mods), T = dirMsOf(g);
+      angle = clamp(angle + tri() * 0.025, -g.maxa, g.maxa);
+      power = clamp(power + tri() * 0.04, 0, 1);
+      // il bloque l'aiguille puis la jauge au moment où elles passent sur son choix : ce que voient les autres
+      // (dirAt, powAt depuis les instants annoncés) tombe pile sur le lancer, sans saut
+      const dir = c.turnAt + rnd(400, 800);
+      const lock = dir + whenAt((angle / g.maxa + 1) / 2, T, rnd(600, 1400), T / 4);
+      c.bot = { angle, power, dirAt: dir, powAt: lock, goAt: lock + whenAt(power, P.powMs, rnd(600, 1200)), stage: 0 };
     }
     const b = c.bot;
     const live = (d) => this.liveOut.push({ key: this.p[i].key, d: { n: c.n, turn: c.turn, ...d } });
-    if (b.stage === 0 && t >= b.dirAt) { b.stage = 1; live({ s: 'dir', t }); }
-    if (b.stage === 1 && t >= b.powAt) { b.stage = 2; live({ s: 'pow', a: b.angle, t }); }
-    if (b.stage === 2 && t >= b.goAt) { b.stage = 3; this.slide(i, b.power, b.angle, t); }
+    if (b.stage === 0 && t >= b.dirAt) { b.stage = 1; live({ s: 'dir', t: b.dirAt }); }
+    if (b.stage === 1 && t >= b.powAt) { b.stage = 2; live({ s: 'pow', a: b.angle, t: b.powAt }); }
+    if (b.stage === 2 && t >= b.goAt) {
+      b.stage = 3;
+      live({ s: 'go', a: b.angle, p: b.power, t: b.goAt });
+      this.slide(i, b.power, b.angle, t);
+    }
   }
 }

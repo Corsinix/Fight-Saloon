@@ -99,6 +99,31 @@ export const ENV_ART = {
     water: ['#3a6a9a', '#a8d0ec', '#f4f8ff'], wall: 'pine', rock: ['#9aa8bc', '#6a788c', '#e8f0fc', '#4a5668'], crate: 'snowcrate',
     bush: ['#4a7a5a', '#2e5a40', '#f4f8ff', '#1e3e2c'], envs: ['neige', 'aube', 'nuit', 'midi'],
   },
+  // ---- lieux du mode histoire (cartes story : true de brawlmaps/) ; marks : leurs bâtiments (markSprite)
+  // la mission San Rosario : terre battue claire, murs d'adobe chaulés, jarres de terre cuite, figuiers de Barbarie
+  mission: {
+    floor: ['#e2cc9c', '#dec696', '#e6d2a4', '#d8c08e'], dots: ['#c8ae7c', '#f0e0bc', '#b89a68'], path: ['#ecdcb8', '#d8c49a'],
+    water: ['#3e8ab0', '#68b4d4', '#c8b070'], wall: 'adobe', rock: ['#f0e6d0', '#c8b490', '#fffaec', '#9a8462'], crate: 'jar',
+    bush: ['#6a9a48', '#4a7a34', '#8ab860', '#2e5222'], envs: ['midi', 'aube', 'crepuscule'],
+  },
+  // la mission brûlée : cendre et terre noircie, murs calcinés, poutres carbonisées, broussailles roussies
+  ruines: {
+    floor: ['#8a7c6a', '#847664', '#908270', '#7c6e5c'], dots: ['#5a4e42', '#a89a86', '#3a322a'], path: ['#9a8c78', '#7a6c5a'],
+    water: ['#3e5a6a', '#6a8a98', '#6a5a48'], wall: 'burnt', rock: ['#8a7e70', '#4e443a', '#a89c8c', '#2a221c'], crate: 'beam',
+    bush: ['#7a6a3a', '#5a4a26', '#9a8a50', '#3a2e18'], envs: ['crepuscule', 'nuit', 'poussiere'],
+  },
+  // les Salines : croûte de sel blanc craquelée, blocs de sel, mares de saumure, coffres du trésor
+  salines: {
+    floor: ['#eeeae2', '#e8e4da', '#f4f0e8', '#e2ddd2'], dots: ['#d0cabe', '#ffffff', '#c4beb0'], path: ['#d8d0c0', '#c8bea8'],
+    water: ['#7ab0b8', '#c0e4e8', '#d8d2c4'], wall: 'salt', rock: ['#f8f6f0', '#c8c2b6', '#ffffff', '#8e887c'], crate: 'strongbox',
+    bush: ['#8a9a78', '#6a7a5a', '#a8b898', '#46523a'], envs: ['midi', 'poussiere', 'aube', 'crepuscule'],
+  },
+  // le pueblo des chasseurs : terre ocre, murs d'adobe ocre, jarres, figuiers de Barbarie
+  pueblo: {
+    floor: ['#d4a86c', '#cea266', '#d8ae74', '#c89c60'], dots: ['#b8884e', '#e4c08a', '#a8784a'], path: ['#e0bc84', '#c8a06a'],
+    water: ['#3e8ab0', '#68b4d4', '#b08850'], wall: 'adobe', rock: ['#dca866', '#a87440', '#f0c888', '#7a4a24'], crate: 'jar',
+    bush: ['#6a9a6a', '#4a7a50', '#8ab890', '#2e5232'], envs: ['midi', 'aube', 'crepuscule', 'nuit'],
+  },
 };
 
 // ------------------------------------------------------------ sol (un canevas pour toute la carte)
@@ -114,8 +139,10 @@ export function renderGround(w) {
     else if (ty === C.WATER) drawWater(R, A, w, x, y, at);
   }
   // ombre au pied des murs, des caisses (côté bas) et sous les buissons
+  // (cactus, arbres, sapins et rochers seuls ont leur propre ombre, à leur pied)
   for (let y = 0; y < w.h; y++) for (let x = 0; x < w.w; x++) {
     const ty = at(x, y);
+    if (ty === C.WALL && ORGANIC.has(wallStyle(w, x, y))) continue;
     if ((ty === C.WALL || ty === C.CRATE || ty === C.CHEST) && at(x, y + 1) !== C.WALL && y + 1 < w.h) {
       g.fillStyle = 'rgba(20,10,20,0.22)';
       g.fillRect(x * T, (y + 1) * T, T, 3);
@@ -151,6 +178,14 @@ function drawFloor(g, R, A, w, x, y) {
   if (w.env === 'foret' && r < 0.1) { R(px + 9, py + 4, 2, 1, '#b07a30'); R(px + 10, py + 5, 1, 1, '#8a5a20'); } // feuille morte
   if (w.env === 'mine' && r < 0.06) { R(px + 7, py + 8, 1, 2, '#b090e0'); R(px + 8, py + 9, 1, 1, '#e0d0ff'); } // éclat de cristal
   if (w.env === 'neige' && r < 0.12) { R(px + 5, py + 4, 2, 1, '#c4d0e4'); R(px + 8, py + 9, 2, 1, '#c4d0e4'); } // traces
+  if (w.env === 'salines') { // croûte de sel : polygones craquelés, bourrelets plus blancs
+    const k = Math.floor(hash(x, y, 4) * 4);
+    R(px, py + 5 + k, 7, 0.5, '#c8c0b2'); R(px + 7, py + 5 + k, 0.5, 6, '#c8c0b2'); R(px + 7, py + 11 + k / 2, 9, 0.5, '#c8c0b2');
+    R(px + 10 + k, py, 0.5, 5 + k, '#c8c0b2'); R(px, py + 4.5 + k, 7, 0.5, '#ffffff'); R(px + 8, py + 10.5 + k / 2, 8, 0.5, '#ffffff');
+  }
+  if (w.env === 'ruines' && r < 0.14) { R(px + 3, py + 7, 6, 1, '#2e2620'); R(px + 4, py + 6, 2, 1, '#2e2620'); R(px + 5, py + 7, 1, 0.5, '#e86a2a'); } // braise dans la cendre
+  if (w.env === 'ruines' && r > 0.9) { R(px + 8, py + 3, 3, 2, '#c8b8a0'); R(px + 11, py + 4, 2, 1, '#a89880'); } // éclat de chaux tombé
+  if ((w.env === 'mission' || w.env === 'pueblo') && r < 0.06) { R(px + 5, py + 8, 3, 2, '#b8643a'); R(px + 5, py + 8, 2, 1, '#e08a5a'); } // tesson de tuile
 }
 
 function drawPath(R, A, w, x, y, at) {
@@ -199,7 +234,10 @@ function drawWater(R, A, w, x, y, at) {
     const dx = 2 + Math.floor(hash(x, y, k + 40) * 9), dy = 3 + Math.floor(hash(x, y, k + 60) * 10);
     R(px + dx, py + dy, 3 + Math.floor(hash(x, y, k) * 3), 1, hi);
   }
-  if (w.env === 'neige' && hash(x, y, 7) < 0.35) { R(px + 4, py + 5, 6, 4, '#e8f2fc'); R(px + 5, py + 9, 4, 1, '#b8cce0'); } // glaçon
+  if (w.env === 'neige' && hash(x, y, 7) < 0.35) { // glaçon (placé au hasard dans la case : pas de quadrillage régulier)
+    const gx = px + 2 + Math.floor(hash(x, y, 71) * 7), gy = py + 3 + Math.floor(hash(x, y, 72) * 6);
+    R(gx, gy, 6, 4, '#e8f2fc'); R(gx + 1, gy + 4, 4, 1, '#b8cce0');
+  }
   if (w.env === 'foret' && hash(x, y, 7) < 0.15) { R(px + 6, py + 7, 4, 3, '#4a8a3a'); R(px + 7, py + 7, 1, 1, '#f0f0d0'); } // nénuphar
 }
 
@@ -212,28 +250,44 @@ const cached = (key, make) => {
 };
 export const forgetTiles = () => { for (const c of tileCache.values()) S.freeCanvas?.(c); tileCache.clear(); };
 
-// Le sprite d'un mur à la case (x, y) : n, s, e, o : voisins qui sont des murs
-export function wallSprite(w, x, y) {
-  const A = ENV_ART[w.env] || ENV_ART.desert;
+// Murs « à part » : un seul objet par case (cactus, arbre, sapin, rocher), contour tout autour et ombre à leur pied
+const ORGANIC = new Set(['cactus', 'tree', 'pine', 'boulder']);
+
+// Le style du mur à la case (x, y), selon l'environnement et ses voisins
+function wallStyle(w, x, y) {
   const isW = (dx, dy) => { const X = x + dx, Y = y + dy; return X < 0 || Y < 0 || X >= w.w || Y >= w.h || w.base[Y * w.w + X] === C.WALL; };
-  const n = isW(0, -1), s = isW(0, 1), e = isW(1, 0), o = isW(-1, 0);
-  const alone = !n && !s && !e && !o;
-  const v = Math.floor(hash(x, y, 5) * 4);
-  let style = A.wall;
+  const alone = !isW(0, -1) && !isW(0, 1) && !isW(1, 0) && !isW(-1, 0);
+  let style = (ENV_ART[w.env] || ENV_ART.desert).wall;
   if (style === 'mesa' && alone) style = 'cactus';
   if (style === 'tree' && hash(x, y, 6) < 0.18) style = 'mossrock';
   if (style === 'pine' && hash(x, y, 6) < 0.22) style = 'icerock';
   if (style === 'stone' && alone) style = 'boulder';
   if (style === 'cave' && hash(x, y, 6) < 0.3) style = 'crystal';
+  return style;
+}
+
+// Le sprite d'un mur à la case (x, y) : n, s, e, o : voisins qui sont des blocs de mur (un arbre ou un sapin voisin ne
+// prolonge pas le bloc : sa face avant et son contour restent dessinés de ce côté)
+export function wallSprite(w, x, y) {
+  const A = ENV_ART[w.env] || ENV_ART.desert;
+  const isB = (dx, dy) => {
+    const X = x + dx, Y = y + dy;
+    if (X < 0 || Y < 0 || X >= w.w || Y >= w.h) return true;
+    return w.base[Y * w.w + X] === C.WALL && !ORGANIC.has(wallStyle(w, X, Y));
+  };
+  const n = isB(0, -1), s = isB(0, 1), e = isB(1, 0), o = isB(-1, 0);
+  const v = Math.floor(hash(x, y, 5) * 4);
+  const style = wallStyle(w, x, y);
   const key = `${w.env}|${style}|${+n}${+s}${+e}${+o}|${v}`;
   return cached(key, () => drawWall(style, A, { n, s, e, o, v }));
 }
 
 function drawWall(style, A, nb) {
-  // canevas : 16 de large, 16 + WALL_H + 10 de haut (les arbres débordent vers le haut) ; origine en haut de la case
-  const H = T + WALL_H + 10, top = 10;
-  const { c, g } = qCanvas(T, H);
-  const R = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y + top, w, h); };
+  // canevas : 16 + 2 de large (1 de marge de chaque côté, pour le contour), 16 + 16 de haut (cactus, arbres et sapins
+  // débordent vers le haut) ; origine en haut à gauche de la case (left, top)
+  const top = 16, left = 1, H = T + top;
+  const { c, g } = qCanvas(T + 2 * left, H);
+  const R = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x + left, y + top, w, h); };
   const [base, dark, light, deep] = A.rock;
   const block = (cTop, cSide, cHi, cLo, stripes) => {
     // face du dessus (remontée de WALL_H), puis face avant
@@ -281,16 +335,15 @@ function drawWall(style, A, nb) {
       break;
     }
     case 'boulder': {
-      R(1, -2, 14, 13, base); R(3, -4, 10, 2, base); R(2, -3, 7, 3, light); R(3, 8, 11, 3, dark); R(10, 1, 4, 6, dark);
-      R(1, 10, 14, 1, OUT); R(0, -2, 1, 12, OUT); R(15, -2, 1, 12, OUT); R(3, -5, 10, 1, OUT);
+      // posé au fond de la case (le bas du rocher sur le bas de la case)
+      R(1, 1, 14, 13, base); R(3, -1, 10, 2, base); R(3, 0, 6, 3, light); R(2, 1, 1, 2, light); R(3, 11, 11, 3, dark); R(10, 4, 4, 6, dark);
       break;
     }
     case 'cactus': {
       const gC = '#4a8a3a', d = '#2e5a28', l = '#6aaa4a';
-      R(6, -14, 5, 28, gC); R(6, -14, 1, 28, l); R(10, -14, 1, 28, d); R(6, -15, 5, 1, OUT);
+      R(7, -15, 3, 1, gC); R(6, -14, 5, 28, gC); R(6, -14, 1, 28, l); R(10, -14, 1, 28, d);
       R(1, -6, 5, 3, gC); R(1, -11, 3, 6, gC); R(1, -11, 1, 6, l); R(11, -2, 4, 3, gC); R(12, -9, 3, 8, gC); R(14, -9, 1, 8, d);
       for (let k = 0; k < 6; k++) R(7 + (k % 2) * 2, -12 + k * 4, 1, 1, '#d8e8a0');
-      R(4, 13, 10, 2, 'rgba(0,0,0,0.25)');
       break;
     }
     case 'tree': {
@@ -301,7 +354,6 @@ function drawWall(style, A, nb) {
       R(3, -11, 6, 4, leaf[2]); R(2, -7, 4, 3, leaf[2]); R(9, -8, 3, 2, leaf[2]);
       R(1, 1, 14, 3, leaf[0]); R(11, -4, 4, 6, leaf[0]);
       for (let k = 0; k < 5; k++) R(2 + ((k * 3 + nb.v * 5) % 12), -10 + ((k * 5) % 12), 1, 1, leaf[3]);
-      R(3, -13, 10, 1, OUT); R(0, -6, 1, 9, OUT); R(15, -6, 1, 9, OUT); R(1, 4, 5, 1, OUT); R(10, 4, 5, 1, OUT);
       break;
     }
     case 'pine': {
@@ -310,20 +362,58 @@ function drawWall(style, A, nb) {
       R(2, 4, 12, 4, m); R(3, -1, 10, 5, m); R(4, -6, 8, 5, m); R(6, -11, 4, 5, m); R(7, -14, 2, 3, m);
       R(2, 7, 12, 1, d); R(3, 3, 10, 1, d); R(4, -2, 8, 1, d);
       R(3, 4, 6, 1, sn); R(4, -1, 5, 1, sn); R(5, -6, 4, 1, sn); R(6, -11, 3, 1, sn); R(7, -14, 1, 1, sn); R(9, 4, 3, 1, sh);
-      R(1, 4, 1, 4, OUT); R(14, 4, 1, 4, OUT); R(7, -15, 2, 1, OUT);
+      break;
+    }
+    case 'adobe': {
+      // adobe chaulé (mission) ou ocre (pueblo) : chaperon arrondi, plaques de chaux tombées sur les briques crues
+      block(base, dark, light, deep, false);
+      if (!nb.n) R(0, -WALL_H + 2, T, 1, S.shade(base, -0.06));
+      if (nb.v % 2) { R(3, -WALL_H + 5, 5, 3, '#c49a6a'); R(3, -WALL_H + 6, 5, 0.5, '#9a7048'); R(5, -WALL_H + 5, 0.5, 1, '#9a7048'); }
+      if (!nb.s) {
+        R(0, T - 2, T, 2, S.shade(dark, -0.12)); // soubassement sali
+        if (nb.v === 2) { R(4, T - WALL_H + 1, 6, 2, '#b88a5a'); R(4, T - WALL_H + 2, 6, 0.5, '#8a6440'); R(7, T - WALL_H + 1, 0.5, 1, '#8a6440'); }
+        if (nb.v === 1) R(11, T - WALL_H + 1, 2, 2, '#4a3020'); // trou de viga
+      }
+      break;
+    }
+    case 'burnt': {
+      // adobe calciné : chaux noircie, coulées de suie, poutre carbonisée, braises
+      block(base, dark, light, deep, false);
+      R(1 + nb.v * 3, -WALL_H + 2, 4, 6, '#3a322c'); R(2 + nb.v * 3, -WALL_H + 3, 2, 3, '#241e1a');
+      if (nb.v % 2) { R(2, -WALL_H + 9, 12, 2, '#2a1e16'); R(2, -WALL_H + 9, 12, 0.5, '#4a3626'); R(9, -WALL_H + 10, 1, 0.5, '#e86a2a'); }
+      if (!nb.s) for (let k = 0; k < 3; k++) R(2 + ((k * 5 + nb.v * 3) % 12), T - WALL_H, 2, WALL_H - 1 - (k % 2) * 2, '#2e2620');
+      break;
+    }
+    case 'salt': {
+      // bloc de sel : arêtes vives, reflets, veines roses
+      block(base, dark, light, deep, false);
+      R(3, -WALL_H + 3, 3, 3, '#ffffff'); R(4, -WALL_H + 2, 1, 1, '#ffffff'); R(10, -WALL_H + 7, 2, 2, '#ffffff');
+      R(2, -WALL_H + 8 + nb.v, 9, 0.5, '#e8c8c0'); R(7, -WALL_H + 4, 6, 0.5, '#d8d2c8');
+      if (!nb.s) R(5 + nb.v * 2, T - WALL_H + 2, 1, WALL_H - 3, '#a8a296');
       break;
     }
     default: block(base, dark, light, deep, false);
   }
   grain(c, 0.09, nb.v + 11);
+  if (ORGANIC.has(style)) {
+    // contour fin tout autour, puis l'ombre au pied, glissée dessous
+    outline(c);
+    g.globalCompositeOperation = 'destination-over';
+    const foot = { cactus: [4, 10], tree: [3, 11], pine: [4, 9], boulder: [2, 14] }[style];
+    R(foot[0], 14, foot[1], 2, 'rgba(20,10,20,0.25)');
+    R(foot[0] + 2, 13, foot[1] - 2, 1, 'rgba(20,10,20,0.25)');
+    g.globalCompositeOperation = 'source-over';
+  }
   c.top = top;
+  c.left = left;
   return c;
 }
 
 // Caisse, tonneau, foin… (cassable) ; coffre à poudre (mêlée) ; sacs de sable
-export function crateSprite(env, x, y) {
+// variant : 0 ou 1 pour imposer la variante (la caisse de TNT de la mine est la variante 1), sinon tirée de la case
+export function crateSprite(env, x, y, variant = null) {
   const A = ENV_ART[env] || ENV_ART.desert;
-  const v = hash(x, y, 9) < 0.5 ? 0 : 1;
+  const v = variant ?? (hash(x, y, 9) < 0.5 ? 0 : 1);
   return cached(`crate|${A.crate}|${v}`, () => qSprite(T + 2, T + 8, 1, T + 6, (R) => {
     const h = 4;
     switch (A.crate) {
@@ -353,6 +443,28 @@ export function crateSprite(env, x, y) {
         R(1, -15 - h, 14, 15 + h, '#a88050'); R(1, -15 - h, 14, 4, '#f4f8ff'); R(1, -11 - h, 14, 1, '#c8d8ec');
         R(1, -2 - h, 14, 1, '#7a5a30'); for (let k = 0; k < 10; k++) R(2 + k, -10 - h + k, 2, 1, '#7a5a30');
         break;
+      case 'jar': // deux jarres de terre cuite (olla), col noué de corde
+        for (const [jx, jw, jh] of [[1, 8, 15], [8, 7, 12]]) {
+          R(jx, -jh - h + 3, jw, jh + h - 3, '#b8643a'); R(jx + 1, -jh - h + 2, jw - 2, jh + h - 1, '#b8643a');
+          R(jx + 1, -jh - h + 3, 2, jh - 2, '#e08a5a'); R(jx + jw - 2, -jh - h + 3, 1, jh + h - 4, '#8a4224');
+          R(jx + 2, -jh - h, jw - 4, 3, '#a85a32'); R(jx + 2, -jh - h, jw - 4, 1, '#3a1a0c');
+          R(jx + 1, -jh - h + 6, jw - 2, 1, '#d8b878');
+        }
+        R(1, -2, 14, 2, '#6a3418');
+        break;
+      case 'beam': // poutres carbonisées tombées du toit, en tas
+        R(0, -9 - h, 16, 5, '#2e2420'); R(0, -9 - h, 16, 1, '#5a4a3a'); R(3, -8 - h, 2, 1, '#e86a2a');
+        R(1, -14 - h, 13, 5, '#3a2e26'); R(1, -14 - h, 13, 1, '#6a5644'); R(11, -13 - h, 1, 1, '#f0a040');
+        R(2, -4 - h, 12, h + 4, '#241c18'); R(2, -4 - h, 12, 1, '#4a3a2e'); for (let k = 0; k < 4; k++) R(3 + k * 3, -3 - h + (k % 2), 1, 0.5, '#5a4a3a');
+        R(0, -2, 16, 2, '#1a1410');
+        break;
+      case 'strongbox': // coffre du trésor : bois sombre cerclé de fer, serrure d'or, pièces et gemmes qui débordent
+        R(1, -13 - h, 14, 13 + h, '#6a3a1e'); R(1, -13 - h, 14, 3, '#8a5028'); R(1, -10 - h, 14, 1, '#3a1e0e');
+        R(1, -13 - h, 2, 13 + h, '#4a4a52'); R(13, -13 - h, 2, 13 + h, '#4a4a52'); R(1, -6 - h, 14, 1, '#4a4a52');
+        R(6, -9 - h, 4, 4, '#e0b040'); R(7, -8 - h, 2, 2, '#3a1e0e');
+        R(3, -15 - h, 3, 2, '#f8d070'); R(9, -15 - h, 2, 2, '#c03a5a'); R(11, -14 - h, 2, 1, '#a070e0'); R(6, -14 - h, 2, 1, '#fff0b0');
+        R(1, -2, 14, 2, '#2a160a');
+        break;
       default:
         R(1, -15 - h, 14, 15 + h, '#b08850'); R(1, -15 - h, 14, 2, '#c8a068'); R(1, -2 - h, 14, 1, '#8a6438'); R(1, -2, 14, 2, '#6a4a28');
         R(1, -15 - h, 2, 15 + h, '#8a6438'); R(13, -15 - h, 2, 15 + h, '#8a6438');
@@ -367,10 +479,10 @@ export const chestSprite = () => cached('chest', () => qSprite(T + 2, T + 8, 1, 
   R(4, -15, 2, 2, '#2a2a2a'); R(5, -16, 1, 1, '#f8d070');
 }));
 
+// trois rangées de sacs en quinconce, sans dépasser de la case (le contour reste visible au bout de chaque rangée)
 export const sandSprite = () => cached('sand', () => qSprite(T + 2, T + 8, 1, T + 6, (R) => {
-  for (const [x, y] of [[1, -7], [8, -7], [4, -13], [11, -13], [1, -19], [8, -19]]) {
-    if (y < -16 && x > 10) continue;
-    R(x, y, 7, 6, '#c8b078'); R(x, y, 7, 1, '#e0cc98'); R(x + 1, y + 5, 6, 1, '#9a8450'); R(x + 3, y + 2, 1, 1, '#9a8450');
+  for (const [x, y, w] of [[1, -7, 7], [8, -7, 7], [1, -13, 3], [4, -13, 7], [11, -13, 4], [1, -19, 7], [8, -19, 7]]) {
+    R(x, y, w, 6, '#c8b078'); R(x, y, w, 1, '#e0cc98'); R(x + 1, y + 5, w - 1, 1, '#9a8450'); R(x + (w >> 1), y + 2, 1, 1, '#9a8450');
   }
 }));
 
@@ -379,7 +491,7 @@ export function bushSprite(env, x, y, f) {
   const A = ENV_ART[env] || ENV_ART.desert;
   const v = Math.floor(hash(x, y, 4) * 3);
   return cached(`bush|${env}|${v}|${f}`, () => {
-    const { c, g } = qCanvas(T + 4, T + 8);
+    const { c, g } = qCanvas(T + 5, T + 8); // assez large pour le contour de la touffe qui ondule vers la droite
     const R = (xx, yy, w, h, col) => { g.fillStyle = col; g.fillRect(xx + 2, yy + 6, w, h); };
     const [m, d, l, dd] = A.bush;
     const sway = f ? 1 : 0;
@@ -407,6 +519,9 @@ export function bushSprite(env, x, y, f) {
       if (env === 'neige') { R(0, -2 + v, 6, 2, '#f4f8ff'); R(8 + sway, 1, 8, 2, '#f4f8ff'); R(4, 7, 6, 1, '#f4f8ff'); }
       if (env === 'desert') { R(3, 2, 1, 1, '#e8d890'); R(12, 5, 1, 1, '#e8d890'); }
       if (env === 'foret') { for (let k = 0; k < 4; k++) R(1 + k * 4, 9 + (k % 2) * 3, 3, 1, l); }
+      if (env === 'mission' || env === 'pueblo') { R(4, 1, 2, 1, '#e8304a'); R(12, 4, 1, 1, '#f0c040'); R(6, 9, 1, 1, '#e8304a'); } // fleurs de figuier de Barbarie
+      if (env === 'ruines') { R(2, 4, 3, 2, '#2a2018'); R(10, 7, 3, 2, '#2a2018'); } // feuilles brûlées
+      if (env === 'salines') { R(3, 2, 1, 1, '#f4f2ec'); R(11, 5, 1, 1, '#f4f2ec'); R(7, 10, 1, 1, '#f4f2ec'); } // cristaux de sel
     }
     grain(c, 0.1, v + f * 5 + 21);
     outline(c, [20, 40, 20]);
@@ -691,3 +806,141 @@ export function turretSprite(col, a) {
 
 // Couleur d'un kit (cartes du choix, interface)
 export const kitColor = (kit) => KITS[kit]?.col || '#f8d070';
+
+// ------------------------------------------------------------ bâtiments des lieux du mode histoire (marks des cartes story)
+// Un bâtiment couvre un bloc de cases de mur (w × h cases) et se dessine d'un seul tenant à la place de leurs murs :
+// église et clocher de San Rosario (debout ou calcinés), cloître à arcades, chariot du trésor des Salines, puits du pueblo.
+// Origine : coin haut-gauche du bloc ; le canevas déborde de MARK_TOP au-dessus (clocher) et de MARK_SIDE sur les côtés.
+export const MARK_TOP = 40, MARK_SIDE = 6;
+const MARK_DRAW = {
+  // la nef vue de dessus en 3/4 (toit plat chaulé ou charpente effondrée), la façade, l'espadaña et sa cloche, le clocher
+  church(R, fw, fh, burnt) {
+    const P = burnt ? '#8a7e70' : '#f2ead8', Pd = burnt ? '#5e544a' : '#d2c6aa', Pl = burnt ? '#a89c8c' : '#fffaf0';
+    const dark = burnt ? '#120c0a' : '#2a1a10', soot = '#2e2620', F = 20;
+    // la nef : toit (face du dessus)
+    if (burnt) {
+      R(0, -F, fw, fh, '#2a221c');
+      for (let k = 0; k < 5; k++) { const len = k % 2 ? fh - 6 : fh; R(5 + k * 16, -F, 3, len, '#3e3028'); R(5 + k * 16, -F, 1, len, '#5a4636'); }
+      R(9, -F + 9, 2, 1, '#e86a2a'); R(52, -F + 20, 2, 1, '#f0a040'); R(70, -F + 5, 1, 1, '#e86a2a');
+      R(0, -F, fw, 3, P); R(0, -F, 3, fh, P); R(fw - 3, -F, 3, fh, Pd);
+      for (const x of [14, 40, 61]) R(x, -F, 5, 2, '#2a221c'); // parapet écroulé par endroits
+    } else {
+      R(0, -F, fw, fh, '#e6dcc2'); R(0, -F, fw, 2, Pl); R(0, -F, 2, fh, Pl); R(fw - 2, -F, 2, fh, Pd);
+      for (let x = 8; x < fw - 4; x += 12) R(x, -F + 3, 1, fh - 6, '#d4c8ac'); // vigas sous l'enduit du toit
+      R(3, -F + 3, fw - 6, 1, '#d4c8ac'); R(fw - 12, -F + 4, 6, 4, '#c8a878'); R(fw - 12, -F + 4, 6, 1, '#e8d0a0'); // la trappe du toit
+    }
+    // la façade
+    R(0, fh - F, fw, F, P); R(0, fh - F, fw, 1, Pl); R(fw - 4, fh - F, 4, F, Pd); R(0, fh - 2, fw, 2, Pd);
+    for (const x of [28, 50]) { R(x, fh - F + 2, 2, F - 2, Pd); R(x, fh - F + 2, 1, F - 2, Pl); } // pilastres
+    // la porte : arc en plein cintre, battants cloutés (ou trou noir)
+    const dx = 33, dw = 14, dy = fh - 14;
+    R(dx - 2, dy - 3, dw + 4, 17, burnt ? '#4a4038' : '#c8a878'); // encadrement de cantera
+    R(dx + 2, dy - 2, dw - 4, 1, dark); R(dx + 1, dy - 1, dw - 2, 1, dark); R(dx, dy, dw, 14, dark);
+    if (!burnt) {
+      R(dx + 1, dy + 1, dw - 2, 13, '#6a3e1e'); R(dx + 6, dy + 1, 1, 13, '#3a2010'); R(dx + 7, dy + 1, 1, 13, '#8a5a30');
+      for (const y of [dy + 4, dy + 9]) for (let x = dx + 2; x < dx + dw - 1; x += 3) R(x, y, 1, 1, '#c8a040');
+    } else { R(dx + 2, dy + 8, 4, 6, '#2a1e16'); R(dx + 9, dy + 10, 4, 4, '#2a1e16'); R(dx + 3, dy + 12, 1, 1, '#e86a2a'); }
+    // l'espadaña : fronton chantourné au-dessus de la porte, niche de la cloche, croix
+    const gable = (yy) => (yy < -2 ? 4 : yy < 1 ? 8 : yy < 5 ? 12 : yy < 9 ? 15 : 18);
+    for (let yy = -6; yy < fh - F; yy++) {
+      const hw = gable(yy);
+      if (burnt && yy < 2 && (yy < -1 || hw > 6)) { if (yy >= -1) R(40 - hw, yy, hw, 1, P); continue; } // la moitié droite écroulée
+      R(40 - hw, yy, hw * 2, 1, P); R(40 + hw - 2, yy, 2, 1, Pd);
+    }
+    R(37, 1, 6, 6, dark); R(38, 0, 4, 1, dark);
+    if (!burnt) {
+      R(38, 2, 4, 4, '#c8a040'); R(38, 2, 1, 3, '#f8d070'); R(39, 6, 2, 1, '#8a6420');
+      R(39, -13, 2, 7, '#3a2a1a'); R(37, -11, 6, 2, '#3a2a1a');
+      R(30, 9, 4, 4, dark); R(46, 9, 4, 4, dark); // deux petites niches
+    } else for (let k = 0; k < 3; k++) R(36 + k * 3, 6 + k * 3, 2, 8, soot); // coulées de suie
+    // le clocher, à gauche : deux étages, l'arche des cloches, la coupole et sa croix (ou le moignon calciné)
+    const tx = 1, tw = 20, top = -18;
+    R(tx, top, tw, fh - top, P); R(tx, top, 2, fh - top, Pl); R(tx + tw - 3, top, 3, fh - top, Pd);
+    R(tx - 1, top + 16, tw + 2, 2, Pl); R(tx - 1, top + 18, tw + 2, 1, Pd); // corniche entre les étages
+    R(tx + 7, top + 26, 6, 8, dark); R(tx + 8, top + 25, 4, 1, dark); // fenêtre de l'escalier
+    R(tx + 4, top + 4, 12, 11, dark); R(tx + 5, top + 3, 10, 1, dark); R(tx + 7, top + 2, 6, 1, dark); // l'arche des cloches
+    if (!burnt) {
+      R(tx + 7, top + 5, 6, 6, '#c8a040'); R(tx + 7, top + 5, 2, 5, '#f8d070'); R(tx + 6, top + 10, 8, 1, '#8a6420'); R(tx + 9, top + 11, 2, 2, '#5a4010');
+      R(tx + 9, top + 3, 2, 2, '#3a2a1a');
+      R(tx - 1, top - 2, tw + 2, 2, Pl); R(tx - 1, top, tw + 2, 1, Pd);
+      R(tx + 2, top - 6, tw - 4, 4, P); R(tx + 4, top - 9, tw - 8, 3, P); R(tx + 6, top - 11, tw - 12, 2, P); R(tx + tw - 6, top - 9, 2, 7, Pd);
+      R(tx + 9, top - 18, 2, 7, '#3a2a1a'); R(tx + 7, top - 16, 6, 2, '#3a2a1a');
+    } else {
+      for (let x = tx; x < tx + tw; x++) { const j = (x * 7) % 5; R(x, top - 1 - j, 1, 1 + j, x < tx + tw - 3 ? P : Pd); } // sommet déchiqueté
+      R(tx + 6, top + 12, 8, 2, '#3a2e26'); R(tx + 4, top + 14, 1, 1, '#e86a2a'); // la poutre de la cloche, tombée
+      for (let k = 0; k < 3; k++) R(tx + 3 + k * 6, top - 1, 2, 12 + k * 4, soot);
+    }
+  },
+  // le cloître : toit de tuiles (ou effondré), galerie à arcades
+  cloister(R, fw, fh, burnt) {
+    const P = burnt ? '#8a7e70' : '#f2ead8', Pd = burnt ? '#5e544a' : '#d2c6aa', Pl = burnt ? '#a89c8c' : '#fffaf0';
+    const dark = burnt ? '#120c0a' : '#3a2416', F = 12;
+    if (!burnt) {
+      R(0, -F, fw, fh, '#b8643a');
+      for (let yy = -F + 2; yy < fh - F; yy += 3) { R(0, yy, fw, 1, '#8a4224'); for (let x = (yy % 2 ? 0 : 3); x < fw; x += 6) R(x, yy + 1, 2, 1, '#d8885a'); }
+      R(0, -F, fw, 2, '#d8885a'); R(0, -F + 9, fw, 2, '#c87048'); R(0, -F + 10, fw, 1, '#7a3a1e'); // le faîtage
+    } else {
+      R(0, -F, fw, fh, '#2a221c');
+      for (let k = 0; k < 4; k++) { R(8 + k * 20, -F, 3, fh - 4 - (k % 2) * 8, '#3e3028'); R(8 + k * 20, -F, 1, fh - 4 - (k % 2) * 8, '#5a4636'); }
+      for (const [x, y] of [[2, -F + 2], [30, -F + 14], [60, -F + 4]]) { R(x, y, 9, 4, '#8a4224'); R(x, y, 9, 1, '#b8643a'); } // tuiles restées
+      R(44, -F + 10, 2, 1, '#e86a2a'); R(18, -F + 16, 1, 1, '#f0a040');
+    }
+    R(0, fh - F, fw, F, P); R(0, fh - F, fw, 1, Pl); R(fw - 3, fh - F, 3, F, Pd);
+    for (let i = 0; i < 5; i++) {
+      const ax = 4 + i * 15;
+      if (burnt && i === 3) { R(ax - 1, fh - F + 1, 12, F - 1, '#2a221c'); R(ax, fh - 3, 10, 3, '#4e443a'); continue; } // arche écroulée
+      R(ax, fh - F + 4, 10, F - 4, dark); R(ax + 1, fh - F + 3, 8, 1, dark); R(ax + 3, fh - F + 2, 4, 1, dark);
+      if (!burnt && i % 2 === 0) { R(ax + 4, fh - F + 3, 2, 3, '#c8a040'); R(ax + 4, fh - F + 6, 2, 1, '#fff0b0'); } // lanterne
+      if (burnt) R(ax + 1, fh - F - 1, 2, 6, '#2e2620');
+    }
+  },
+  // chariot du trésor d'El Diablo : plateau, grandes roues, coffres cerclés de fer, sacs de gemmes, fanion noir
+  wagon(R, fw) {
+    const wd = '#6a4020', wl = '#8a5a30', wk = '#3a2010', ir = '#4a4a52';
+    R(-5, 4, 7, 1, wk); R(-6, 3, 2, 3, wk); // le timon
+    R(1, -4, fw - 2, 8, wd); R(1, -4, fw - 2, 1, wl); R(1, 2, fw - 2, 2, wk); for (let x = 6; x < fw - 2; x += 6) R(x, -3, 1, 5, wk);
+    // chargement
+    R(4, -14, 12, 10, '#5a3218'); R(4, -14, 12, 2, '#7a4a24'); R(4, -14, 2, 10, ir); R(14, -14, 2, 10, ir); R(8, -10, 4, 3, '#e0b040');
+    R(18, -17, 11, 13, '#6a3a1e'); R(18, -17, 11, 3, '#8a5028'); R(18, -11, 11, 1, ir); R(22, -14, 3, 3, '#e0b040');
+    R(31, -11, 7, 7, '#c8b890'); R(32, -12, 5, 1, '#c8b890'); R(33, -13, 3, 1, '#8a7a5a'); R(34, -9, 1, 1, '#a070e0'); // sac de toile
+    R(38, -10, 6, 6, '#b8a880'); R(39, -11, 4, 1, '#b8a880'); R(40, -12, 2, 1, '#8a7a5a');
+    R(17, -19, 2, 2, '#f8d070'); R(29, -18, 2, 1, '#c03a5a'); R(36, -6, 3, 1, '#f8d070'); R(6, -16, 2, 2, '#f8d070'); // pièces et gemmes
+    R(44, -26, 1, 22, wk); R(45, -26, 7, 5, '#1e1416'); R(45, -26, 7, 1, '#9a2a1c'); R(47, -25, 2, 2, '#e8dcc0'); // le fanion d'El Diablo
+    // les roues
+    for (const cx of [9, fw - 10]) {
+      R(cx - 5, 2, 10, 13, wk); R(cx - 6, 4, 12, 9, wk);
+      R(cx - 4, 3, 8, 11, '#9a6a3a'); R(cx - 5, 5, 10, 7, '#9a6a3a');
+      R(cx - 3, 4, 6, 9, wk); R(cx - 4, 6, 8, 5, wk);
+      R(cx - 0.5, 3, 1, 11, '#9a6a3a'); R(cx - 5, 8, 10, 1, '#9a6a3a'); R(cx - 1, 7, 2, 3, '#c8a070');
+    }
+  },
+  // le puits de la place : margelle de pierre, potence et seau, deux abreuvoirs de bois
+  well(R, fw) {
+    const st = '#a89a86', sd = '#7a6c5a', sl = '#c8bca8', wd = '#6a4020', wl = '#8a5a30';
+    for (const x0 of [1, fw - 14]) { // abreuvoirs
+      R(x0, -6, 13, 6, wd); R(x0, -6, 13, 1, wl); R(x0 + 1, -5, 11, 3, '#3e7aa0'); R(x0 + 2, -5, 5, 1, '#78b8d8');
+      R(x0, 0, 13, 7, wd); R(x0, 0, 13, 1, wl); R(x0 + 1, 7, 2, 2, '#3a2010'); R(x0 + 10, 7, 2, 2, '#3a2010');
+    }
+    R(15, -10, 18, 12, st); R(15, -10, 18, 2, sl); R(18, -7, 12, 7, '#1e2e38'); R(20, -6, 5, 1, '#4a7a98'); // margelle et eau
+    R(15, 2, 18, 12, st); for (let yy = 4; yy < 14; yy += 4) { R(15, yy, 18, 1, sd); for (let x = 16 + (yy % 8 ? 0 : 3); x < 33; x += 6) R(x, yy + 1, 1, 3, sd); }
+    R(32, 2, 1, 12, sd);
+    R(16, -28, 2, 20, wd); R(30, -28, 2, 20, wd); R(15, -30, 18, 2, wl); R(15, -29, 18, 1, wd); // la potence
+    R(23, -28, 2, 10, '#c8b890'); R(21, -19, 6, 5, '#7a7a82'); R(21, -19, 6, 1, '#a8a8b0'); // corde et seau
+  },
+};
+export function markSprite(env, m) {
+  const burnt = env === 'ruines';
+  return cached(`mark|${m.k}|${burnt}|${m.w}x${m.h}|${!!m.flip}`, () => {
+    const fw = m.w * T, fh = m.h * T;
+    const { c, g } = qCanvas(fw + 2 * MARK_SIDE, fh + MARK_TOP + 2);
+    const R = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x + MARK_SIDE, y + MARK_TOP, w, h); };
+    (MARK_DRAW[m.k] || MARK_DRAW.well)(R, fw, fh, burnt);
+    grain(c, 0.06, fw + fh);
+    outline(c);
+    if (!m.flip) return c;
+    const { c: f, g: fg } = qCanvas(fw + 2 * MARK_SIDE, fh + MARK_TOP + 2);
+    fg.setTransform(-1, 0, 0, 1, f.width, 0);
+    fg.drawImage(c, 0, 0);
+    return f;
+  });
+}

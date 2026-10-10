@@ -142,6 +142,7 @@ export class MiniGame {
   }
 
   settleWager(killer) {
+    this.bossBy ??= killer; // qui a abattu El Diablo (-1 : il s'est enfui) ; lu par le mode histoire
     if (this.wagerDone) return;
     this.wagerDone = true;
     const results = [];

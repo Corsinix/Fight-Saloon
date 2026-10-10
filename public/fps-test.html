@@ -12,10 +12,13 @@ const dm = new URLSearchParams(location.search).has('dm');
 // &seed=123 : toujours la même carte (plan, décor, retournement), pour des captures qu'on peut refaire
 const seed = new URLSearchParams(location.search).get('seed');
 const g = new FpsGame(players, dm ? 'fpsdm' : 'fps', ...(seed != null ? [+seed] : []));
+// &story={"env":"nuit","deco":{"map":"pueblo"}} : un épisode du mode histoire (ambiance, décor imposés), comme net.js
+const story = new URLSearchParams(location.search).has('story') ? JSON.parse(new URLSearchParams(location.search).get('story')) : null;
+g.story = story;
 const cv = document.getElementById('game');
 let scene;
 const deliver = (evs) => { for (const e of evs) { const { states, ...rest } = e; try { scene.event({ ...rest, state: states[0] }); } catch (err) { (window.errs ||= []).push(String(err.stack)); } } };
-scene = new (dm ? FpsDmScene : FpsScene)(cv, { send: (a) => { const r = g.act(0, a); if (r.error) (window.acterr ||= []).push(r.error + JSON.stringify(a)); deliver(r.events || []); }, live: (d) => g.onLive('me', d), onState() {}, onEnd(e) { window.ended = e; } });
+scene = new (dm ? FpsDmScene : FpsScene)(cv, { send: (a) => { const r = g.act(0, a); if (r.error) (window.acterr ||= []).push(r.error + JSON.stringify(a)); deliver(r.events || []); }, live: (d) => g.onLive('me', d), onState() {}, onEnd(e) { window.ended = e; }, story });
 const ev = g.start();
 const fast = new URLSearchParams(location.search).has('fast');
 if (fast) { g.startAt = Date.now() + 300; ev[0].countdown = 300; }

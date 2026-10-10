@@ -192,4 +192,23 @@ export default [
       '.#.........*.x##',
     ],
   },
+  // ---- mode histoire (story : jamais tirée au hasard ; épisode « mission-ruines ») : la mission brûlée, l'église
+  // calcinée au nord, le cloître effondré au sud (marks : brawlart.js markSprite)
+  {
+    id: 'mission-cendres', env: 'ruines', name: 'SAN ROSARIO EN CENDRES', story: true,
+    marks: [{ k: 'church', x: 13, y: 5, w: 5, h: 2 }, { k: 'cloister', x: 13, y: 14, w: 5, h: 2 }],
+    rows: [
+      '...........#....',
+      '...S.......#..*.',
+      '.........,,,,,,,',
+      '.##....,,...**..',
+      '..#.#.,....x....',
+      '....#.,.##...###',
+      '.**...,......###',
+      '.**..##......x..',
+      '.....#..*..x....',
+      '..*..,..x.......',
+      'S,,,,,.....x...*',
+    ],
+  },
 ];

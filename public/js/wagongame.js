@@ -254,13 +254,21 @@ export function banditY(b, t) {
 }
 export const banditOn = (b, t) => t >= b.t0;
 
-// le tireur embusqué : caché 1,1 s, debout 1,5 s (il tire en se recachant)
+// le tireur embusqué : caché 1,1 s, debout 1,5 s (il tire au bout, puis se recache)
 // Il est derrière un rocher haut de rock px ; debout, ses pieds sont à feet px au-dessus du sol (le rocher cache
-// ses jambes), caché ils descendent de drop px : on ne le voit jamais que par-dessus le rocher.
-export const SNIPE = { hide: 1100, period: 2600, rock: 32, feet: 12, drop: 18 };
-export function sniperUp(b, t) {
+// ses jambes), caché ils descendent de drop px : on ne le voit jamais que par-dessus le rocher. duck : durée
+// (ms) pour se lever comme pour se baisser.
+export const SNIPE = { hide: 1100, period: 2600, rock: 32, feet: 12, drop: 18, duck: 150 };
+// 0 : caché derrière son rocher, 1 : debout. Il se lève à la fin de sa période cachée, tire au bout de sa période
+// debout (attackPlan) et ne se baisse qu'après le coup de feu, pendant les duck premières ms de la période suivante :
+// l'éclair part bien du canon. Le dessin (wagon.js) et les boîtes (banditBox, headBox) partent de là : il est
+// touchable exactement tant qu'il dépasse du rocher, coup de feu compris.
+export function sniperRise(b, t) {
   const e = t - b.t0;
-  return e >= 0 && e % SNIPE.period >= SNIPE.hide;
+  if (e < 0) return 0;
+  const ph = e % SNIPE.period;
+  if (ph >= SNIPE.hide) return Math.min(1, (ph - SNIPE.hide) / SNIPE.duck);
+  return e >= SNIPE.period && ph < SNIPE.duck ? 1 - ph / SNIPE.duck : 0;
 }
 
 // haut de la bâche au-dessus de x
@@ -281,13 +289,38 @@ export function anchor(b, t) {
   return { x: banditX(b, t), y: banditY(b, t) };
 }
 
-// Rectangle touchable (x, y, w, h), retourné quand il arrive par la droite ; null s'il est à couvert
+// Sens où regarde un assaillant vu de côté (1 : vers la droite, -1 : vers la gauche), pour le dessin (wagon.js)
+// comme pour les boîtes. Le sol file vers la gauche à WAGON.scroll : un cavalier en selle regarde où il va par
+// rapport au sol. Arrivé par la gauche, ou collé au convoi, il galope vers la droite avec lui ; arrivé par la
+// droite plus vite que le décor, il fonce vers la gauche à la rencontre de la roulotte, puis fait un seul
+// demi-tour quand il la rejoint (reach) et l'accompagne. Le pillard, lui, saute sur la bâche dès qu'il arrive.
+// Les piétons, la mule et le tireur embusqué font face à la roulotte.
+export function faceDir(b, t) {
+  if (b.kind === 'rider' || b.kind === 'dyn' || (b.kind === 'climber' && t < b.reach)) {
+    return t < b.reach && b.side * b.v > WAGON.scroll ? -1 : 1;
+  }
+  return -b.side;
+}
+
+// rectangle r ([x0, y0, w, h], pour un assaillant tourné vers la droite) placé sur b et retourné selon faceDir.
+// Le tireur embusqué ne dépasse du rocher que d'autant qu'il est levé : la partie cachée ne se touche pas.
+function sideRect(b, t, [x0, y0, w, h]) {
+  const a = anchor(b, t);
+  let y = a.y + y0;
+  if (b.kind === 'sniper') {
+    const rise = sniperRise(b, t);
+    if (rise <= 0) return null;
+    y += Math.round((1 - rise) * SNIPE.drop);
+    h = Math.min(h, b.y - SNIPE.rock + 2 - y); // le haut du rocher (le dessin coupe là)
+    if (h <= 0) return null;
+  }
+  return faceDir(b, t) > 0 ? { x: a.x + x0, y, w, h } : { x: a.x - x0 - w, y, w, h };
+}
+
+// Rectangle touchable (x, y, w, h) ; null s'il est à couvert
 export function banditBox(b, t) {
   const K = BANDITS[b.kind];
-  if (b.kind === 'sniper' && !sniperUp(b, t)) return null;
-  const a = anchor(b, t);
-  const [x0, y0, w, h] = climbK(b, t) > 0 ? K.roofBox : K.box;
-  return b.side < 0 ? { x: a.x + x0, y: a.y + y0, w, h } : { x: a.x - x0 - w, y: a.y + y0, w, h };
+  return sideRect(b, t, climbK(b, t) > 0 ? K.roofBox : K.box);
 }
 
 // ------------------------------------------------------------ vue de l'intérieur
@@ -364,12 +397,9 @@ export const targetBox = (b, t) => (b.view === 'side' ? banditBox(b, t) : inBox(
 const SIDE_HEAD = { walker: [-4, -37, 10, 12], brute: [-4, -43, 10, 12], rider: [-9, -47, 10, 14], dyn: [-9, -47, 10, 14], climber: [-9, -47, 10, 14], sniper: [-5, -48, 10, 12] };
 export function headBox(b, t) {
   if (b.view !== 'side') return inRect(b, t, IN_HEAD);
-  let r = SIDE_HEAD[b.kind];
-  if (!r || (b.kind === 'sniper' && !sniperUp(b, t))) return null;
-  if (climbK(b, t) > 0) r = SIDE_HEAD.walker;
-  const a = anchor(b, t);
-  const [x0, y0, w, h] = r;
-  return b.side < 0 ? { x: a.x + x0, y: a.y + y0, w, h } : { x: a.x - x0 - w, y: a.y + y0, w, h };
+  const r = SIDE_HEAD[b.kind];
+  if (!r) return null;
+  return sideRect(b, t, climbK(b, t) > 0 ? SIDE_HEAD.walker : r);
 }
 export const faceOf = (b) => (b.view === 'side' ? 0 : b.end);
 
@@ -400,7 +430,7 @@ export function dynPos(b, k, at, t) {
     return { x: g.x, y: g.y, u, s: g.s };
   }
   // parabole de la main du cavalier jusqu'à la bâche
-  const fx = b.stopX + b.side * -4, fy = b.y - 46;
+  const fx = b.stopX + faceDir(b, b.reach) * 4, fy = b.y - 46; // le bâton brandi au-dessus de sa tête (wagon.js)
   const tx = WAGON.x + b.side * (12 + ((b.id * 7 + k * 13) % 24)), ty = WAGON.base - 34;
   return { x: fx + (tx - fx) * u, y: fy + (ty - fy) * u - Math.sin(u * Math.PI) * 46, u, s: 1 };
 }

@@ -2,16 +2,20 @@
 import * as S from './sprites.js';
 import { sfx, musicCue } from './audio.js';
 import { ITEMS, SKIN, CLOTH_COLORS } from './data.js';
-import { Room } from './room.js';
+import { Room, roomFelt } from './room.js';
 import { Cutscene } from './cutscene.js';
 import { MODES } from './worlds.js';
 import * as FX from './itemfx.js';
+import * as VM from './vmguns.js';
+import { revealText } from './uikit.js';
 
 export const W = 384, H = 216;
 const OPP_X = 144, OPP_Y = 40;
 const GUN_REST = { x: 142, y: 156 };
 const MY_SLOTS = [50, 86, 266, 302].map((x) => ({ x, y: 178, w: 32, h: 32 }));
 const OPP_SLOTS = [92, 114, 254, 276].map((x) => ({ x, y: 136, w: 16, h: 16 }));
+// son fer à cheval cloué au bord de la table : devant lui, à portée de ses deux mains
+const OPP_SHOE = { x: 192, y: 130 };
 const SPENT = (k) => ({ x: 252 + (k % 8) * 12, y: 158 + Math.floor(k / 8) * 6 });
 
 const ease = (t) => (t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t));
@@ -19,6 +23,50 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const color = (live) => (live ? 'ROUGE' : 'BLANCHE');
 // 0 avant a, monte jusqu'à 1 entre a et b, reste à 1 jusqu'à c, redescend à 0 en d
 const prof = (el, a, b, c, d) => (el <= a || el >= d ? 0 : el < b ? ease((el - a) / (b - a)) : el <= c ? 1 : 1 - ease((el - c) / (d - c)));
+
+// ---- Objets tenus en volume (sprites.js : gunRig, CAM3) : la caméra est mes yeux, l'adversaire est sur le plan z = 0.
+// Ce que je tiens moi-même (vue subjective) est dessiné comme les armes en main du FPS (vmguns.js).
+const CAM = { cx: 192, cy: 108, d: 180 }, V3 = S.V3;
+// épaules de l'adversaire (buste characterSprite ×2 : torse de x 6 à 42, épaules à la ligne 44 du sprite) : l'articulation
+// est rentrée d'une demi-largeur de bras, que le bras ne déborde pas du torse (OPP_SH : en unités du buste)
+// (g : repère de son buste, pour dessiner ses bras en gros pixels calés sur ceux du sprite : itemfx.js, bustArm)
+const OPP_SH = { l: [11, 45], r: [37, 45] };
+const oppShoulder = (oy, side) => {
+  const s = side > 0 ? OPP_SH.r : OPP_SH.l;
+  return { x: OPP_X + 2 * s[0], y: oy + 2 * s[1], r: 5.5, g: { x: OPP_X, y: oy, s: 2 } };
+};
+// son fusil retourné contre lui, raccourci le long de son axe (gunPose, drawOppGun)
+const SELF_SHORT = 0.72;
+// Point du monde vu en (sx, sy) et à la distance L de fixed, du côté de la caméra (dir 1) ou du fond (dir -1)
+function solveZ(fixed, sx, sy, L, dir, cam = CAM) {
+  const at = (z) => { const s = cam.d / (cam.d - z); return [cam.cx + (sx - cam.cx) / s, cam.cy + (sy - cam.cy) / s, z]; };
+  let a = fixed[2], b = dir > 0 ? cam.d - 8 : fixed[2] - 600;
+  for (let i = 0; i < 28; i++) {
+    const m = (a + b) / 2, d = Math.hypot(...V3.sub(at(m), fixed));
+    if (d < L) a = m; else b = m;
+  }
+  return at((a + b) / 2);
+}
+// Repère du fusil (carcasse) tendu de la plaque de couche butt à la bouche muz (points du monde) ; roll : canté
+// Fer à cheval cloué au bord de la table : l'icône et ses trois clous (trous de l'icône 16 × 16, depuis son centre) ;
+// hs : de combien chaque clou dépasse encore (0 : enfoncé, on ne voit que sa tête)
+const SHOE_NAILS = [[-6, 0], [5, 0], [-1, -6]];
+function nailedShoe(ctx, cx, cy, hs = [0, 0, 0]) {
+  ctx.drawImage(S.itemIcon('horseshoe'), cx - 8, cy - 8);
+  SHOE_NAILS.forEach(([dx, dy], i) => {
+    const x = cx + dx, y = cy + dy, h = hs[i];
+    ctx.fillStyle = S.OUT; ctx.fillRect(x - 1, y - h - 1, 3, h + 2);
+    if (h > 0) { ctx.fillStyle = '#8a909a'; ctx.fillRect(x, y - h + 1, 1, h - 1); }
+    ctx.fillStyle = '#d8dce4'; ctx.fillRect(x - (h > 0 ? 1 : 0), y - h, h > 0 ? 3 : 1, 1);
+  });
+}
+function gunBetween(kind, butt, muz, roll = 0) {
+  const L = 33 + S.gunEnd(false, kind) - 34, k = Math.hypot(...V3.sub(muz, butt)) / L;
+  const F0 = S.frame3([0, 0, 0], V3.sub(muz, butt), [Math.sin(roll), -Math.cos(roll), 0], k);
+  // la crosse tombe sous l'axe du canon : on redresse l'axe pour que la bouche arrive bien sur muz
+  const F = S.frame3([0, 0, 0], V3.sub(F0.A, V3.k(F0.U, 7.5 / L)), F0.U, k);
+  return S.frame3(V3.add(butt, V3.add(V3.k(F.A, 33 * k), V3.k(F.U, 6.4 * k))), F.A, F.U, k);
+}
 
 // Texte en vrai pixel art : le navigateur lisse les lettres (pixels à moitié transparents) et,
 // une fois le canvas agrandi, ça donne du flou. On dessine donc chaque texte une fois, 8 fois plus
@@ -62,17 +110,20 @@ function textMask(str, size, font) {
   return { w, h, mask, dy: Math.round((y0 - UP * 2) / UP) };
 }
 
+// Un sprite rendu peut être gardé par l'appelant : on ne vide jamais son canvas (ni à l'éviction, ni quand on le
+// refait), sinon le texte gardé devenait vide. Le ramasse-miettes s'en charge (quelques Ko par texte).
 export function textSprite(str, size, col, shadow) {
   const key = `${size}|${col}|${shadow}|${str}`;
   const font = `${size}px Silkscreen, monospace`;
   const hit = textCache.get(key);
-  // un texte dessiné avec la police de secours est refait dès que Silkscreen est chargée
-  if (hit && !(hit.fallback && document.fonts.check(font))) {
+  // un texte dessiné avec la police de secours est refait dès que Silkscreen est chargée (une fois chargée,
+  // hit.fallback est faux : plus aucune vérification par image)
+  if (hit && !(hit.fallback && document.fonts.check(font, str))) {
     textCache.delete(key);
     textCache.set(key, hit);
     return hit;
   }
-  if (hit) { textCache.delete(key); hit.c.width = 0; }
+  if (hit) textCache.delete(key);
   const m = textMask(str, size, font);
   const w = m.w + 2, h = m.h + 2;
   const mask = new Uint8Array(w * h);
@@ -96,15 +147,13 @@ export function textSprite(str, size, col, shadow) {
   x.putImageData(out, 0, 0);
   // Toujours en cache, même avec la police de secours : sans ça, un réseau lent faisait recréer chaque texte
   // à chaque image (des milliers de canvas, de quoi faire planter un téléphone).
-  const fallback = !document.fonts.check(font);
-  if (fallback) document.fonts.load(font).catch(() => {});
-  const sprite = { c, w: m.w, dy: m.dy, fallback };
+  // (vérifié avec le texte lui-même : les lettres hors de la tranche « latin » ont leur propre fichier de police)
+  const fallback = !document.fonts.check(font, str);
+  if (fallback) document.fonts.load(font, str).catch(() => {});
+  // refait sur place : qui a gardé l'objet voit le texte net
+  const sprite = hit ? Object.assign(hit, { c, w: m.w, dy: m.dy, fallback }) : { c, w: m.w, dy: m.dy, fallback };
   textCache.set(key, sprite);
-  while (textCache.size > TEXT_CACHE_MAX) {
-    const [k, old] = textCache.entries().next().value;
-    textCache.delete(k);
-    old.c.width = 0; // libère tout de suite la mémoire du canvas (Safari la garde sinon)
-  }
+  while (textCache.size > TEXT_CACHE_MAX) textCache.delete(textCache.keys().next().value);
   return sprite;
 }
 
@@ -153,6 +202,20 @@ export function canvasText(ctx, str, x, y, { size = 8, color: col = '#f8e8c0', a
   ctx.drawImage(s.c, Math.round(left), Math.round(y) + s.dy);
 }
 
+// Copie d'une image où certaines couleurs (#rrggbb) sont remplacées (une fois, à la création de la salle)
+function recolor(src, map) {
+  const c = S.makeCanvas(src.width, src.height), g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(src, 0, 0);
+  const img = g.getImageData(0, 0, c.width, c.height), d = img.data;
+  const m = new Map(Object.entries(map).map(([a, b]) => [parseInt(a.slice(1), 16), hexRgb(b)]));
+  for (let i = 0; i < d.length; i += 4) {
+    const to = d[i + 3] && m.get((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+    if (to) { d[i] = to[0]; d[i + 1] = to[1]; d[i + 2] = to[2]; }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
 export class Scene {
   constructor(canvas, hooks) {
     this.cv = canvas;
@@ -171,7 +234,7 @@ export class Scene {
     this.whiteUntil = 0;
     this.red = 0;
     this.black = 0;
-    this.oppFx = { knock: 0, hurtUntil: 0, tintUntil: 0, greenUntil: 0, glowUntil: 0, dead: false, hatless: false };
+    this.oppFx = { knock: 0, hurtUntil: 0, tintUntil: 0, greenUntil: 0, glowUntil: 0, dead: false, deadAt: 0, hatless: false };
     this.cuffBreak = null; // menottes qui cèdent : { i, t0 }
     this.oppY = OPP_Y;
     this.tintFx = null; // voile de couleur sur tout l'écran (élixir) : { rgb, a, t0, dur }
@@ -193,6 +256,7 @@ export class Scene {
 
   destroy() {
     cancelAnimationFrame(this.raf);
+    clearTimeout(this.warmT);
     this.abort.abort();
   }
 
@@ -202,14 +266,52 @@ export class Scene {
   name(i) { return this.state?.players[i]?.name || '???'; }
   skin(i) { return SKIN[this.state?.players[i]?.character?.skin ?? 1]; }
   cloth(i) { return CLOTH_COLORS[this.state?.players[i]?.character?.outfitColor ?? 2] || '#7a2a1e'; }
+  // Couleurs de ses bras, celles que characterSprite donne aux côtés du torse pour cette tenue (sprites.js,
+  // drawCharacter) : la couleur de la tenue (chemise, gilet, cache-poussière, costume, poncho…), la chemise sable aux
+  // manches retroussées de la salopette (avant-bras nus), les bras nus de la peau de bête
+  sleeve(i) {
+    const ch = this.state?.players[i]?.character, cl = this.cloth(i), sk = this.skin(i);
+    if (ch?.outfit === 'overalls') return { up: '#c8b48a', fore: sk };
+    if (ch?.outfit === 'fur') return { up: sk, fore: sk };
+    return { up: cl, fore: cl };
+  }
 
   setState(st) {
     this.state = st;
     // lieu et ambiance : tirés de la graine de la partie (ou des noms des joueurs pour une ancienne partie)
     const names = st ? st.players.map((p) => p.name).sort().join('|') : '';
     const seed = st && (st.seed ?? [...names].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 7));
-    if (st && (!this.room || this.room.seed !== seed)) { this.room = new Room(seed); this.gun = S.pickGun(seed); }
+    // (mode histoire : la salle et l'heure de l'épisode, hooks.story.deco ; le tapis de la table peut changer de couleur)
+    if (st && (!this.room || this.room.seed !== seed)) {
+      this.room = new Room(seed, null, this.hooks.story?.deco);
+      this.gun = S.pickGun(seed);
+      const felt = roomFelt(this.room);
+      this.plainTable ||= this.table;
+      this.table = felt ? recolor(this.plainTable, felt) : this.plainTable;
+    }
     this.hooks.onState?.(st);
+    this.warmHeld();
+  }
+
+  // Mes armes en main (vmguns.js) rendues d'avance, une image par tâche et seulement quand rien ne bouge : chacune coûte
+  // quelques dizaines de ms la première fois, le tir ou le derringer ne saccadent pas
+  warmHeld() {
+    const st = this.state;
+    if (!st) return;
+    const sk = this.skin(this.me), cl = this.cloth(this.me), g = this.gun, sw = !!st.sawed, key = `${g}|${sw}|${sk}|${cl}`;
+    if (this.warmKey === key) return;
+    this.warmKey = key;
+    const jobs = [['idle', 0], ['fire', 0], ['fire', 1], ['reload', 0], ['reload', 1], ['reload', 2]].map(([a, f]) => () => VM.rlGunView(g, a, f, sk, cl, sw));
+    for (let f = 0; f < 6; f++) jobs.push(() => VM.rlSelfView(g, f, sk, cl, sw));
+    for (const [a, f] of [['idle', 0], ['fire', 0], ['fire', 1]]) jobs.push(() => VM.rlDerringerView(a, f, sk, cl));
+    for (const [side, far] of [[1, false], [-1, false], [1, true], [-1, true]]) jobs.push(() => VM.rlFist(side, sk, cl, far));
+    clearTimeout(this.warmT);
+    const step = () => {
+      if (this.warmKey !== key || !jobs.length) return;
+      if (!this.busy) jobs.shift()();
+      this.warmT = setTimeout(step, this.busy ? 250 : 60);
+    };
+    this.warmT = setTimeout(step, 400);
   }
 
   enqueue(events) { this.queue.push(...events); }
@@ -287,6 +389,14 @@ export class Scene {
     this.setState(copy);
   }
 
+  // applique l'état mais laisse au joueur i ses objets d'avant (la victime du lasso garde l'objet visé jusqu'à ce
+  // qu'il lui soit arraché : sinon l'objet suivant glissait à sa place et les deux icônes se superposaient)
+  applyKeepItems(st, i) {
+    const prev = this.state;
+    if (!prev) return this.setState(st);
+    this.setState({ ...st, players: st.players.map((p, j) => (j === i ? { ...p, items: prev.players[j].items } : p)) });
+  }
+
   build(ev) {
     const me = this.me;
     const by = ev.by;
@@ -306,10 +416,10 @@ export class Scene {
             players: this.state.players.map((p, i) => ({ name: p.name, character: p.character, color: i === me ? '#fdf6e0' : '#f0705a' })),
             me,
             env: this.room?.env,
-            title: 'BUCKSHOT ROULETTE',
+            title: this.hooks.story?.title || 'BUCKSHOT ROULETTE', // épisode du mode histoire : ses titres
             sub: MODES.roulette.sub,
-            caption: this.room?.name,
-            rumor: 'ON DIT QUE CE FUSIL A APPARTENU À EL DIABLO',
+            caption: this.hooks.story?.caption || this.room?.name,
+            rumor: this.hooks.story?.rumor || 'ON DIT QUE CE FUSIL A APPARTENU À EL DIABLO',
             extra: { establish: (c, e) => this.introTable(c, e), cues: [[300, 'pump'], ...[0, 1, 2, 3, 4].map((k) => [700 + k * 170, 'shell'])] },
           });
           cut.draw(ctx, el, this.now);
@@ -339,7 +449,7 @@ export class Scene {
         A.overlay = (ctx, el) => {
           const a = Math.min(1, el / 300);
           ctx.fillStyle = `rgba(26,15,10,${0.55 * a})`;
-          ctx.fillRect(0, 50, W, 70);
+          ctx.fillRect(0, 50, W, 80); // le bandeau couvre aussi la dernière ligne (y 120 à 128)
           canvasText(ctx, `MANCHE ${ev.round}`, W / 2, 58, { size: 16, color: '#f8d070' });
           if (this.room) canvasText(ctx, this.room.label, W / 2, 75, { color: '#c8b8e8' });
           if (ev.loserStarts) {
@@ -351,7 +461,7 @@ export class Scene {
           const cw = Math.max(2, Math.round(32 * spin));
           if (el > 800) {
             const jump = el < 2300 ? Math.sin(((el - 800) / 1500) * Math.PI) * 18 : 0;
-            ctx.drawImage(coin, W / 2 - cw / 2, 84 - jump, cw, 32);
+            ctx.drawImage(coin, Math.round(W / 2 - cw / 2), Math.round(84 - jump), cw, 32);
           }
           if (el > 2300) canvasText(ctx, ev.first === me ? 'TU COMMENCES' : `${this.name(ev.first).toUpperCase()} COMMENCE`, W / 2, 120, { color: '#fdf6e0' });
         };
@@ -423,6 +533,10 @@ export class Scene {
             musicCue('blank');
             this.shake = 4;
             this.sparksAt(atMe ? { x: 192, y: 150 } : { x: 192, y: 100 });
+            // le fer usé saute du bord de la table (il disparaissait d'un coup)
+            const hs = atMe ? { x: 248, y: 204 } : OPP_SHOE;
+            this.sparksAt(hs);
+            this.parts.push({ type: 'img', img: S.itemIcon('horseshoe'), x: hs.x, y: hs.y, vx: atMe ? 0.04 : 0.03, vy: atMe ? -0.16 : -0.1, g: 0.0005, vr: 0.012, rot: 0, t: 0, max: 800 });
             this.smokeAt(this.muzzlePos(by, ev.target), 8);
             this.say(`BANG !… mais le fer à cheval ${atMe ? 'te porte chance' : `porte chance à ${victim}`} : la balle ricoche, aucun dégât.${!self ? (by === me ? ' Tu gardes le fusil.' : ` ${this.name(by)} garde le fusil.`) : ''}`);
           } else if (ev.live) {
@@ -437,7 +551,7 @@ export class Scene {
             }
             const dead = ev.state.players[ev.target].hp <= 0;
             musicCue(dead ? 'death' : 'hit');
-            if (dead) { if (atMe) this.meDead = true; else this.oppFx.dead = true; }
+            if (dead) { if (atMe) this.meDead = true; else { this.oppFx.dead = true; this.oppFx.deadAt = this.now; } }
             const keeps = !self && !dead ? (by === me ? ' Tu gardes le fusil !' : ` ${this.name(by)} garde le fusil.`) : '';
             this.say(`BANG ! ${ev.dmg > 1 ? 'Canon scié : 2 dégâts !' : ''} ${dead ? `${atMe ? 'Tu t’effondres' : `${victim} s’effondre`}…` : ''}${keeps}`);
             this.smokeAt(this.muzzlePos(by, ev.target), 10);
@@ -448,10 +562,7 @@ export class Scene {
           }
         });
         cue(Tb + 750, () => this.rack());
-        cue(Tb + 950, () => {
-          const from = this.muzzlePos(by, ev.target);
-          this.ejectShell(ev.live, { x: from.x - 20, y: from.y + 20 });
-        });
+        cue(Tb + 950, () => this.ejectShell(ev.live, this.ejectPos(by, ev.target)));
         if (ev.skipped) {
           // le menotté passe son tour : ses menottes tiennent jusque-là, puis cèdent
           A.cuffHold = 1 - by;
@@ -466,37 +577,34 @@ export class Scene {
         const sweaty = ev.target === op;
         A.pose = (ctx, el) => {
           if (el >= Tb + 1350) return;
-          const rise = el < 350 ? 1 - ease(el / 350) : el > Tb + 1100 ? ease((el - Tb - 1100) / 250) : 0;
+          // il prend le fusil sur la table (0 à 420 ms) et l'y repose à la fin
+          const rise = el < 420 ? 1 - ease(el / 420) : el > Tb + 1100 ? ease((el - Tb - 1100) / 250) : 0;
           const after = el - Tb;
-          const recoil = after > 0 && after < 300 && ev.live ? Math.round((1 - after / 300) * 10) : 0;
-          const pumping = after > 700 && after < 1000 ? Math.round(Math.sin(((after - 700) / 300) * Math.PI) * 4) : 0;
+          // recul : le fusil part en arrière et le canon se relève, puis revient
+          const recoil = after > 0 && after < 320 && ev.live ? (after < 60 ? after / 60 : 1 - ease((after - 60) / 260)) : 0;
+          // réarmement : la main avant tire la pompe vers soi puis la renvoie (ou casse le fusil, ou ouvre le levier)
+          const pumping = after > 700 && after < 1000 ? Math.sin(((after - 700) / 300) * Math.PI) : 0;
           // le tremblement monte avec le suspense, puis la main se fige juste avant le coup
-          const nerve = el > 350 && el < Tb - 120 ? Math.min(1, (el - 350) / (Tb - 350)) : 0;
+          const nerve = el > 420 && el < Tb - 120 ? Math.min(1, (el - 420) / (Tb - 420)) : 0;
           const tremble = Math.round(Math.sin(el / 37) * (0.6 + nerve * 1.4));
-          const sawed = ev.sawed;
-          if (atMe) {
-            if (by === me) {
-              ctx.fillStyle = 'rgba(20,10,6,0.35)';
-              ctx.fillRect(0, 0, W, H);
-              const breath = Math.round(Math.sin(el / 260) * 2 * nerve);
-              S.drawGunFront(ctx, 192 + tremble, 92 + Math.round(rise * 120) - recoil + pumping + breath, 24, this.skin(me), sawed, this.gun, this.cloth(me), 40);
-            } else {
-              // il vise : le canon dérive un peu, ses bras tiennent le fusil
-              const k = 1 - nerve * 0.6;
-              const gx = 192 + tremble + Math.round(Math.sin(el / 410) * 3 * k * (el > 350 ? 1 : 0));
-              const gy = 102 + Math.round(rise * 40) - Math.round(recoil / 2) + pumping + Math.round(Math.cos(el / 530) * 2 * k * (el > 350 ? 1 : 0));
-              const oy = this.oppY;
-              FX.smallArm(ctx, 228, oy + 92, gx + 12, gy + 4, this.skin(by), this.cloth(by), { reach: 52 });
-              S.drawGunFront(ctx, gx, gy, 9, this.skin(by), sawed, this.gun, this.cloth(by), 12);
-            }
-          } else if (by === me) {
-            S.drawGunFirstPerson(ctx, 192 + tremble, 104, this.skin(me), sawed, Math.round(rise * 110) + recoil + pumping, this.cloth(me), this.gun);
-          } else {
-            this.drawOppSelfGun(ctx, rise, recoil, pumping, sawed, tremble);
+          const sway = el > 420 && el < Tb - 120 ? [Math.sin(el / 410) * (1 - nerve * 0.6), Math.cos(el / 530) * (1 - nerve * 0.6)] : [0, 0];
+          const mode = atMe ? (by === me ? 'meSelf' : 'oppAim') : by === me ? 'meAim' : 'oppSelf';
+          if (mode === 'meSelf') {
+            // la pénombre suit le fusil qui monte ou redescend
+            ctx.fillStyle = `rgba(20,10,6,${(0.35 * (1 - rise)).toFixed(3)})`;
+            ctx.fillRect(0, 0, W, H);
           }
-          if (ev.live && after >= 0 && after < 120) {
+          if (mode === 'meAim' || mode === 'meSelf') {
+            // vue subjective : l'arme en main du FPS ; coup parti (éclair puis fumée) ou réarmement (3 images)
+            const fire = ev.live && after >= 0 && after < 420 ? (after < 90 ? 0 : 1) : -1;
+            const rack = after >= 700 && after < 1000 ? Math.floor((after - 700) / 100) : -1;
+            const click = !ev.live && after >= 0 && after < 70 ? 1 : 0;
+            this.drawMyGun(ctx, mode, { rise, recoil, fire, rack, click, sawed: ev.sawed, tremble, sway, breath: Math.sin(el / 260) * nerve });
+          } else this.drawOppGun(ctx, mode, { rise, recoil, pump: pumping, sawed: ev.sawed, tremble, sway, breath: Math.sin(el / 260) * nerve });
+          // (mon arme a son propre éclair, dessiné avec elle comme au FPS)
+          if (ev.live && after >= 0 && after < 120 && by !== me) {
             const m = this.muzzlePos(by, ev.target);
-            S.drawFlash(ctx, m.x, m.y, atMe ? (by === me ? 40 : 26) : 18, el / 50);
+            S.drawFlash(ctx, m.x, m.y, Math.round(Math.max(10, (this.held?.muzzle.r || 4) * 4)), el / 50);
           }
           // filet de fumée qui monte du canon après le coup
           if (ev.live && after > 60 && after < 1000 && this.now - (A.wisp || 0) > 70) {
@@ -531,10 +639,11 @@ export class Scene {
         const mine = by === me, op = 1 - me;
         const who = mine ? 'Tu' : this.name(by);
         const keepHp = it === 'cigar' || it === 'remedy' || it === 'derringer';
-        // bras de l'adversaire levé de son poing posé jusqu'à `to` (k de 0 à 1) ; le mien monte du bas de l'écran
+        // bras de l'adversaire levé de son poing posé jusqu'à `to` (k de 0 à 1), depuis son épaule droite (à ma droite,
+        // comme sa main qui pianote) ; le mien monte du bas de l'écran, depuis mon épaule
         const oppArm = (ctx, k, to, hold) => {
           const p = { x: lerp(226, to.x, k), y: lerp(137, to.y, k) };
-          FX.smallArm(ctx, 232, this.oppY + 90, p.x, p.y, this.skin(op), this.cloth(op), { hold: hold && ((c) => hold(c, p)), reach: 64 });
+          FX.oppArm(ctx, oppShoulder(this.oppY, 1), p.x, p.y, this.skin(op), this.sleeve(op), 1, hold && ((c) => hold(c, p)));
           return p;
         };
         const myArm = (ctx, k, to, hold, side = 1) => {
@@ -545,7 +654,9 @@ export class Scene {
         };
         const mouth = () => ({ x: 194, y: this.oppY + 62 });
         cue(0, () => {
-          if (keepHp) this.applyKeepHp(ev.state); else if (it !== 'whisky') apply();
+          if (keepHp) this.applyKeepHp(ev.state);
+          else if (it === 'lasso') this.applyKeepItems(ev.state, 1 - by);
+          else if (it !== 'whisky') apply();
           if (ev.viaLasso) this.say(`${by === me ? 'Tu utilises' : `${who} utilise`} aussitôt : ${info.name}.`);
         });
 
@@ -555,7 +666,8 @@ export class Scene {
           if (mine) {
             A.pose = (ctx, el) => {
               const k = prof(el, 0, 400, 1050, 1350);
-              if (k > 0) myArm(ctx, k, { x: 210, y: 186 - tilt(el) * 14 }, (c, p) => icon(c, id, p.x - 4, p.y - 10, 32, tilt(el) * 2.6));
+              // (la bouteille dépasse au-dessus du poing, qui la tient par le bas)
+              if (k > 0) myArm(ctx, k, { x: 210, y: 186 - tilt(el) * 14 }, (c, p) => icon(c, id, p.x - 2, p.y - 19, 32, tilt(el) * 2.6));
             };
           } else {
             A.oppK = (el) => prof(el, 0, 400, 1050, 1350);
@@ -578,7 +690,7 @@ export class Scene {
             if (mine) {
               A.pose = (ctx, el) => {
                 const k = prof(el, 0, 350, 2500, 2850);
-                if (k > 0) myArm(ctx, k, { x: 212, y: 198 }, (c, p) => icon(c, 'spyglass', p.x - 8, p.y - 14, 32, -0.5));
+                if (k > 0) myArm(ctx, k, { x: 212, y: 198 }, (c, p) => icon(c, 'spyglass', p.x - 11, p.y - 19, 32, -0.5));
               };
               A.screen = (ctx, el) => {
                 const r = el < 400 ? 0 : el < 750 ? ease((el - 400) / 350) * 56 : el < 2350 ? 56 : (1 - ease((el - 2350) / 350)) * 56;
@@ -635,19 +747,20 @@ export class Scene {
               };
             } else {
               A.oppK = (el) => prof(el, 0, 450, 1150, 1450);
+              // la main porte le cigare à la bouche et l'y laisse, puis craque l'allumette sous le bout
+              // (l'allumette flottait seule dans les airs, la main tenant encore le cigare)
               A.oppDraw = (ctx, el, oy) => {
-                const k = A.oppK(el), m = mouth(), h = { x: 210, y: oy + 68 };
+                const k = A.oppK(el), m = mouth(), h = { x: 210, y: oy + 68 }, lit = { x: m.x + 24, y: m.y + 13 };
                 ctx.globalAlpha = el > 2700 ? Math.max(0, 1 - (el - 2700) / 300) : 1;
                 const cig = (c, dx = 0, dy = 0) => FX.cigar(c, m.x + 2 + dx, m.y + dy, m.x + 24 + dx, m.y + 2 + dy, 4, 3, glow(el));
-                if (el >= 1150) cig(ctx);
+                if (el >= 450) cig(ctx);
                 ctx.globalAlpha = 1;
                 if (k > 0) {
-                  const p = oppArm(ctx, k, h, null);
-                  if (el < 1150) cig(ctx, p.x - h.x, p.y - h.y);
-                }
-                if (el > 550 && el < 1050) {
-                  FX.match(ctx, m.x + 34, m.y + 10, m.x + 27, m.y + 2, 1);
-                  FX.flame(ctx, m.x + 27, m.y + 1, this.now, 1);
+                  const s = el < 450 ? 0 : ease((el - 450) / 120);
+                  const to = { x: lerp(h.x, lit.x, s), y: lerp(h.y, lit.y, s) };
+                  const strike = el > 550 && el < 1050 ? (c, q) => { FX.match(c, q.x + 1, q.y - 2, q.x + 1, q.y - 9, 1); FX.flame(c, q.x + 1, q.y - 10, this.now, 1); } : null;
+                  const p = oppArm(ctx, k, to, strike);
+                  if (el < 450) cig(ctx, p.x - h.x, p.y - h.y);
                 }
                 if (el > 650 && el < 2700) smoke(m.x + 24, m.y);
               };
@@ -661,6 +774,7 @@ export class Scene {
             if (mine) A.screen = (ctx, el) => { const g = prof(el, 500, 700, 900, 1300); if (g > 0) { ctx.fillStyle = `rgba(220,140,40,${(0.14 * g).toFixed(3)})`; ctx.fillRect(0, 0, W, H); } };
             cue(1150, () => { if (mine) this.shake = 2; this.say(mine ? '…ça brûle ! Puis tu actionnes la pompe.' : '…puis actionne la pompe.'); });
             cue(1500, () => { this.rack(); apply(); this.spentHide = 1; });
+            A.gunPump = (el) => (el >= 1500 && el < 1750 ? 8 : 0); // la pompe (ou le levier) du fusil posé s'ouvre au réarmement
             cue(1700, () => {
               this.ejectShell(ev.ejected, { x: GUN_REST.x + 40, y: GUN_REST.y });
               this.say(`Cartouche éjectée : ${color(ev.ejected)}.`);
@@ -680,6 +794,8 @@ export class Scene {
             });
             cue(1800, () => sfx('thud'));
             A.gunSawed = (el) => el >= 1500;
+            // chez l'adversaire, c'est sa main droite qui scie : son poing quitte la table (sinon il avait trois mains)
+            if (!mine) A.oppK = (el) => prof(el, 0, 300, 1550, 1900);
             A.pose = (ctx, el) => {
               const k = prof(el, 0, 300, 1550, 1900);
               if (k <= 0) return;
@@ -691,8 +807,8 @@ export class Scene {
               const heel = { x: cx + u.x * 14, y: cyy + u.y * 14 };
               FX.saw(ctx, cx - u.x * 16, cyy - u.y * 16, heel.x, heel.y, 7);
               const hx = heel.x + u.x * 5, hy = heel.y + u.y * 5;
-              if (mine) FX.smallArm(ctx, hx + 70, 262, hx, hy, this.skin(me), this.cloth(me), { w: 14 });
-              else FX.smallArm(ctx, 254, 126, hx, hy, this.skin(op), this.cloth(op));
+              if (mine) FX.fpArm(ctx, hx, hy, this.skin(me), this.cloth(me), 1, { small: true });
+              else FX.oppArm(ctx, oppShoulder(this.oppY, 1), hx, hy, this.skin(op), this.sleeve(op), 1);
             };
             break;
           }
@@ -769,11 +885,13 @@ export class Scene {
                 canvasText(ctx, 'TÉLÉGRAMME', W / 2, y + 5, { color: '#7a1a14', shadow: null });
                 ctx.fillStyle = '#c8a878'; ctx.fillRect(x + 10, y + 16, 156, 1);
                 const lines = !ev.secret ? ['...'] : ev.none ? ['RIEN À SIGNALER', 'STOP'] : [`CARTOUCHE N°${ev.pos}`, `${color(ev.live)} STOP`];
+                // lettre à lettre : chaque ligne est un seul sprite découpé (revealText), calé sur sa largeur entière
+                // (n ne descend jamais sous 0 : un slice(0, -k) affichait le début de la 2e ligne trop tôt)
                 let n = Math.max(0, Math.floor((el - 1550) / 45));
                 lines.forEach((ln, j) => {
-                  const s = ln.slice(0, n);
-                  n -= ln.length;
-                  if (s) canvasText(ctx, s, W / 2, y + 24 + j * 16, { size: j === 1 && ev.secret && !ev.none ? 16 : 8, color: j === 1 && ev.live && !ev.none ? '#c0392b' : '#3a2414', shadow: null });
+                  const size = j === 1 && ev.secret && !ev.none ? 16 : 8, col = j === 1 && ev.live && !ev.none ? '#c0392b' : '#3a2414';
+                  revealText(ctx, ln, W / 2 - textSprite(ln, size, col, null).w / 2, y + 24 + j * 16, n, { size, color: col, shadow: null });
+                  n = Math.max(0, n - ln.length);
                 });
                 if (ev.secret && !ev.none && n > 0) ctx.drawImage(S.shellSprite(ev.live), x + 150, y + 30, 12, 22);
               };
@@ -846,32 +964,60 @@ export class Scene {
             break;
 
           case 'horseshoe': {
-            // le fer se pose au bord de la table, à l'endroit où il restera, puis on le cloue en trois coups
-            const Hs = mine ? { x: 248, y: 204 } : { x: 244, y: 128 };
+            // une main pose le fer au bord de la table, là où il restera, et le tient ; l'autre main le cloue :
+            // trois coups de marteau pile sur les trois clous, qui s'enfoncent ; puis les deux mains se retirent
+            const Hs = mine ? { x: 248, y: 204 } : OPP_SHOE;
             const strikes = [750, 1100, 1450];
+            const nails = SHOE_NAILS.map(([dx, dy]) => ({ x: Hs.x + dx, y: Hs.y + dy }));
             A.hideLucky = by;
+            if (!mine) { A.oppK = (el) => prof(el, 80, 420, 1600, 1900); A.oppBoth = true; }
             cue(250, () => this.say(by === me ? 'Tu cloues le fer à cheval au bord de la table, pour la chance…' : `${who} cloue un fer à cheval au bord de la table…`));
-            strikes.forEach((s) => cue(s, () => { sfx('clank'); this.sparksAt(Hs); this.shake = mine ? 2.5 : 1.5; }));
+            strikes.forEach((s, i) => cue(s, () => { sfx('clank'); this.sparksAt(nails[i]); this.sparksAt(nails[i]); this.shake = mine ? 2.5 : 1.5; }));
             cue(1800, () => { sfx('good'); this.starBurst(Hs, 10); this.say(by === me ? 'La prochaine balle qui te touche ne fera rien.' : `La prochaine balle qui touche ${who} ne fera rien.`); });
+            // marteau : levé entre deux coups, il retombe en accélérant et touche le clou à l'instant du coup
+            const lift = (el) => {
+              for (const T of strikes) {
+                const u = el - T;
+                if (u < -350) return 1;
+                if (u < -120) return 1;
+                if (u < 0) return 1 - ease((u + 120) / 120) ** 1.5;
+                if (u < 90) return Math.sin((u / 90) * Math.PI) * 0.18; // petit rebond
+                if (u < 260) return ease((u - 90) / 170);
+              }
+              return 1;
+            };
+            const strikeOf = (el) => strikes.findIndex((T) => el < T + 260);
             A.pose = (ctx, el) => {
-              const drop = el < 400 ? (1 - ease(el / 400)) * 30 : 0;
-              ctx.globalAlpha = Math.min(1, el / 150);
+              const sk = this.skin(by), cl = mine ? this.cloth(by) : this.sleeve(by);
+              const hk = mine ? prof(el, 80, 420, 1600, 1900) : A.oppK(el);
+              const placed = el >= 420;
+              // clous : ils dépassent tant qu'ils n'ont pas reçu leur coup ; le fer tressaute au contact
+              const hs = strikes.map((T) => (el < T ? 3 : 0));
+              const jolt = strikes.some((T) => el >= T && el < T + 70) ? 1 : 0;
               if (el > 1800 && el < 2400) S.disc(ctx, Hs.x, Hs.y, 11, `rgba(248,224,138,${(0.4 * (1 - (el - 1800) / 600)).toFixed(3)})`);
-              ctx.drawImage(S.itemIcon('horseshoe'), Hs.x - 8, Math.round(Hs.y - 8 - drop));
-              ctx.globalAlpha = 1;
-              const k = prof(el, 250, 450, 1600, 1850);
-              if (k <= 0) return;
-              const P = mine ? { x: 292, y: 212 } : { x: 272, y: 112 };
-              const Pk = { x: P.x + (1 - k) * 40, y: P.y + (1 - k) * (mine ? 40 : -30) };
-              const len = Math.hypot(Hs.x - P.x, Hs.y - P.y), a0 = Math.atan2(Hs.y - P.y, Hs.x - P.x);
-              let lift = 1;
-              if (el >= 400 && el < 1450) {
-                const ph = ((el - 400) % 350) / 350;
-                lift = ph < 0.8 ? (el < 750 ? 1 : ease(ph / 0.8)) : 1 - ease((ph - 0.8) / 0.2);
-              } else if (el >= 1450) lift = ease((el - 1450) / 200);
-              FX.hammer(ctx, Pk.x, Pk.y, a0 + 0.9 * lift, len, mine ? 1.5 : 1);
-              if (mine) FX.smallArm(ctx, Pk.x + 50, 262, Pk.x, Pk.y, this.skin(me), this.cloth(me), { w: 14 });
-              else FX.smallArm(ctx, 262, 140, Pk.x, Pk.y, this.skin(op), this.cloth(op));
+              // main qui tient le fer (de l'autre côté de l'écran que le marteau), par sa branche gauche
+              const grab = { x: Hs.x - (mine ? 9 : 12), y: Hs.y + 2 };
+              const from = mine ? { x: 120, y: 262 } : { x: 158, y: 137 };
+              const hp = { x: lerp(from.x, grab.x, hk), y: lerp(from.y, grab.y, hk) - (placed ? 0 : Math.sin(hk * Math.PI) * (mine ? 10 : 6)) };
+              const shoeAt = placed ? { x: Hs.x, y: Hs.y - jolt } : { x: hp.x + Hs.x - grab.x, y: hp.y - 2 };
+              const shoe = (c) => nailedShoe(c, Math.round(shoeAt.x), Math.round(shoeAt.y), placed ? hs : [3, 3, 3]);
+              if (hk > 0) {
+                if (mine) FX.fpArm(ctx, hp.x, hp.y, sk, cl, -1, { small: true, hold: shoe });
+                else FX.oppArm(ctx, oppShoulder(this.oppY, -1), hp.x, hp.y, sk, cl, -1, shoe);
+              } else if (placed) shoe(ctx);
+              // le marteau, dans l'autre main : la tête tombe pile sur le clou du coup en cours
+              const kk = mine ? prof(el, 300, 620, 1550, 1850) : prof(el, 300, 620, 1550, 1850);
+              if (kk <= 0) return;
+              const i = Math.max(0, strikeOf(el)), n = nails[i < 0 ? 2 : i];
+              const L = lift(el);
+              // chez lui, la main au-dessus du fer, du côté de son épaule gauche (le bras ne passe pas devant le fer) ; chez moi, à droite
+              const off = mine ? { x: 30, y: -10 } : { x: 12, y: -14 };
+              const rest = mine ? { x: 300, y: 262 } : { x: 226, y: 137 };
+              const H = { x: lerp(rest.x, n.x + off.x, kk), y: lerp(rest.y, n.y + off.y, kk) - L * (mine ? 10 : 4) };
+              const len = Math.hypot(off.x, off.y + 1), a0 = Math.atan2(n.y - 1 - (n.y + off.y), n.x - (n.x + off.x));
+              const ham = (c) => FX.hammer(c, H.x, H.y, a0 + Math.sign(off.x) * L * 1.25, len, mine ? 1.4 : 0.9);
+              if (mine) FX.fpArm(ctx, H.x, H.y, sk, cl, 1, { hold: ham });
+              else FX.oppArm(ctx, oppShoulder(this.oppY, 1), H.x, H.y, sk, cl, 1, ham); // coude vers le bas, côté épaule
             };
             break;
           }
@@ -913,39 +1059,78 @@ export class Scene {
           }
 
           case 'derringer': {
+            // il tire le derringer de sa botte (la main passe sous le bord de la table), tend le bras et vise l'autre,
+            // tire (éclair, recul), puis le range. Raté : la balle se plante à côté (le mur derrière lui, la table devant moi)
+            const atOpp = by === me;
+            const miss = atOpp ? { x: 240, y: this.oppY + 22 } : { x: 96, y: 188 };
             cue(250, () => { sfx('draw'); this.say(by === me ? 'Tu sors un derringer de ta botte…' : `${who} sort un derringer de sa botte…`); });
             cue(1100, () => {
               this.setState(ev.state);
-              sfx(ev.hit ? 'derringer' : 'click');
-              const atOpp = by === me;
+              sfx('derringer');
               if (ev.hit) {
                 this.shake = 4;
                 if (atOpp) { this.oppFx.knock = 8; this.oppFx.tintUntil = this.now + 180; this.oppFx.hurtUntil = this.now + 700; } else this.red = 0.6;
                 const dead = ev.state.players[1 - by].hp <= 0;
-                if (dead) { if (atOpp) this.oppFx.dead = true; else this.meDead = true; }
+                if (dead) { if (atOpp) { this.oppFx.dead = true; this.oppFx.deadAt = this.now; } else this.meDead = true; }
+              } else {
+                sfx('thud', 0.06);
+                this.shake = 2;
+                this.sparksAt(miss); this.sparksAt(miss); this.smokeAt(miss, 3);
               }
-              this.smokeAt(atOpp ? { x: 204, y: 148 } : { x: 205, y: this.oppY + 76 }, ev.hit ? 6 : 2);
-              this.say(ev.hit ? `Touché ! -1 point de vie pour ${atOpp ? this.name(1 - by) : 'toi'}.` : 'Clic… le derringer s’est enrayé.');
+              if (A.muz) this.smokeAt(A.muz, ev.hit ? 5 : 4);
+              this.say(ev.hit ? `Touché ! -1 point de vie pour ${atOpp ? this.name(1 - by) : 'toi'}.`
+                : atOpp ? `Pan !… raté : la balle va se planter dans le mur, à côté de ${this.name(1 - by)}.` : 'Pan !… raté : la balle se plante dans la table, juste à côté de toi.');
             });
-            const kick = (el) => (el > 1100 && el < 1300 && ev.hit ? (1 - (el - 1100) / 200) * 8 : 0);
-            const shiver = (el) => (el > 550 && el < 1100 ? Math.round(Math.sin(el / 45)) : !ev.hit && el > 1100 && el < 1500 ? Math.round(Math.sin(el / 25) * 2) : 0);
-            if (mine) {
-              A.pose = (ctx, el) => {
-                const k = prof(el, 150, 550, 1800, 2250);
-                if (k <= 0) return;
-                const r = kick(el);
-                const p = myArm(ctx, k, { x: 230 + r + shiver(el), y: 178 + r }, (c, p) => FX.derringerFP(c, p.x, p.y, p.x - 26, p.y - 30));
-                if (ev.hit && el >= 1100 && el < 1200) S.drawFlash(ctx, p.x - 26, p.y - 30, 16, el / 40);
-              };
-            } else {
-              A.oppK = (el) => prof(el, 150, 550, 1800, 2250);
-              A.oppDraw = (ctx, el, oy) => {
-                const k = A.oppK(el);
-                if (k <= 0) return;
-                const p = oppArm(ctx, k, { x: 206 + shiver(el), y: oy + 88 - kick(el) }, (c, p) => FX.derringerFront(c, p.x - 1, p.y - 10));
-                if (ev.hit && el >= 1100 && el < 1220) S.drawFlash(ctx, p.x - 1, p.y - 13, 26, el / 40);
-              };
-            }
+            // recul : le canon se relève d'un coup puis revient ; la main tremble en visant
+            const kick = (el) => (el > 1100 && el < 1350 ? (el < 1140 ? (el - 1100) / 40 : 1 - ease((el - 1140) / 210)) : 0);
+            const shiver = (el) => (el > 600 && el < 1080 ? Math.sin(el / 45) * 0.8 : 0);
+            // trajet de la main : posée → botte (sous la table, ou sous l'écran) → visée → botte → posée
+            const route = (el, rest, boot, aim) => {
+              if (el < 150) return null;
+              if (el < 330) return { p: lerpP(rest, boot, ease((el - 150) / 180)), gun: false };
+              if (el < 600) return { p: lerpP(boot, aim, ease((el - 330) / 270)), gun: true };
+              if (el < 1800) return { p: aim, gun: true };
+              if (el < 2050) return { p: lerpP(aim, boot, ease((el - 1800) / 250)), gun: true };
+              if (el < 2250) return { p: lerpP(boot, rest, ease((el - 2050) / 200)), gun: false };
+              return null;
+            };
+            const lerpP = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) });
+            if (!mine) { A.oppK = (el) => (el > 150 && el < 2250 ? 1 : 0); A.oppHand = 0; }
+            A.pose = (ctx, el) => {
+              if (!ev.hit && el >= 1100 && el < 2600) {
+                // trou de la balle, qui s'efface
+                ctx.globalAlpha = el > 2200 ? (2600 - el) / 400 : 1;
+                S.disc(ctx, miss.x, miss.y, 2, '#2a1a10'); ctx.fillStyle = '#0c0806'; ctx.fillRect(miss.x - 1, miss.y - 1, 2, 2);
+                ctx.fillStyle = '#c8a070'; ctx.fillRect(miss.x - 3, miss.y - 2, 1, 1); ctx.fillRect(miss.x + 2, miss.y + 2, 1, 1);
+                ctx.globalAlpha = 1;
+              }
+              if (mine) {
+                // vue subjective : le derringer en main du FPS, qui monte du bas de l'écran et se braque droit devant,
+                // au viseur, sur lui (à hauteur de son buste) ; éclair puis fumée au coup de feu, comme au FPS
+                if (el < 330 || el >= 2050) return;
+                const up = el < 600 ? ease((el - 330) / 270) : el < 1800 ? 1 : 1 - ease((el - 1800) / 250);
+                const fire = el >= 1100 && el < 1450 ? (el < 1180 ? 0 : 1) : -1;
+                const img = VM.rlDerringerView(fire >= 0 ? 'fire' : 'idle', Math.max(0, fire), this.skin(by), this.cloth(by));
+                const dx = Math.round(shiver(el)), dy = Math.round((1 - up) * 150 + kick(el) * 5);
+                ctx.drawImage(img, VM.RL_X + dx, VM.RL_Y + dy);
+                A.muz = { x: img.muz[0] + dx, y: img.muz[1] + dy };
+                return;
+              }
+              // lui : comme les cow-boys du FPS qui tirent (fpsart.js : ppRig 'aim', ppGunAim), le poing droit levé devant
+              // sa poitrine, le derringer braqué sur moi (on voit ses deux bouches superposées), coude vers le bas
+              const sk = this.skin(by), r = route(el, { x: 158, y: 137, z: 0 }, { x: 148, y: 150, z: 0 }, { x: 184, y: this.oppY + 78, z: 0 });
+              if (!r) return;
+              const kk = kick(el), hx = r.p.x + shiver(el), hy = r.p.y - kk * 4;
+              const sh = oppShoulder(this.oppY, -1), g = sh.g, hu = [(hx - g.x) / 2, (hy - g.y) / 2];
+              const gun = r.gun ? (c) => this.oppDerringer(c, g, hu) : null;
+              if (r.gun) A.muz = { x: g.x + 2 * Math.round(hu[0]), y: g.y + 2 * (Math.round(hu[1]) - 5) };
+              // sous la table (sa botte) : le bras disparaît derrière le bord
+              const clip = el < 450 || el > 1930;
+              if (clip) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, S.TABLE_Y - 6); ctx.clip(); }
+              FX.oppArm(ctx, sh, hx, hy, sk, this.sleeve(by), -1, gun);
+              if (clip) ctx.restore();
+              if (r.gun && el >= 1100 && el < 1220) S.drawFlash(ctx, A.muz.x, A.muz.y, 12, el / 40);
+            };
             break;
           }
 
@@ -962,15 +1147,22 @@ export class Scene {
             cue(1050, () => { sfx('rope'); this.say(`${mine ? 'Tu attrapes' : `${who} attrape`} « ${ITEMS[stolen]?.name} » au lasso !`); });
             cue(1250, () => sfx('whip'));
             const hand = () => (mine ? { x: 240, y: 196 } : { x: 238, y: this.oppY + 34 });
-            if (mine) A.armK = (el) => prof(el, 0, 300, 2050, 2400);
-            else {
-              A.oppK = (el) => prof(el, 0, 300, 2050, 2400);
+            // l'objet reste dans l'emplacement de sa victime jusqu'à ce que le lasso l'arrache (cue 0 : applyKeepItems)
+            cue(1250, apply);
+            const armK = (el) => prof(el, 0, 300, 2050, 2400);
+            // le poing tel que le bras le dessine (même départ que myArm / oppArm) : boucle, corde et butin le suivent
+            const fist = (el) => {
+              const H = hand(), F = mine ? { x: 300, y: 262 } : { x: 226, y: 137 }, k = armK(el);
+              return { x: lerp(F.x, H.x, k), y: lerp(F.y, H.y, k) };
+            };
+            if (!mine) {
+              A.oppK = armK;
               A.oppDraw = (ctx, el) => { const k = A.oppK(el); if (k > 0) oppArm(ctx, k, hand(), null); };
             }
             A.pose = (ctx, el) => {
-              if (mine) { const k = A.armK(el); if (k > 0) myArm(ctx, k, hand(), null); }
-              const H = hand();
-              const S0 = mine ? { x: 240, y: 146, rx: 24, ry: 8 } : { x: 238, y: this.oppY + 10, rx: 14, ry: 4 };
+              if (mine) { const k = armK(el); if (k > 0) myArm(ctx, k, hand(), null); }
+              const H = fist(el);
+              const S0 = mine ? { x: H.x, y: H.y - 50, rx: 24, ry: 8 } : { x: H.x, y: H.y - 24, rx: 14, ry: 4 };
               const HOLD = { x: H.x - (mine ? 16 : 8), y: H.y - (mine ? 22 : 12) };
               let c = T, rx, ry, item = null, size = s0, sag = 0;
               if (el < 700) { c = S0; rx = S0.rx; ry = S0.ry; }
@@ -987,7 +1179,6 @@ export class Scene {
                 item = { x: lerp(T.x, HOLD.x, f), y: lerp(T.y, HOLD.y, f) - Math.sin(f * Math.PI) * 18 + (f >= 1 ? Math.sin(el / 120) * 1.5 : 0) };
                 rx = size * 0.5; ry = size * 0.2;
               }
-              if (!item && el < 1050) icon(ctx, stolen, T.x, T.y, s0); // encore à sa place
               ctx.globalAlpha = el > 2100 ? Math.max(0, 1 - (el - 2100) / 300) : 1;
               const lc = item ? { x: item.x, y: item.y + size * 0.15 } : c;
               const phase = el / 70;
@@ -1113,11 +1304,14 @@ export class Scene {
           if (win) sfx('hiha', 0.2);
           this.say(win ? 'Tu remportes la manche !' : `${this.name(ev.winner)} remporte la manche.`);
         });
-        A.overlay = (ctx) => {
+        // fondu d'entrée et de sortie, comme les autres bandeaux (il disparaissait d'un coup avant celui de la manche suivante)
+        A.overlay = (ctx, el) => {
+          ctx.globalAlpha = Math.max(0, Math.min(1, el / 250, (A.dur - el) / 300));
           ctx.fillStyle = 'rgba(26,15,10,0.6)';
           ctx.fillRect(0, 60, W, 44);
           canvasText(ctx, win ? 'MANCHE GAGNÉE' : 'MANCHE PERDUE', W / 2, 68, { size: 16, color: win ? '#b8e070' : '#f0705a' });
           canvasText(ctx, `${this.state.players[me].wins} - ${this.state.players[1 - me].wins}`, W / 2, 88, { color: '#fdf6e0' });
+          ctx.globalAlpha = 1;
         };
         break;
       }
@@ -1158,7 +1352,7 @@ export class Scene {
     const drum = !this.busy && !ck && (t % 4200) < 900;
     const xs = [Math.round(lerp(152, 166, ck)) + jig, Math.round(lerp(220, 206, ck)) + jig];
     [[xs[0], 1], [xs[1], -1]].forEach(([hx, side], i) => {
-      if (i === o.hide) return;
+      if (i === o.hide || o.hide === 2) return;
       const y = 133;
       // manche et manchette
       R(hx - 2, 123, 16, 9, S.OUT); R(hx - 1, 124, 14, 7, cloth); R(hx - 1, 124, 14, 1, S.shade(cloth, 0.2)); R(hx + (side > 0 ? 9 : 1), 125, 3, 6, S.shade(cloth, -0.25));
@@ -1253,38 +1447,151 @@ export class Scene {
     if (S.GUNS[this.gun]?.action === 'double') { sfx('click'); sfx('clank', 0.18); } else sfx('pump');
   }
 
+  // bouche du fusil tenu (dernière image dessinée), sinon une position par défaut
   muzzlePos(by, target) {
+    if (this.held) return { x: Math.round(this.held.muzzle.x), y: Math.round(this.held.muzzle.y) };
     const me = this.me;
-    if (target === me) return by === me ? { x: 192, y: 92 } : { x: 192, y: 102 };
-    if (by === me) return { x: 192, y: 104 };
-    return { x: 195, y: this.oppY + 72 };
+    if (target === me) return by === me ? { x: 192, y: 100 } : { x: 192, y: 108 };
+    if (by === me) return { x: 194, y: 112 };
+    return { x: 196, y: this.oppY + 76 };
   }
 
-  // L'adversaire se vise : la bouche du canon calée sous le menton, le fusil en biais, crosse appuyée sur la table
-  // devant lui ; main gauche sur le fût (elle coulisse au réarmement), main droite à la poignée.
-  drawOppSelfGun(ctx, rise, recoil, pumping, sawed, tremble = 0) {
-    const op = 1 - this.me;
-    const spr = S.gunSprite(sawed, pumping > 1 ? 8 : 0, this.gun);
-    const end = S.gunEnd(sawed, this.gun);
-    const m = this.muzzlePos(op, op);
-    const mx = m.x + tremble + Math.round(rise * 10), my = m.y + Math.round(rise * 26) + Math.round(recoil / 2);
-    ctx.globalAlpha = 1 - rise * 0.6;
-    const a = -2.13 + rise * 0.5; // le canon remonte vers le menton, la crosse descend vers sa droite
-    ctx.save();
-    ctx.translate(mx, my);
-    ctx.rotate(a);
-    ctx.scale(1, -1); // dessus du fusil vers le haut
-    ctx.drawImage(spr, -end - 1, -5);
-    ctx.restore();
-    const dx = -Math.cos(a), dy = -Math.sin(a); // de la bouche vers la crosse
-    const at = (d) => ({ x: mx + dx * d, y: my + dy * d });
-    const fore = at(26 - pumping * 2), grip = at(end - 30);
-    const sk = this.skin(op), cl = this.cloth(op);
-    // bras à peine pliés : le coude s'écarte un peu, sans faire de genou
-    const arm = (sx, sy, p, bend) => FX.smallArm(ctx, sx, sy, p.x, p.y, sk, cl, { reach: Math.hypot(p.x - sx, p.y - sy) * 1.1 + 4, bend });
-    arm(160, this.oppY + 94, { x: fore.x - 2, y: fore.y }, -1);
-    arm(226, this.oppY + 92, grip, 1);
-    ctx.globalAlpha = 1;
+  // Fenêtre d'éjection du fusil tenu, sur le flanc droit de la carcasse (du côté des douilles tirées)
+  ejectPos(by, target) {
+    if (this.held) return { x: Math.round(this.held.port.x), y: Math.round(this.held.port.y) };
+    return by === this.me ? { x: 216, y: 182 } : { x: 214, y: this.oppY + 80 };
+  }
+
+  // Son derringer vu de face, braqué sur moi, tenu dans le poing p ([u, v], unités du buste) : la carcasse nickelée
+  // au-dessus du poing, les deux bouches superposées, le chien en haut, la crosse de nacre qui sort sous le poing
+  oppDerringer(c, g, p) {
+    const x = Math.round(p[0]), y = Math.round(p[1]);
+    const Q = (u, v, w, h, col) => { c.fillStyle = col; c.fillRect(g.x + g.s * u, g.y + g.s * v, g.s * w, g.s * h); };
+    Q(x - 2, y + 1, 4, 4, S.OUT); Q(x - 1, y + 2, 2, 2, '#e4dccb'); // crosse
+    Q(x - 3, y - 8, 6, 7, S.OUT); Q(x + 1, y - 9, 2, 2, S.OUT);
+    Q(x - 2, y - 7, 4, 5, '#a4a8b0'); Q(x - 2, y - 7, 4, 1, '#eceff2'); Q(x + 1, y - 7, 1, 5, '#6a707a'); Q(x + 1, y - 8, 1, 1, '#a4a8b0');
+    Q(x - 1, y - 6, 2, 1, '#0c0a0a'); Q(x - 1, y - 4, 2, 1, '#0c0a0a'); // les deux bouches
+  }
+
+  // Fusil de l'adversaire, dans le repère de son buste (characterSprite agrandi ×2) : 1 unité = 1 pixel du sprite, en
+  // (OPP_X + 2u, oppY + 2v) à l'écran ; caméra (mes yeux) en face de lui. Prises comme les cow-boys du FPS (fpsart.js :
+  // ppRig 'aimL', ppLongAim) : posé sur la table, épaulé et braqué sur moi, ou retourné contre lui.
+  oppCam() { return { cx: (W / 2 - OPP_X) / 2, cy: (H / 2 - this.oppY) / 2, d: CAM.d / 2 }; }
+  gunPose(mode, sawed = false) {
+    const g = this.gun, cam = this.oppCam(), L = S.gunEnd(false, g) - 1;
+    if (mode === 'rest') return S.frame3([(GUN_REST.x + 34 - OPP_X) / 2, (GUN_REST.y + 7 - this.oppY) / 2, 0], [1, 0, 0], [0, -1, 0], 0.5);
+    if (mode === 'oppAim') {
+      // crosse au creux de son épaule droite (à ma gauche), canon droit sur moi : la bouche devant son menton, à peine
+      // décalée vers l'épaule de tir ; derrière elle, la pompe, la carcasse et un bout de crosse
+      const butt = [14, 43, 4];
+      return gunBetween(g, butt, solveZ(butt, 22, 37.5, L * 0.7, 1, cam), 0.08);
+    }
+    // oppSelf : bouche calée sous son menton (de son côté gauche), le fusil en biais devant le torse, presque de profil,
+    // qui descend vers l'autre côté ; la crosse va vers la table, dans le plan de l'écran
+    // (à 45° environ ; plus court que posé sur la table : il est tenu un peu en arrière, plus loin de moi)
+    // repère posé directement : l'axe du canon passe par la bouche, sous le menton ; le fusil est raccourci le long de
+    // son axe (SELF_SHORT, appliqué au dessin : drawOppGun) pour que la poignée tombe à longueur de bras, au bord de la table
+    const muz = [28, 38.5, 3], A = V3.unit([0.85, -0.52, -0.1]), F = S.frame3([0, 0, 0], A, [-0.52, -0.85, 0], 0.55);
+    return S.frame3(V3.sub(muz, V3.k(V3.add(V3.k(F.A, (S.gunEnd(sawed, g) - 34) * SELF_SHORT), V3.k(F.U, 1.1)), F.k)), F.A, F.U, F.k);
+  }
+
+  // Mon fusil en vue subjective : le dessin des armes en main du FPS (vmguns.js), au même cadrage et à la même taille,
+  // à ma peau et à ma tenue. Chaque image est rendue une fois puis recopiée, décalée au pixel près : montée depuis le bas
+  // de l'écran (rise), tremblement, souffle, recul. o.fire : 0 éclair, 1 fumée (-1 : rien) ; o.rack : image 0, 1, 2 du
+  // réarmement (-1 : rien) ; o.click : petit sursaut du chien sur une cartouche à blanc.
+  drawMyGun(ctx, mode, o) {
+    const sk = this.skin(this.me), cl = this.cloth(this.me), self = mode === 'meSelf';
+    const img = self ? VM.rlSelfView(this.gun, o.fire === 0 ? 1 : o.fire === 1 ? 2 : o.rack >= 0 ? 3 + o.rack : 0, sk, cl, o.sawed)
+      : VM.rlGunView(this.gun, o.fire >= 0 ? 'fire' : o.rack >= 0 ? 'reload' : 'idle', o.fire >= 0 ? o.fire : Math.max(0, o.rack), sk, cl, o.sawed);
+    const dx = Math.round(o.tremble + (o.sway?.[0] || 0) * 3);
+    const dy = Math.round((o.sway?.[1] || 0) * 2 + (o.breath || 0) * 2 + (o.recoil || 0) * (self ? 4 : 6) + (o.click || 0) + ease(o.rise) * 150);
+    ctx.drawImage(img, VM.RL_X + dx, VM.RL_Y + dy);
+    // bouche (fumée, éclairs) et fenêtre d'éjection (douille), sur l'écran
+    const [mx, my] = img.muz;
+    this.held = { muzzle: { x: mx + dx, y: my + dy, r: self ? 6 : 2 }, port: self ? { x: mx + dx + 14, y: my + dy + 30 } : { x: 212 + dx, y: 196 + dy } };
+  }
+
+  // Fusil tenu par l'adversaire (vue 1), en gros pixels calés sur son buste : le fusil (sprites.js : gunRig) est rendu
+  // dans un calque en unités du buste puis agrandi ×2, avec ses bras (itemfx.js : bustLimb, bustHand), comme les cow-boys
+  // du FPS : coudes vers le bas, près du corps, avant-bras qui remontent, mains refermées sur l'arme. Braqué sur moi : main droite
+  // à la poignée, main gauche sous la pompe, réunies devant sa poitrine ; contre lui : la main gauche plaque le canon
+  // sous son menton, la droite descend le long du fusil jusqu'à la détente, bras tendu.
+  // o : { rise (1 = encore posé sur la table), recoil, pump (0 → 1 : pompe tirée), sawed, tremble, sway [x, y], breath }
+  drawOppGun(ctx, mode, o) {
+    const oy = this.oppY, cam = this.oppCam(), self = mode === 'oppSelf';
+    let F = this.gunPose(mode, o.sawed);
+    const F0 = F; // (pose tenue, sans recul ni réarmement : les mains sous la bouche s'y calent)
+    // recul : en arrière le long du canon, la bouche se relève (puis revient sur moi)
+    if (o.recoil) {
+      const r = o.recoil;
+      F = S.frame3(V3.add(F.o, V3.k(F.A, -7 * r * F.k)), V3.add(F.A, V3.k(F.U, 0.12 * r)), F.U, F.k);
+    }
+    // au réarmement, le coup sec de la pompe relève un peu le fusil
+    if (o.pump) F = S.frame3(V3.add(F.o, V3.k(F.U, -1.2 * o.pump * F.k)), V3.add(F.A, V3.k(F.U, 0.06 * o.pump)), F.U, F.k);
+    const dx = o.tremble + (o.sway?.[0] || 0) * 3, dy = (o.sway?.[1] || 0) * 2 + (o.breath || 0) * 2;
+    // tenu sans bouger (le long suspense) : dessiné une fois, recopié décalé de 2 px en 2 px (la grille du buste) ;
+    // en mouvement (prise, recul, réarmement), redessiné à chaque image
+    const still = !o.rise && !o.recoil && !o.pump;
+    if (!still && (dx || dy)) F = S.frame3(V3.add(F.o, [dx / 2, dy / 2, 0]), F.A, F.U, F.k);
+    if (o.rise > 0) F = S.lerpFrame(F, this.gunPose('rest'), ease(o.rise));
+    // contre lui : fusil raccourci le long de son axe (rendu à sa longueur à mesure qu'il revient sur la table)
+    if (self) F = { ...F, A: V3.k(F.A, lerp(SELF_SHORT, 1, ease(o.rise || 0))) };
+    // (deux-coups braqué sur moi : on ne le casse pas, ses canons basculés viendraient me crever l'écran)
+    const brk = !self && S.GUNS[this.gun]?.action === 'double' ? 0 : o.pump;
+    const rig = S.gunRig(this.gun, o.sawed, Math.round(brk * 8), F, cam);
+    const jx = still ? 2 * Math.round(dx / 2) : 0, jy = still ? 2 * Math.round(dy / 2) : 0;
+    const scr = (p) => ({ x: OPP_X + 2 * p.x + jx, y: oy + 2 * p.y + jy });
+    const m = scr(rig.muzzle), pt = scr(rig.port);
+    this.held = { muzzle: { x: m.x, y: m.y, r: rig.muzzle.r * 2 }, port: pt };
+    const sk = this.skin(this.opp), sl = { ...this.sleeve(this.opp), skin: sk };
+    // calque : unités u de -24 à 72, v de 8 à 104
+    const paint = (c) => {
+      c.setTransform(1, 0, 0, 1, 24, -8);
+      const g = { x: 0, y: 0, s: 1 };
+      // le fusil d'abord, puis chaque bras d'un seul tenant par-dessus (itemfx.js : bustLimb) : épaule → coude près du
+      // flanc → avant-bras → main refermée sur l'arme. Rien ne passe entre l'avant-bras et sa main.
+      rig.draw(c);
+      const at = (u, h) => S.proj3(S.at3(F, u, h), cam);
+      const up = ease(o.rise || 0); // 1 : encore posé sur la table
+      let L, R, eL = null;
+      if (self) {
+        // contre lui : sa main gauche (à ma droite) serre le devant de la pompe, sous son menton, coude au flanc ;
+        // la droite descend le long du fusil, bras presque tendu, jusqu'à la poignée, au bord de la table
+        R = at(rig.end - 12, -0.6);
+        L = at(-3.5, -2.6);
+        // (coude à mi-chemin, à peine plié vers l'extérieur ; repris par le coude ordinaire quand il repose le fusil)
+        const sh = OPP_SH.l, mid = [lerp(sh[0], L.x, 0.5) - 1, lerp(sh[1], L.y, 0.5) + 0.5], e0 = FX.bustElbow(sh, [L.x, L.y]);
+        eL = [lerp(mid[0], e0[0], up), lerp(mid[1], e0[1], up)];
+      } else {
+        // braqué sur moi : main droite (à ma gauche) à la poignée, un peu en retrait ; main gauche sous la pompe, juste
+        // sous la bouche du canon (la pompe elle-même est cachée derrière la bouche) ; au réarmement, elle tire la pompe
+        // (les deux mains réunies sous la bouche : la droite juste derrière la gauche, un peu plus haut, à ma gauche)
+        // (calées sur la bouche de la pose tenue, puis déplacées comme la pompe : au recul, la bouche toute proche de
+        // moi saute bien plus haut à l'écran que les mains)
+        const pump = at(rig.pumpU, rig.pumpH - 1), back = at(-3.5, -2.8);
+        const m0 = S.proj3(S.at3(F0, rig.end, 1.1), cam), p0 = S.proj3(S.at3(F0, rig.pumpU, rig.pumpH - 1), cam);
+        const mx = m0.x + pump.x - p0.x, my = m0.y + 1.9 * F0.k * m0.s + FX.BUST_HAND.h / 2 + pump.y - p0.y;
+        const under = { x: mx + 1.5, y: my + 0.5 + (o.pump || 0) }, grip = { x: mx - 4.5, y: my - 0.5 };
+        R = { x: lerp(under.x, pump.x, up), y: lerp(under.y, pump.y, up) };
+        L = { x: lerp(grip.x, back.x, up), y: lerp(grip.y, back.y, up) };
+      }
+      FX.bustLimb(c, g, OPP_SH.l, [L.x, L.y], sk, sl, -1, { el: eL });
+      FX.bustLimb(c, g, OPP_SH.r, [R.x, R.y], sk, sl, 1);
+      c.setTransform(1, 0, 0, 1, 0, 0);
+    };
+    this.oppLayer ||= S.makeCanvas(96, 96);
+    let img = this.oppLayer;
+    if (still) {
+      this.heldCache ||= S.lru(4);
+      const key = `${mode}|${this.gun}|${o.sawed}|${oy}|${sk}|${sl.up}|${sl.fore}`;
+      img = this.heldCache.get(key);
+      if (!img) { img = S.makeCanvas(96, 96); paint(img.getContext('2d')); this.heldCache.set(key, img); }
+    } else {
+      const c = img.getContext('2d');
+      c.clearRect(0, 0, 96, 96);
+      paint(c);
+    }
+    ctx.drawImage(img, OPP_X - 48 + jx, oy + 16 + jy, 192, 192);
   }
 
   // Coup au but sur l'adversaire : son chapeau s'envole (il reste nu-tête jusqu'à la manche suivante)
@@ -1374,7 +1681,7 @@ export class Scene {
     this.oppFx.knock = Math.max(0, this.oppFx.knock - dt * 0.03);
     for (const m of this.motes) {
       m.y -= m.v * dt * 0.004;
-      m.x += Math.sin((this.now / 1000) * m.v + m.v * 10) * 0.05;
+      m.x += Math.sin((this.now / 1000) * m.v + m.v * 10) * 0.003 * dt; // dérive au temps (0,05 px par image à 60 i/s), pas à l'image
       if (m.y < 8) { m.y = 130; m.x = Math.random() * W; }
     }
     for (const p of this.parts) {
@@ -1382,7 +1689,7 @@ export class Scene {
       if (p.t < 0) continue; // pas encore partie
       if (p.type === 'smoke') { p.x += p.vx * dt; p.y += p.vy * dt; p.r += dt * (p.grow || 0.004); }
       if (p.type === 'spark') { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 0.0006 * dt; }
-      if (p.type === 'star') { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.97; p.vy *= 0.97; }
+      if (p.type === 'star') { p.x += p.vx * dt; p.y += p.vy * dt; const f = 0.97 ** (dt / 16.7); p.vx *= f; p.vy *= f; } // freinage au temps (0,97 par image à 60 i/s)
       if (p.type === 'ring' || p.type === 'txt') { p.y += p.vy * dt; if (p.grow) p.r += p.grow * dt; }
       if (p.type === 'drop') { p.vy += p.g * dt; p.y += p.vy * dt; }
       if (p.type === 'bubble') { p.y += p.vy * dt; p.x += Math.sin(p.t / 120 + p.seed) * 0.0025 * dt; }
@@ -1401,12 +1708,13 @@ export class Scene {
     else ctx.drawImage(this.bg, 0, 0);
     this.drawChair(ctx, this.room ? this.room.sway(t) : 0);
     ctx.drawImage(this.table, 0, 0);
-    ctx.drawImage(S.gunSprite(false, el > 300 && el < 600 ? 1 : 0, this.gun), GUN_REST.x, GUN_REST.y);
+    ctx.drawImage(S.gunSprite(false, el > 300 && el < 600 ? 8 : 0, this.gun), GUN_REST.x, GUN_REST.y);
     [true, false, true, false, false].forEach((live, k) => {
       const at = 520 + k * 170;
       if (el < at) return;
-      const y = Math.min(158, 40 + (el - at) * 0.5);
-      ctx.drawImage(S.shellSprite(live, y >= 158), 150 + k * 18, Math.round(y));
+      // elles tombent devant le fusil (y 180), pas sur lui (le fusil occupe y 156 à 174)
+      const y = Math.min(180, 40 + (el - at) * 0.5);
+      ctx.drawImage(S.shellSprite(live, y >= 180), 150 + k * 18, Math.round(y));
     });
     ctx.drawImage(this.vig, 0, 0);
     this.room?.drawOverlay(ctx, t);
@@ -1443,7 +1751,8 @@ export class Scene {
       const spr = S.characterSprite(look, { blink, hurt, t, tint: t < this.oppFx.tintUntil ? 'rgba(255,60,40,0.6)' : t < this.oppFx.greenUntil ? 'rgba(110,190,60,0.5)' : t < this.oppFx.glowUntil ? 'rgba(255,230,120,0.4)' : null });
       const bob = Math.round(Math.sin(t / 700));
       const sway = this.room ? this.room.sway(t) : 0;
-      const oy = OPP_Y + bob + sway + Math.round(this.oppFx.knock) + (this.oppFx.dead ? 22 : 0) + (t < this.oppFx.greenUntil ? Math.round(Math.sin(t / 60)) : 0);
+      // touché à mort, il s'affaisse sur sa chaise en moins d'une demi-seconde (au lieu de tomber de 22 px d'un coup)
+      const oy = OPP_Y + bob + sway + Math.round(this.oppFx.knock) + (this.oppFx.dead ? Math.round(22 * ease((t - this.oppFx.deadAt) / 450)) : 0) + (t < this.oppFx.greenUntil ? Math.round(Math.sin(t / 60)) : 0);
       this.oppY = oy;
       this.drawChair(ctx, sway);
       ctx.drawImage(spr, OPP_X, oy, S.CHAR_W * 2, S.CHAR_H * 2);
@@ -1459,7 +1768,8 @@ export class Scene {
       // mains de l'adversaire posées sur la table
       const oppHolding = gunHeld && A.ev.by === op;
       if (!oppHolding && !this.oppFx.dead) {
-        const hide = A?.oppK && A.oppK(el) > 0 ? 1 : -1;
+        // main levée par l'animation (1 : sa main droite à l'écran, 0 : l'autre, 2 : les deux)
+        const hide = A?.oppK && A.oppK(el) > 0 ? (A.oppBoth ? 2 : A.oppHand ?? 1) : -1;
         const brk = this.cuffBreak?.i === op ? (t - this.cuffBreak.t0) / 350 : 9;
         const cuff = A?.oppCuff ? A.oppCuff(el) : O.cuffed || (A?.cuffHold === op && el < A.cuffUntil) ? { k: 1, bands: true, jiggle: t % 3200 < 350 }
           : brk < 1 ? { k: 1 - ease(brk) } : null;
@@ -1487,7 +1797,7 @@ export class Scene {
       }
 
       // fusil sur la table
-      if (!gunHeld) ctx.drawImage(S.gunSprite(A?.gunSawed ? A.gunSawed(el) : st.sawed, 0, this.gun), GUN_REST.x, GUN_REST.y);
+      if (!gunHeld) ctx.drawImage(S.gunSprite(A?.gunSawed ? A.gunSawed(el) : st.sawed, A?.gunPump ? A.gunPump(el) : 0, this.gun), GUN_REST.x, GUN_REST.y);
 
       // mes objets
       const M = st.players[me];
@@ -1503,8 +1813,8 @@ export class Scene {
       });
 
       // fers à cheval cloués au bord de la table, mes mains menottées
-      if (O.lucky && A?.hideLucky !== op) ctx.drawImage(S.itemIcon('horseshoe'), 236, 120);
-      if (M.lucky && A?.hideLucky !== me) ctx.drawImage(S.itemIcon('horseshoe'), 240, 196);
+      if (O.lucky && A?.hideLucky !== op) nailedShoe(ctx, OPP_SHOE.x, OPP_SHOE.y);
+      if (M.lucky && A?.hideLucky !== me) nailedShoe(ctx, 248, 204);
       const myBrk = this.cuffBreak?.i === me ? (t - this.cuffBreak.t0) / 350 : 9;
       const myCuffs = A?.meCuff ? A.meCuff(el) : M.cuffed || (A?.cuffHold === me && el < A.cuffUntil) ? { k: 1, rise: 1, bands: true, jiggle: t % 3600 < 350 }
         : myBrk < 2 ? { k: 1 - ease(myBrk), rise: 1 - ease(myBrk - 1), bands: false } : null;
@@ -1513,6 +1823,7 @@ export class Scene {
       ctx.drawImage(this.table, 0, 0);
     }
 
+    this.held = null;
     if (A && A.pose) A.pose(ctx, el);
 
     // particules
@@ -1559,7 +1870,7 @@ export class Scene {
         const x = lerp(p.x0, p.x1, e), y = lerp(p.y0, p.y1, e) - Math.sin(k * Math.PI) * 30;
         ctx.save();
         ctx.translate(Math.round(x), Math.round(y));
-        ctx.rotate(Math.round(k * 8) * (Math.PI / 4));
+        ctx.rotate((Math.round(k * 8) % 4) * (Math.PI / 2)); // quarts de tour seulement (à 45°, le sprite perdait des pixels), à plat en arrivant
         ctx.drawImage(S.shellSprite(p.live, true), -5, -2);
         ctx.restore();
       }

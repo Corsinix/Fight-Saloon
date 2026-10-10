@@ -4,7 +4,7 @@
 import * as S from './sprites.js';
 import { canvasText } from './scene.js';
 import { pixelSprite } from './miniscene.js';
-import { horseSprite } from './lasso.js';
+import { horseSprite, STAND } from './lasso.js';
 import { W, H, MODES } from './worlds.js';
 import { WAGON } from './wagongame.js';
 
@@ -167,28 +167,34 @@ export function trailWarm() {
 
 // ------------------------------------------------------------ rendu
 // cam : distance parcourue (px). Renvoie les lueurs à ajouter après le calque d'ambiance (le feu de camp).
-export function drawTrail(ctx, cam, now) {
+// sd : le décor d'un épisode du mode histoire (routesdeco.js : lointain, noms des villes, bord du chemin), ou null.
+export function drawTrail(ctx, cam, now, sd = null) {
   const glows = [];
   const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
+  // une caméra entière par plan, arrondie une seule fois : le sol et tout ce qui y est posé bougent
+  // ensemble au pixel près (sinon ils tremblent d'un pixel l'un contre l'autre pendant le défilement)
+  const c = Math.floor(cam), cFar = Math.floor(cam * FAR), cMid = Math.floor(cam * MID);
   // mesas au loin
-  const rg = ridge();
-  const off = Math.floor(cam * FAR) % rg.width;
-  for (let x = -off; x < W; x += rg.width) ctx.drawImage(rg, x, HORIZON - 60);
+  if (sd) sd.far(ctx, cam / TRAIL_LEN, cam);
+  else {
+    const rg = ridge();
+    const off = cFar % rg.width;
+    for (let x = -off; x < W; x += rg.width) ctx.drawImage(rg, x, HORIZON - 60);
+  }
   // le sol
   const gr = ground();
-  const go = Math.floor(cam) % W;
+  const go = c % W;
   ctx.drawImage(gr, -go, HORIZON);
   ctx.drawImage(gr, W - go, HORIZON);
   // bisons et arbres près de l'horizon
-  const mid = cam * MID;
   for (const it of MID_ITEMS) {
-    const x = Math.round(it.x - mid);
+    const x = Math.round(it.x) - cMid;
     if (x < -30 || x > W + 30) continue;
     const spr = it.k === 'tree' ? tree() : bison((it.f + Math.floor(now / 1600 + it.f * 0.7)) % 2);
     ctx.drawImage(spr, x - spr.ox, it.y - spr.oy);
   }
   // le long de la piste
-  const items = BACK_ITEMS.map((it) => ({ it, x: Math.round(it.x - cam) })).filter(({ x }) => x > -140 && x < W + 140).sort((a, b) => a.it.y - b.it.y);
+  const items = BACK_ITEMS.map((it) => ({ it, x: Math.round(it.x) - c })).filter(({ x }) => x > -140 && x < W + 140).sort((a, b) => a.it.y - b.it.y);
   for (const { it, x } of items) {
     const y = it.y;
     if (it.k === 'house') {
@@ -197,11 +203,12 @@ export function drawTrail(ctx, cam, now) {
       canvasText(ctx, it.name, x + it.w / 2, y - it.h + 4, { color: '#3a2214', shadow: '#c8b07c' });
     } else if (it.k === 'sign') {
       // la planche s'allonge avec le nom (≈ 5,5 px par lettre)
-      const w = Math.max(46, Math.ceil(it.text.length * 5.5) + 12);
+      const text = sd?.names[it.text] || it.text;
+      const w = Math.max(46, Math.ceil(text.length * 5.5) + 12);
       R(x - 1, y - 22, 3, 22, OUT); R(x, y - 22, 1, 22, '#5a3a20');
       R(x + w - 7, y - 22, 3, 22, OUT); R(x + w - 6, y - 22, 1, 22, '#5a3a20');
       R(x - 4, y - 28, w + 2, 12, OUT); R(x - 3, y - 27, w, 10, '#d8bc80');
-      canvasText(ctx, it.text, x - 3 + w / 2, y - 26, { color: '#3a2214', shadow: '#b89a60' });
+      canvasText(ctx, text, x - 3 + w / 2, y - 26, { color: '#3a2214', shadow: '#b89a60' });
     } else if (it.k === 'tipi') {
       const spr = tipi(it.v);
       ctx.drawImage(spr, x - spr.ox, y - spr.oy);
@@ -220,12 +227,13 @@ export function drawTrail(ctx, cam, now) {
       }
       glows.push({ x, y: y - 6, r: 30 });
     } else if (it.k === 'horse') {
-      const spr = horseSprite(it.v ? '#e8dcc8' : '#8a5a34', it.v ? '#8a7a68' : '#3a2214', 1, null);
+      const spr = horseSprite(it.v ? '#e8dcc8' : '#8a5a34', it.v ? '#8a7a68' : '#3a2214', STAND, null);
       ctx.drawImage(spr, x - spr.ox, y - spr.oy);
     } else {
       const spr = small(it.k);
       ctx.drawImage(spr, x - spr.ox, y - spr.oy);
     }
   }
+  sd?.road(ctx, cam, now); // les croix de bois et les panneaux du chemin de la mission
   return glows;
 }

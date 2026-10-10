@@ -90,11 +90,12 @@ const GRIDS = {
     '........kbk.',
     '.........kk.',
   ],
+  // palissade et son drapeau, cerné comme celui de rts
   fort: [
-    '.......kRRk..',
+    '.......kkkk..',
     '.......kRRRk.',
-    '.......kRk...',
-    '.......k.....',
+    '.......kRRk..',
+    '.......kkk...',
     '.kk.kk.kk.kk.',
     'kBBkBBkBBkBBk',
     'kBBkBBkBBkBBk',
@@ -118,7 +119,7 @@ const GRIDS = {
   ],
   // wagonnet chargé d'or sur ses rails
   mine: [
-    '...kkYk.kk...',
+    '...kkkk.kk...',
     '..kyYyykYyk..',
     'kkkkkkkkkkkkk',
     'kGGGGGGGGGGGk',
@@ -200,6 +201,19 @@ const GRIDS = {
     'kyyyykyyok',
     'kooooooook',
     'kkkkkkkkkk',
+  ],
+  // la carte du territoire : un parchemin, la piste en pointillés et la croix du repaire
+  piste: [
+    '.kkkkkkkkkkk.',
+    'kPppppppppppk',
+    'kpppppppprprk',
+    'kpkpppppppRpk',
+    'kppkppppprprk',
+    'kpppkpkppppPk',
+    'kppppppkpppPk',
+    'kpppppppkpkPk',
+    'kPppppppppppk',
+    '.kkkkkkkkkkk.',
   ],
   // un poing bandé
   bagarre: [

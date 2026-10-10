@@ -7,7 +7,8 @@ import { canvasText } from './scene.js';
 import { sfx } from './audio.js';
 import { W, H, CUT_MS } from './worlds.js';
 import { desertOpts, Ambience } from './env.js';
-import { SKIN, CLOTH_COLORS } from './data.js';
+import { SKIN, CLOTH_COLORS, hatColorOf } from './data.js';
+import { revealText, wrap } from './uikit.js';
 
 export const CUT_FADE = 300; // fondu de sortie, pendant lequel le panneau des règles apparaît dessous
 const SHOT1 = 2000; // fin du plan d'ensemble
@@ -62,20 +63,26 @@ const flipX = (rects, dir) => (dir > 0 ? rects : rects.map(([dx, dy, w, h, c]) =
 // Petit boxeur de profil (cinématique de la bagarre), tourné vers dir ; punch : bras tendu
 function boxerSide(ctx, x, y, dir, trunks, punch) {
   const skin = '#d8a078';
+  // tête plus étroite que le torse, sur un cou : sinon tête et torse se fondent en un seul bloc de peau
   outlined(ctx, x, y, flipX([
     [-4, -12, 3, 12, skin], [1, -12, 3, 12, skin],
     [-5, -18, 10, 7, trunks],
     [-5, -30, 10, 12, skin],
-    [-4, -38, 8, 8, skin],
+    [-1, -32, 3, 2, skin],
+    [-3, -38, 7, 6, skin],
     punch ? [5, -30, 12, 3, skin] : [4, -31, 4, 6, skin],
     punch ? [16, -31, 4, 5, '#e8dcc0'] : [6, -34, 4, 4, '#e8dcc0'],
   ], dir));
+  // les cheveux et l'œil, tournés vers l'adversaire
+  R(ctx, x + (dir > 0 ? -3 : -4), y - 38, 7, 2, '#3a2416');
+  R(ctx, x + (dir > 0 ? -3 : 1), y - 36, 2, 2, '#3a2416'); // la nuque
+  R(ctx, x + (dir > 0 ? 2 : -3), y - 35, 1, 1, S.OUT);
 }
 
 // Silhouettes : couleurs de tenue et de chapeau d'un personnage de l'éditeur
 const looks = (c = {}) => ({
   coat: CLOTH_COLORS[c.outfitColor] ?? CLOTH_COLORS[2],
-  hat: CLOTH_COLORS[c.hatColor] ?? CLOTH_COLORS[1],
+  hat: hatColorOf(c), // (le chapeau de paille reste couleur paille, comme sur le buste)
   skin: SKIN[c.skin] || SKIN[1],
 });
 const crowdLook = (i) => ({
@@ -343,8 +350,11 @@ function saloonBar(ctx, el, players, o) {
     const bw = 112, bx0 = 30, by0 = 56;
     R(ctx, bx0 - 1, by0 - 1, bw + 2, 17, S.OUT); R(ctx, bx0, by0, bw, 15, CREAM);
     R(ctx, bx0 + 1, by0 + 14, bw - 2, 1, '#d8c8a0');
-    for (let k = 0; k < 9; k++) { R(ctx, 70 + k * 0.4 - 1, by0 + 15 + k, 4 - k * 0.35 + 2, 1, S.OUT); R(ctx, 70 + k * 0.4, by0 + 15 + k, Math.max(1, 4 - k * 0.35), 1, CREAM); }
-    canvasText(ctx, txt.slice(0, n), bx0 + 6, by0 + 4, { align: 'left', color: INK, shadow: '' });
+    for (let k = 0; k < 9; k++) { // la pointe de la bulle (largeurs entières : pas de bord flou)
+      const tx = Math.round(70 + k * 0.4), tw = Math.max(1, Math.round(4 - k * 0.35));
+      R(ctx, tx - 1, by0 + 15 + k, tw + 2, 1, S.OUT); R(ctx, tx, by0 + 15 + k, tw, 1, CREAM);
+    }
+    revealText(ctx, txt, bx0 + 6, by0 + 4, n, { color: INK, shadow: '' });
   }
   ctx.restore();
 }
@@ -522,7 +532,7 @@ const SHOTS = {
     cues: [[200, 'moo'], [900, 'rope'], [1500, 'moo']],
     draw(ctx, el, players) {
       for (let i = 0; i < 10; i++) {
-        const y = 136 + Math.round(hash(i + 3) * 60);
+        const y = 136 + Math.round(hash(i + 3) * 56);
         const x = -40 - hash(i) * 120 + el * (0.12 + hash(i + 9) * 0.05) + (i % 3) * 30;
         if (x > W + 30) continue;
         puffs(ctx, 3, 120, 360, (el % 360) + 360, () => ({ x: x - 10, y: y - 3 }), { vx: -0.02, vy: -0.01, r0: 2, col: '214,170,110', a0: 0.5 });
@@ -559,7 +569,7 @@ const SHOTS = {
         person(ctx, x, 172, look);
         // la main frémit au-dessus de l'étui
         const tw = el > 1300 && Math.floor(el / 110 + i) % 3 === 0 ? 1 : 0;
-        R(ctx, x + (i ? -6 : 5), 158 + tw, 2, 2, look.skin);
+        R(ctx, x + (i ? -7 : 5), 158 + tw, 2, 2, look.skin); // (symétriques : juste à côté du bras, de chaque côté)
       });
       const tx = -20 + (el / SHOT1) * (W + 40);
       S.tumbleweed(ctx, Math.round(tx), Math.round(176 - Math.abs(Math.sin(el / 160)) * 8), el);
@@ -579,7 +589,7 @@ const SHOTS = {
         const dir = hash(i + 40) < 0.5 ? -1 : 1;
         const v = 0.015 + hash(i + 50) * 0.02;
         const x = (((hash(i + 60) * (W + 40) + dir * el * v) % (W + 40)) + W + 40) % (W + 40) - 20;
-        person(ctx, x, 186 + Math.round(hash(i + 70) * 26), crowdLook(i), Math.floor(el / 160 + i));
+        person(ctx, x, 180 + Math.round(hash(i + 70) * 14), crowdLook(i), Math.floor(el / 160 + i)); // pieds au-dessus de la bande noire
       }
       const k = ease((el - 700) / 450);
       if (k <= 0) return;
@@ -627,7 +637,7 @@ const SHOTS = {
         if (el > at && el < at + 60) R(ctx, tx - 3, 105, 4, 2, '#fff070');
       }
       for (let i = 0; i < 3; i++) {
-        const rx = -30 + el * 0.06 - i * 34, ry = 196 + i * 6;
+        const rx = -30 + el * 0.06 - i * 34, ry = 180 + i * 6; // (au-dessus de la bande noire du bas, y = H - BAR)
         puffs(ctx, 3, 120, 360, (el % 360) + 360, () => ({ x: rx - 12, y: ry - 3 }), { vx: -0.02, vy: -0.012, r0: 3, col: '214,170,110', a0: 0.5 });
         horse(ctx, rx, ry, ['#5a3a20', '#3a2a22', '#a8703c'][i], el + i * 40, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 5));
       }
@@ -799,10 +809,10 @@ const SHOTS = {
         else outlined(ctx, x, y, [[0, -22, 5, 22, '#4a7a3a'], [-3, -15, 3, 2, '#4a7a3a'], [-3, -20, 2, 6, '#4a7a3a'], [5, -12, 3, 2, '#4a7a3a'], [6, -18, 2, 7, '#4a7a3a']]);
       }
       // les cavaliers, qui louvoient entre les obstacles
-      const nh = Math.max(4, players.length), gap = nh > 4 ? 11 : 16;
+      const nh = Math.max(4, players.length), gap = nh > 4 ? 8 : 12;
       for (let i = 0; i < nh; i++) {
         const x = -40 + el * (0.16 + hash(i + 3) * 0.03) - i * 22;
-        const y = 150 + i * gap + Math.sin(el / 260 + i * 1.7) * 7;
+        const y = 144 + i * gap + Math.round(Math.sin(el / 260 + i * 1.7) * 5); // le dernier reste au-dessus de la bande noire
         puffs(ctx, 3, 110, 330, (el % 330) + 330, () => ({ x: x - 12, y: y - 2 }), { vx: -0.03, vy: -0.01, r0: 2, col: '214,170,120', a0: 0.5 });
         horse(ctx, x, y, ROBES[i], el + i * 37, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 11));
       }
@@ -847,13 +857,58 @@ const SHOTS = {
     },
   },
 
+  // La piste : la bande galope vers la hacienda d'El Diablo, perchée sur sa mesa au bout du désert ; les vautours
+  // tournent au-dessus, un poteau indicateur montre le chemin au premier plan
+  piste: {
+    caption: 'SUR LA PISTE D\'EL DIABLO',
+    rumors: ['EL DIABLO A MIS VOS TÊTES À PRIX', 'SA HACIENDA EST AU BOUT DE LA PISTE', 'LE REPAIRE EST À DIX ÉTAPES'],
+    cues: [[150, 'neigh'], [500, 'hoof'], [800, 'hoof'], [1100, 'hoof'], [1450, 'laugh']],
+    draw(ctx, el, players) {
+      // la mesa et la hacienda, au loin
+      const mx = 262, my = 130;
+      outlined(ctx, mx, my, [[0, -26, 110, 26, '#9a4a2c'], [8, -32, 94, 6, '#b05a34'], [4, -26, 4, 26, '#7a3820']]);
+      R(ctx, mx + 10, my - 31, 90, 1, '#c87048');
+      outlined(ctx, mx + 22, my - 32, [[0, -14, 64, 14, '#d8b080'], [22, -22, 20, 8, '#d8b080'], [-2, -15, 68, 2, '#8a5a34']]);
+      for (const wx of [6, 18, 42, 54]) R(ctx, mx + 22 + wx, my - 42, 4, 5, '#2a1810');
+      R(ctx, mx + 50, my - 40, 6, 8, '#3a2014'); // le portail
+      // le drapeau d'El Diablo (une fourche noire sur fond rouge), qui claque au vent
+      R(ctx, mx + 54, my - 70, 1, 16, '#2a1810');
+      const fl = Math.floor(el / 140) % 2;
+      outlined(ctx, mx + 55, my - 70, [[0, 0, 9, 5, '#a8281c'], [9, fl, 2, 4, '#a8281c']]);
+      R(ctx, mx + 58, my - 69, 1, 3, '#1a0f0a'); R(ctx, mx + 57, my - 69, 3, 1, '#1a0f0a');
+      puffs(ctx, 4, 300, 1200, (el % 1200) + 1200, () => ({ x: mx + 30, y: my - 48 }), { vx: 0.008, vy: -0.02, r0: 1, grow: 0.004, col: '90,80,80', a0: 0.5 });
+      for (let k = 0; k < 3; k++) {
+        const a = el / 700 + k * 2.1;
+        S.vulture(ctx, Math.round(mx + 50 + Math.cos(a) * (22 + k * 6)), Math.round(my - 86 + Math.sin(a) * 6 - k * 5), el + k * 300);
+      }
+      // la piste
+      R(ctx, 0, 176, W, 10, '#d8b47a');
+      for (let x = (Math.floor(el * 0.2) % 14) - 14; x < W; x += 14) R(ctx, x, 181, 6, 1, '#c09a62');
+      // la bande au galop (un cavalier par joueur, six au plus), la poussière derrière
+      const n = Math.max(3, Math.min(6, players.length));
+      for (let i = n - 1; i >= 0; i--) {
+        const x = -30 + el * 0.13 - i * 26 + Math.sin(el / 300 + i) * 3, y = 183 + (i % 2) * 6;
+        puffs(ctx, 3, 110, 330, (el % 330) + 330, () => ({ x: x - 12, y: y - 2 }), { vx: -0.03, vy: -0.012, r0: 2, col: '214,170,110', a0: 0.55 });
+        horse(ctx, x, y, ROBES[i % ROBES.length], el + i * 47, 1, i < players.length ? looks(players[i].character) : crowdLook(i + 5));
+      }
+      // le poteau indicateur, au premier plan
+      const px = 34;
+      outlined(ctx, px, 200, [[0, -64, 4, 64, '#7a4a24']]);
+      outlined(ctx, px - 32, 140, [[0, 0, 70, 11, '#c8a070'], [70, 2, 4, 7, '#c8a070']]);
+      outlined(ctx, px - 32, 154, [[-4, 2, 4, 7, '#b08858'], [0, 0, 70, 11, '#b08858']]);
+      canvasText(ctx, 'REPAIRE', px + 2, 142, { color: '#5a2a14', shadow: '' });
+      canvasText(ctx, 'DUSTY GULCH', px + 2, 156, { color: '#4a2a14', shadow: '' });
+      S.tumbleweed(ctx, Math.round(W + 20 - el * 0.11), Math.round(196 - Math.abs(Math.sin(el / 150)) * 7), el);
+    },
+  },
+
   // Plan par défaut (jeu sans plan à lui) : les cavaliers des joueurs traversent le désert
   default: {
     caption: 'QUELQUE PART DANS L\'OUEST',
     rumors: ['EL DIABLO N\'EST JAMAIS BIEN LOIN', 'QUI GAGNE ICI AFFRONTERA EL DIABLO'],
     cues: [[200, 'neigh'], [1200, 'neigh']],
     draw(ctx, el, players) {
-      const gap = Math.min(14, 52 / Math.max(1, players.length - 1));
+      const gap = Math.min(14, 34 / Math.max(1, players.length - 1)); // le dernier au plus en y = 192, au-dessus de la bande noire
       players.forEach((p, i) => {
         const x = -30 + el * (0.17 - i * 0.012) - i * 26, y = 158 + Math.round(i * gap);
         puffs(ctx, 3, 120, 360, (el % 360) + 360, () => ({ x: x - 12, y: y - 3 }), { vx: -0.02, vy: -0.012, r0: 3, col: '214,170,110', a0: 0.5 });
@@ -917,7 +972,7 @@ export class Cutscene {
     R(ctx, 0, H - b, W, b, '#0a0503');
     if (el < this.s1 && this.caption) {
       const n = Math.floor(clamp01((el - 300) / 900) * this.caption.length);
-      if (n > 0) canvasText(ctx, this.caption.slice(0, n), 10, H - 15, { color: '#e2d2a6', align: 'left' });
+      revealText(ctx, this.caption, 10, H - 15, n, { color: '#e2d2a6' }); // un seul sprite de texte, découpé
     }
   }
 
@@ -1021,10 +1076,13 @@ export class Cutscene {
     ctx.drawImage(big, Math.round(W / 2 - (W * z) / 2), Math.round(py + 36 - 4 * z), Math.round(W * z), Math.round(40 * z));
     ctx.globalAlpha /= 0.4 + 0.6 * k;
     if (el > 250) {
-      R(ctx, px + 40, py + 72, pw - 80, 1, '#a08a60');
-      canvasText(ctx, this.sub.toUpperCase(), W / 2, py + 80, { color: '#4a2a14', shadow: '' });
+      // un sous-titre trop long pour l'affiche passe sur deux lignes, un peu plus haut
+      const sub = (this.subLines ||= wrap(this.sub.toUpperCase(), pw - 16));
+      const two = sub.length > 1;
+      R(ctx, px + 40, py + (two ? 68 : 72), pw - 80, 1, '#a08a60');
+      sub.slice(0, 2).forEach((l, i) => canvasText(ctx, l, W / 2, py + (two ? 73 + i * 10 : 80), { color: '#4a2a14', shadow: '' }));
     }
-    if (el > 450) canvasText(ctx, `${this.players.length} JOUEURS`, W / 2, py + 96, { color: '#8a6a48', shadow: '' });
+    if (el > 450) canvasText(ctx, `${this.players.length} JOUEUR${this.players.length > 1 ? 'S' : ''}`, W / 2, py + 96, { color: '#8a6a48', shadow: '' });
     // la rumeur, griffonnée à l'encre rouge au bas de l'affiche
     const kr = clamp01((el - 600) / 450);
     if (this.rumor && kr > 0) {

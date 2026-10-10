@@ -1,0 +1,68 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Icônes de la piste</title></head>
+<body style="margin:0;background:#241810;color:#fdf6e0;font:12px monospace">
+<div id="out" style="display:flex;flex-direction:column;gap:12px;padding:8px"></div>
+<pre id="errlog" style="color:#f66"></pre>
+<script type="module">
+// Planche des icônes d'objets de « La piste » (pisteicons.js), dans un canvas ×4 comme le jeu (setTransform(4)).
+// Chaque objet à ses tailles d'usage (8, 10, 12, 16, 24, 32 pixels du jeu), puis à 16 : de choix, de légende, grisé,
+// en silhouette. Sur fond sombre (bois) puis sur parchemin.
+// ?ids=revolver,arc : quelques objets ; &sizes=12,16 : les tailles ; &cols=4 : objets par rangée ; &bg=dark|parch ;
+// &z=2 : zoom d'affichage (pour regarder de près) ; &var=0 : sans les variantes.
+import { ITEM_IDS, drawItem, itemArt, GLINT_FRAMES } from './js/pisteicons.js';
+window.onerror = (m, s, l, c, e) => { document.getElementById('errlog').textContent += `${e?.stack || m}\n`; };
+const q = new URLSearchParams(location.search);
+const ids = q.get('ids') ? q.get('ids').split(',') : ITEM_IDS;
+const sizes = (q.get('sizes') || '8,10,12,16,24,32').split(',').map(Number);
+const cols = +(q.get('cols') || 3), z = +(q.get('z') || 1), withVar = q.get('var') !== '0';
+const bgs = q.get('bg') ? [q.get('bg')] : ['dark', 'parch'];
+const VARS = [{ q: 1 }, { q: 2 }, { off: true }, { mono: '#1a0f0a' }];
+const R = 4, GAP = 4, LABEL = 9;
+const cellW = sizes.reduce((a, s) => a + s + GAP, GAP) + (withVar ? VARS.length * (16 + GAP) + 4 : 0);
+const cellH = Math.max(...sizes, 16) + LABEL + GAP * 2;
+const t0 = performance.now();
+// &loupe=4 : chaque icône agrandie (un pixel fin = 4 pixels d'écran), pour juger le dessin de près
+if (q.get('loupe')) {
+  const m = +q.get('loupe'), out = document.getElementById('out');
+  out.style.cssText += ';flex-direction:row;flex-wrap:wrap;align-items:flex-start';
+  for (const id of ids) for (const s of sizes) {
+    const c = itemArt(id, s, q.get('q') ? { q: +q.get('q') } : {}), cv = out.appendChild(document.createElement('canvas'));
+    cv.width = c.width * m; cv.height = c.height * m;
+    cv.style.background = bgs[0] === 'parch' ? '#eadcb0' : '#2a1c12';
+    const g = cv.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.drawImage(c, 0, 0, cv.width, cv.height);
+  }
+  bgs.length = 0;
+}
+for (const bg of bgs) {
+  const rows = Math.ceil(ids.length / cols), W = cellW * cols, H = cellH * rows;
+  const cv = document.getElementById('out').appendChild(document.createElement('canvas'));
+  cv.width = W * R; cv.height = H * R;
+  cv.style.cssText = `width:${W * R * z}px;height:${H * R * z}px;image-rendering:pixelated`;
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = bg === 'dark' ? '#2a1c12' : '#eadcb0';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ids.forEach((id, n) => {
+    const ox = (n % cols) * cellW, oy = Math.floor(n / cols) * cellH;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = bg === 'dark' ? '#c8b48a' : '#5a3a22';
+    ctx.font = '22px monospace';
+    ctx.fillText(id, (ox + GAP) * R, (oy + LABEL - 1) * R);
+    ctx.setTransform(R, 0, 0, R, 0, 0);
+    // un léger cadre de cellule
+    ctx.fillStyle = bg === 'dark' ? 'rgba(255,240,200,0.04)' : 'rgba(90,58,34,0.07)';
+    ctx.fillRect(ox + 1, oy + 1, cellW - 2, cellH - 2);
+    let x = ox + GAP;
+    const base = oy + LABEL + GAP + Math.max(...sizes, 16) / 2;
+    for (const s of sizes) { drawItem(ctx, id, x + s / 2, base, s); x += s + GAP; }
+    if (withVar) {
+      x += 4;
+      for (const o of VARS) { drawItem(ctx, id, x + 8, base, 16, o); x += 16 + GAP; }
+    }
+  });
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+document.title += ` (${Math.round(performance.now() - t0)} ms)`;
+window.READY = true;
+</script></body></html>

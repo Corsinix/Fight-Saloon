@@ -159,6 +159,36 @@ TX_WALLS.puebloSign = (p, rand, c, v) => {
   txText(p.R, word, tx + 1, ty + 1, sh, s, 1); txText(p.R, word, tx, ty, ink, s, 1);
   for (const ox of [tx - 7, tx + tw + 6]) if (ox > 1 && ox < 62) { p.P(ox, ty + s * 2, '#c83a3a'); p.P(ox - 1, ty + s * 2 + 1, '#3a8a3a'); p.P(ox + 1, ty + s * 2 + 1, '#3a8a3a'); }
 };
+// bannière d'El Diablo pendue à l'acrotère (hacienda du mode histoire : fps.js haciendaLook ; v = variante du mur) :
+// noire bordée de rouge, crâne cornu d'os aux yeux rouges, queue d'aronde, tringle de fer et son ombre sur la chaux
+TX_WALLS.puebloDiablo = (p, rand, c, v) => {
+  TX_WALLS.puebloWhiteUp(p, rng(hash(`w:puebloWhiteUp:${v}`)), c, v);
+  const x0 = 20, x1 = 44, y0 = 9, y1 = 62, mid = 32;
+  const rows = [];
+  for (let y = y0; y <= y1; y++) {
+    const k = y - (y1 - 9); // la queue d'aronde : les 9 dernières lignes
+    if (k <= 0) rows.push([y, x0, x1]);
+    else { const g = Math.round((k * 12) / 9); rows.push([y, x0, mid - g], [y, mid + g, x1]); }
+  }
+  for (const [y, a, b] of rows) if (b > a) { p.R(a + 2, y + 2, b - a, 1, 'rgba(30,14,8,0.45)'); } // ombre portée
+  for (const [y, a, b] of rows) if (b > a) {
+    p.R(a, y, b - a, 1, '#1a0f0a');
+    if (b - a > 2) p.R(a + 1, y, b - a - 2, 1, '#9a2a1c');
+    if (b - a > 6) p.R(a + 3, y, b - a - 6, 1, (y - y0) % 11 < 1 ? '#141012' : '#1e1416');
+  }
+  p.R(x0 - 1, y0, x1 - x0 + 2, 1, '#1a0f0a'); p.R(x0 + 1, y0 + 1, x1 - x0 - 2, 1, '#c0392b');
+  // le crâne cornu
+  const bone = '#e8dcc0', bd = '#a89a80', sx = mid - 5, sy = 22;
+  p.R(sx, sy, 10, 8, bone); p.R(sx + 2, sy + 8, 6, 3, bone); p.R(sx + 8, sy + 1, 2, 7, bd);
+  p.R(sx - 3, sy - 2, 3, 2, bone); p.R(sx + 10, sy - 2, 3, 2, bone); p.R(sx - 4, sy - 5, 2, 3, bone); p.R(sx + 12, sy - 5, 2, 3, bone);
+  p.R(sx + 2, sy + 3, 2, 2, '#e02a1a'); p.R(sx + 6, sy + 3, 2, 2, '#e02a1a'); p.R(sx + 4, sy + 6, 2, 1, '#3a2420');
+  for (let k = 0; k < 3; k++) p.P(sx + 3 + k * 2, sy + 10, '#3a2420');
+  for (let k = 0; k < 3; k++) p.R(mid - 1, 38 + k * 6, 2, 2, '#9a2a1c'); // les gouttes rouges
+  // la tringle et ses deux crochets
+  p.R(x0 - 4, y0 - 2, x1 - x0 + 8, 2, '#2a2626'); p.R(x0 - 4, y0 - 2, x1 - x0 + 8, 1, '#6a625c');
+  p.R(x0 - 4, y0 - 4, 2, 4, '#2a2626'); p.R(x1 + 2, y0 - 4, 2, 4, '#2a2626');
+};
+TX_VARS.puebloDiablo = 4;
 TX_VARS.puebloWhite = 4; TX_VARS.puebloWhiteUp = 4; TX_VARS.puebloWhiteWin = 4; TX_VARS.puebloWhiteDoor = 4; TX_VARS.puebloWhiteIn = 4; TX_VARS.puebloWhiteInWin = 4;
 TX_VARS.puebloSign = 16;
 

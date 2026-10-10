@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="css/fonts.css"></head>
+<body style="margin:0;background:#000;color:#fff;font:12px monospace">
+<canvas id="game" width="384" height="216" style="display:none"></canvas><div id="touchpad"></div><div id="out"></div><pre id="errlog" style="color:#f66"></pre>
+<script type="module">
+// Banc d'essai des décors de la fusillade : images fixes à des instants donnés, sans jouer.
+// ?t=3000,36000 : temps de jeu en ms (gare 0-23000, abords 24000-56000, grand-rue 57000-108000, repaire 109000+) ;
+// un temps négatif = la cinématique d'ouverture (t=-1200 : el 1200). &seed=3 : même monde ; &variant=ranch : les abords ;
+// &lair=mine : le repaire ; &story={"env":"nuit"} (url-encodé) : l'ambiance ; &clean=0 : garder bandits et boss ; &z=2 : zoom.
+// Ex. : node tools/shot.mjs shooter-test.html "seed=3&t=-1200,12000,66000" shot.png 1600 500
+import { makeGame } from './js/games.js';
+import { ShooterScene } from './js/shooter.js';
+window.addEventListener('unhandledrejection', (e) => { document.getElementById('errlog').textContent += String(e.reason?.stack || e.reason); });
+window.onerror = (m, s, l, c, e) => { document.getElementById('errlog').textContent += String(e?.stack || m); };
+const q = new URLSearchParams(location.search);
+const variant = q.get('variant'), Z = +(q.get('z') || 2);
+const players = [{ key: 'me', name: 'Moi', character: {} }, { key: 'b1', name: 'B', bot: true, character: {} }];
+if (q.has('seed')) { const s0 = +q.get('seed'); Math.random = (() => { let s = s0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32); })(); }
+const g = makeGame('shooter', players, variant);
+const cv = document.getElementById('game');
+const scene = new ShooterScene(cv, { send() {}, live() {}, onState() {}, onEnd() {}, story: q.has('story') ? JSON.parse(q.get('story')) : null });
+for (const e of g.start()) { const { states, private: priv, ...rest } = e; scene.event({ ...rest, state: states[0] }); }
+await document.fonts.ready;
+await new Promise((r) => setTimeout(r, 1500));
+cancelAnimationFrame(scene.raf);
+if (q.get('clean') !== '0') { scene.world.targets.length = 0; }
+const out = document.getElementById('out');
+for (const T of (q.get('t') || '3000').split(',').map(Number)) {
+  if (T < 0) { // cinématique : -el
+    scene.cut?.draw?.(scene.ctx, -T, performance.now());
+  } else { scene.t0 = performance.now() - T; scene.render(scene.ctx); }
+  const c = document.createElement('canvas'); c.width = 384 * Z; c.height = 216 * Z; c.style.margin = '2px';
+  const x = c.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(cv, 0, 0, 384 * Z, 216 * Z);
+  out.appendChild(c);
+}
+</script></body></html>

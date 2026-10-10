@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc d'essai — mode histoire</title>
+<link rel="stylesheet" href="css/fonts.css">
+<style>
+  body { background: #120c08; color: #f6e7c1; font: 14px monospace; margin: 12px; }
+  canvas { image-rendering: pixelated; display: block; background: #000; }
+  .grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .grid figure { margin: 0; }
+  .grid figcaption { font-size: 12px; color: #b89a78; }
+  pre { white-space: pre-wrap; margin: 6px 0; }
+  #errlog { color: #f0705a; }
+  a { color: #f8d070; }
+</style>
+</head>
+<body>
+<!-- ?cut=id[&frames=0,1000,…][&z=3] cinématique (frames : planche de vignettes) · ?map=1[&act=2] carte · ?box=1 boîte de dialogue
+     ?music=id compile et joue un morceau (clic) · ?scene=1[&node=id&flags=a,b&players=3] aventure complète, hôte local
+     Liens : ?list=1 -->
+<div id="out"></div>
+<pre id="info"></pre>
+<pre id="errlog"></pre>
+<script type="module">
+const errlog = document.getElementById('errlog');
+const info = document.getElementById('info');
+const log = (m) => { errlog.textContent += `${m}\n`; };
+addEventListener('error', (e) => log(`${e.message} (${e.filename?.split('/').pop()}:${e.lineno})`));
+addEventListener('unhandledrejection', (e) => log(`${e.reason?.stack || e.reason}`));
+const q = new URLSearchParams(location.search);
+const out = document.getElementById('out');
+const W = 384, H = 216;
+const z = +(q.get('z') || 0);
+
+function canvas(scale) {
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  c.style.width = `${W * scale}px`; c.style.height = `${H * scale}px`;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  return [c, ctx];
+}
+
+async function fakePlayers(n) {
+  const { randomCharacter } = await import('./js/data.js');
+  const { PLAYER_COLORS } = await import('./js/worlds.js');
+  const names = ['Django', 'Calamity', 'Doc', 'Kid', 'Belle', 'Hank'];
+  let s = 7;
+  const R = Math.random;
+  Math.random = () => ((s = (s * 9301 + 49297) % 233280) / 233280); // personnages stables d'une capture à l'autre
+  const out = Array.from({ length: n }, (_, i) => ({ name: names[i], character: randomCharacter(), color: PLAYER_COLORS[i] }));
+  Math.random = R;
+  return out;
+}
+
+try {
+  await document.fonts.load('8px Silkscreen');
+  const players = await fakePlayers(+(q.get('players') || 3));
+  if (q.has('cut')) {
+    const { CUTS } = await import('./js/story/cuts.js');
+    const { CAST } = await import('./js/story/cast.js');
+    const { Stage } = await import('./js/story/stage.js');
+    const id = q.get('cut');
+    const cut = CUTS[id];
+    if (!cut) throw new Error(`cinématique inconnue : ${id} (connues : ${Object.keys(CUTS).join(', ')})`);
+    // &flags=rosa,otageJoe : drapeaux de l'aventure (acteurs et temps à condition) ; sans flags : tout le monde
+    const flags = q.has('flags') ? Object.fromEntries(q.get('flags').split(',').filter(Boolean).map((f) => [f, true])) : null;
+    const make = () => new Stage(cut, { players, me: 0, cast: CAST, silent: true, flags });
+    const st = make();
+    info.textContent = `${id} : ${st.len} ms`;
+    if (q.has('frames')) {
+      const ts = q.get('frames') === 'auto'
+        ? Array.from({ length: 12 }, (_, k) => Math.round((k * st.len) / 12) + 50)
+        : q.get('frames').split(',').map(Number);
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      out.appendChild(grid);
+      for (const t of ts) {
+        const s2 = make(); // une scène par vignette : l'état (caméra, acteurs) se recalcule depuis le temps
+        const [c, ctx] = canvas(z || 1);
+        // avance par petits pas jusqu'à t (effets qui dépendent des images précédentes)
+        for (let el = 0; el < t; el += 100) s2.draw(ctx, el, el);
+        s2.draw(ctx, t, t);
+        const f = document.createElement('figure');
+        f.appendChild(c);
+        f.insertAdjacentHTML('beforeend', `<figcaption>${t} ms</figcaption>`);
+        grid.appendChild(f);
+      }
+    } else {
+      const [c, ctx] = canvas(z || 3);
+      out.appendChild(c);
+      let t0 = performance.now(), s3 = st;
+      const loop = (now) => {
+        let el = now - t0;
+        if (el > s3.len + 800) { t0 = now; s3 = make(); el = 0; }
+        s3.draw(ctx, el, now);
+        requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    }
+  } else if (q.has('map')) {
+    const { CAMPAIGN } = await import('./js/story/campaign.js');
+    const { MapView, MAP_RES } = await import('./js/story/mapview.js');
+    const mv = new MapView(CAMPAIGN);
+    const act = +(q.get('act') || 4);
+    const nodes = {};
+    for (const [id, n] of Object.entries(CAMPAIGN.nodes)) nodes[id] = (n.act || 1) > act ? 'hidden' : (n.act || 1) < act ? 'done' : 'open';
+    const open = Object.keys(nodes).filter((id) => nodes[id] === 'open');
+    const done = Object.keys(nodes).filter((id) => nodes[id] === 'done');
+    const here = q.get('here') || done[done.length - 1] || open[0] || null, hover = q.get('hover') || open[1] || null;
+    const view = { act, nodes, here, hover, votes: open.slice(0, 2).map((node, i) => ({ node, color: players[i].color })), visited: done, route: here && hover ? mv.route(here, hover) : null, pawnLook: players[0].character };
+    const [c] = canvas(z || 3);
+    c.width = W * MAP_RES; c.height = H * MAP_RES; // la carte au pixel fin, comme dans le jeu
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.setTransform(MAP_RES, 0, 0, MAP_RES, 0, 0);
+    out.appendChild(c);
+    const loop = (now) => { mv.draw(ctx, now, view); requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+    c.onpointermove = (e) => {
+      const r = c.getBoundingClientRect();
+      view.hover = mv.hit(((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H, open);
+    };
+    info.textContent = `carte, acte ${act} : ${open.length} lieux ouverts`;
+  } else if (q.has('box')) {
+    const U = await import('./js/uikit.js');
+    const S = await import('./js/sprites.js');
+    const { CAST } = await import('./js/story/cast.js');
+    const [c, ctx] = canvas(z || 3);
+    out.appendChild(c);
+    const who = CAST[q.get('who') || 'rosa'];
+    const text = q.get('text') || 'Encore des étrangers… Vous tombez mal. El Diablo a envoyé Black Bart réclamer mon saloon, et je n’ai plus que mon fusil.';
+    const lines = U.wrap(text, 300);
+    const face = S.makeCanvas(36, 40);
+    face.getContext('2d').drawImage(S.characterSprite(who.look), 6, 2, 36, 40, 0, 0, 36, 40);
+    const t0 = performance.now();
+    const loop = (now) => {
+      S.drawDesert(ctx, 0, 0, W, H, {});
+      U.textBox(ctx, { name: who.short, color: who.color, portrait: face, lines, reveal: q.has("reveal") ? 9999 : (now - t0) / 30, more: true, t: now });
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  } else if (q.has('music')) {
+    const A = await import('./js/audio.js');
+    const M = await import('./js/story/music.js');
+    A.addSongs(M.SONGS, M.PLAYLISTS);
+    const ids = q.get('music') === 'all' ? Object.keys(M.SONGS) : [q.get('music')];
+    const rows = [];
+    for (const id of ids) {
+      try { const s = A.checkSong(id); rows.push(`${id} : OK « ${s.title} » ${s.total} pas, ${s.bpm} bpm`); } catch (e) { log(`${id} : ${e.message}`); }
+    }
+    info.textContent = rows.join('\n');
+    out.innerHTML = `<button id="play">Jouer ${ids[0]}</button>`;
+    document.getElementById('play').onclick = () => { A.initAudio(); A.playMusic(Object.keys(M.PLAYLISTS).find((p) => M.PLAYLISTS[p][0] === ids[0]) || 'menu', true); };
+  } else if (q.has('net')) {
+    // Côté hôte, de bout en bout : la vraie table (net.js) en solo, l'aventure (host.js), les vrais arbitres et leurs bots.
+    // Un joueur automatique se dit prêt et vote la première option ; il ne joue pas les épisodes (il les perd, ou les bots
+    // décident). Supabase est coupé (fetch refusé) : rien n'est écrit dans la base. ?net=N : nombre d'étapes à jouer.
+    const realFetch = window.fetch;
+    window.fetch = (u, o) => (String(u).includes('supabase') ? Promise.reject(new Error('Supabase coupé (banc d’essai)')) : realFetch(u, o));
+    const { Net } = await import('./js/net.js');
+    const client = await import('./js/story/client.js');
+    const net = new Net();
+    net.user = { key: 'testeur', name: 'Testeur' };
+    net.character = players[0].character;
+    const lines = [];
+    const say = (m) => { lines.push(m); info.textContent = lines.join('\n'); };
+    const maxSteps = +q.get('net') || 30;
+    let steps = 0, lastSeq = -1;
+    net.on('error', ({ text }) => { if (!/Patience|tour/.test(text)) say(`[erreur] ${text}`); });
+    // roulette (jeu au tour par tour, sans minuterie) : le joueur automatique tire sur l'adversaire quand c'est à lui
+    let rState = null;
+    net.on('events', ({ events }) => { for (const e of events) if (e.state && !e.state.kind) rState = e.state; });
+    setInterval(() => { if (rState && rState.phase === 'playing' && rState.turn === rState.me) net.send({ t: 'action', action: { kind: 'shoot', target: 'opp' } }); }, 1500);
+    net.on('lobby', ({ lobby }) => { if (lobby.story?.ep) say(`  épisode lancé : ${lobby.story.ep.ep} (${lobby.mode})`); });
+    net.on('events', ({ events }) => {
+      const end = events.find((e) => e.type === 'matchEnd');
+      if (end) say(`  fin de l'épisode : ${JSON.stringify({ winner: end.winner, ranking: end.ranking, winners: end.winners })}`);
+    });
+    net.on('story', ({ s }) => {
+      if (s.seq === lastSeq && s.wait.kind !== 'play') return;
+      lastSeq = s.seq;
+      const w = s.wait;
+      say(`#${s.seq} ${w.kind} ${w.kind === 'talk' ? `${w.lines.length} répliques (${w.lines[0].who})` : w.kind === 'map' ? w.nodes.join(',') : w.kind === 'choice' ? w.opts.map((o) => o.id).join('|') : w.ep || w.id || w.label || ''}${w.kind === 'result' ? ` → ${w.label}` : ''}`);
+      if (++steps > maxSteps || w.kind === 'end') { say(`fin du test (${steps} étapes)`); return; }
+      setTimeout(() => {
+        if (w.kind === 'map') net.send({ t: 'storyVote', seq: s.seq, id: w.nodes[w.nodes.length - 1] }); // le dernier : le saloon (lieu de passage) est souvent le premier
+        else if (w.kind === 'choice') net.send({ t: 'storyVote', seq: s.seq, id: w.opts[0].id });
+        else if (w.kind !== 'play') net.send({ t: 'storyReady', seq: s.seq });
+      }, 50);
+    });
+    const slot = client.newSlot('Les Testeurs', ['Testeur']);
+    await net.handle({ t: 'createStory', slot: slot.id });
+    setTimeout(() => {
+      const r = client.SAVE.loadSlot(slot.id);
+      say(`sauvegarde : ${r.ok ? `ok, lieu ${r.slot.state.here}, seq ${r.slot.state.seq}, ${r.slot.checkpoints.length} chapitre(s)` : r.why}`);
+    }, (+q.get('wait') || 200) * 1000);
+  } else if (q.has('sets')) {
+    // Planche des décors : chacun (ou ?sets=rue,mine) à une ou plusieurs ambiances (&env=midi,nuit), caméra à &cam=0..1
+    // de sa largeur, avec quelques personnages au sol (&actors=0 pour le décor seul) ; &fx=feu,fumee pour les effets.
+    const { SETS } = await import('./js/story/sets.js');
+    const { CAST } = await import('./js/story/cast.js');
+    const { Stage } = await import('./js/story/stage.js');
+    const ids = q.get('sets') === '1' || q.get('sets') === 'all' ? Object.keys(SETS).filter((id) => id !== 'noir') : q.get('sets').split(',');
+    const envs = (q.get('env') || 'midi').split(',');
+    const cams = (q.get('cam') || '0').split(',').map(Number);
+    const withActors = q.get('actors') !== '0';
+    const fx = (q.get('fx') || '').split(',').filter(Boolean);
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    out.appendChild(grid);
+    for (const id of ids) for (const env of envs) for (const k of cams) {
+      const w = Math.max(W, SETS[id]?.w || W);
+      const cam = Math.round((w - W) * k);
+      const actors = withActors ? { rosa: { cast: 'rosa', x: cam + 120, dir: 1 }, bart: { cast: 'bart', x: cam + 250, dir: -1 }, bande: { party: true, x: cam + 60 } } : {};
+      const st = new Stage({ set: id, env, bars: false, fx, cam, actors, beats: [{ ms: 5000 }] }, { players: players.slice(0, 2), me: 0, cast: CAST, silent: true });
+      const [c, ctx] = canvas(z || 1);
+      st.draw(ctx, 1200, 1200);
+      const f = document.createElement('figure');
+      f.appendChild(c);
+      f.insertAdjacentHTML('beforeend', `<figcaption>${id} · ${env}${cams.length > 1 ? ` · cam ${cam}` : ''}</figcaption>`);
+      grid.appendChild(f);
+    }
+    info.textContent = `${ids.length} décors`;
+  } else if (q.has('eps')) {
+    // Chaque épisode (et prime) lancé sur la vraie table (net.js, arbitres, bots) : sièges, rivaux, variante, départ.
+    // ?eps=1&humans=1 (nombre d'humains simulés à la table). Supabase coupé.
+    const realFetch = window.fetch;
+    window.fetch = (u, o) => (String(u).includes('supabase') ? Promise.reject(new Error('Supabase coupé')) : realFetch(u, o));
+    const { Net } = await import('./js/net.js');
+    const { StoryHost } = await import('./js/story/host.js');
+    const { DATA } = await import('./js/story/data.js');
+    const { MODES } = await import('./js/worlds.js');
+    const net = new Net();
+    net.user = { key: 'testeur', name: 'Testeur' };
+    net.character = players[0].character;
+    await net.createLobby(true, 'roulette', { story: true });
+    const l = net.hosting;
+    const nh = +(q.get('humans') || 1);
+    for (let i = 1; i < nh; i++) l.players.push({ key: `ami${i}`, name: `Ami${i}`, character: players[i % players.length].character, connected: true });
+    const host = new StoryHost(net, l, { slot: { id: 'test' }, state: (await import('./js/story/engine.js')).newRun(DATA) });
+    host.persist = () => {}; // rien à sauvegarder
+    l.story = host;
+    let started = null;
+    net.on('events', ({ events }) => { const s = events.find((e) => e.type === 'mgStart' || e.type === 'intro'); if (s) started = s; });
+    const rows = [];
+    const all = [...Object.entries(DATA.episodes), ...DATA.jobs.map((j) => [j.id, j])];
+    for (const [id, ep] of all) {
+      started = null;
+      const { players: ps, watchers } = host.seats(ep);
+      const M = MODES[ep.game];
+      const { DECOS } = await import('./js/story/decos/index.js');
+      const deco = ep.deco || DECOS[id] || null;
+      const ok = await net.playStory(l, ep.game, ps, deco?.variant ?? ep.variant ?? null, { ep: id, watchers, title: ep.title, caption: ep.caption, rumor: ep.rumor, env: ep.env, deco });
+      await new Promise((r) => setTimeout(r, 300));
+      const g = l.game;
+      const problems = [];
+      if (!ok) problems.push('arbitre non chargé');
+      if (!started) problems.push('pas de départ (mgStart)');
+      if (ps.length < M.min || ps.length > M.max) problems.push(`${ps.length} joueurs pour ${M.min}-${M.max}`);
+      const want = deco?.variant ?? ep.variant;
+      if (want && g?.variant !== undefined && g.variant !== want && !String(g.variant).startsWith(want)) problems.push(`variante ${g.variant} au lieu de ${want}`);
+      if (ep.seats?.mode === 'team') { const teams = ps.map((p, i) => `${i % 2}${p.bot ? 'b' : 'h'}`); if (ps.some((p, i) => !p.bot && i % 2)) problems.push(`humain dans l'équipe des rivaux (${teams})`); }
+      rows.push(`${problems.length ? '!!' : 'ok'} ${id.padEnd(22)} ${ep.game.padEnd(8)} ${String(ep.variant || '-').padEnd(9)} ${ps.length} joueurs : ${ps.map((p) => p.bot ? p.name : `[${p.name}]`).join(', ')}${watchers.length ? ` · spectateurs ${watchers.join(', ')}` : ''}${problems.length ? `  ← ${problems.join(' ; ')}` : ''}`);
+      clearInterval(l.miniTimer);
+      clearTimeout(l.botTimer);
+    }
+    info.textContent = rows.join('\n');
+  } else if (q.has('tour')) {
+    // Visite visuelle : une aventure jouée au hasard (graine), et le vrai écran de l'histoire rendu à chaque attente —
+    // chaque réplique (entièrement écrite), chaque choix, la carte, chaque résultat ; les cinématiques à 40 %.
+    // ?tour=1&seed=3&humans=2&strategy=random|win|lose&from=0&count=40 (planche paginée : count vignettes à partir de from)
+    const { StoryScene, DATA } = await import('./js/story/client.js');
+    const E = await import('./js/story/engine.js');
+    const seed = +(q.get('seed') || 1), nh = +(q.get('humans') || 1), strat = q.get('strategy') || 'random';
+    const from = +(q.get('from') || 0), count = +(q.get('count') || 40);
+    const humans = players.slice(0, nh).map((p, i) => ({ key: `p${i}`, name: p.name, character: p.character, bot: false }));
+    let sd = (seed * 2654435761) >>> 0;
+    const R = () => ((sd = (sd * 1103515245 + 12345) >>> 0) / 4294967296);
+    const env = { humans: nh, has: () => true };
+    // &node=lieu&flags=a,b : la visite commence à ce lieu, avec ces drapeaux
+    const st0 = E.newRun(DATA, { bande: 'Les Testeurs', seed });
+    for (const f of (q.get('flags') || '').split(',').filter(Boolean)) st0.flags[f] = true;
+    const n0 = q.get('node');
+    if (n0 && DATA.campaign.nodes[n0]) Object.assign(st0, { at: 'node', node: n0, here: n0, pc: 0, act: DATA.campaign.nodes[n0].act || 1, unlocked: [...st0.unlocked, n0] });
+    let res = E.next(st0, null, DATA, env);
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const scene = new StoryScene(cv, { me: 'p0', players: () => humans, isHost: () => true, music: () => {}, menu: () => {}, quit: () => {}, send: () => {} });
+    cancelAnimationFrame(scene.raf); // on dessine nous-mêmes, image par image
+    await scene.mods;
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    out.appendChild(grid);
+    let n = 0;
+    const snapFrame = (label) => {
+      if (n >= from && n < from + count) {
+        scene.frame(performance.now());
+        const [c, ctx] = canvas(z || 1);
+        ctx.drawImage(cv, 0, 0, W, H);
+        const f = document.createElement('figure');
+        f.appendChild(c);
+        f.insertAdjacentHTML('beforeend', `<figcaption>#${n} ${label}</figcaption>`);
+        grid.appendChild(f);
+      }
+      n++;
+    };
+    const settle = () => { const L = scene.local; L.t0 = -1e9; L.lineT0 = -1e9; L.cutT0 = performance.now() - 1e9; };
+    for (let step = 0; step < 900 && n < from + count; step++) {
+      const st = res.state, w = res.wait;
+      scene.update({ seq: st.seq, wait: w, ready: [], votes: {}, deadline: 0, chef: humans[0].name, snap: st });
+      if (scene.travel) scene.endTravel(); // pas de voyage animé dans la visite
+      const where = st.node || st.here || '';
+      let input = { type: 'next' };
+      if (w.kind === 'end') { settle(); snapFrame('fin'); break; }
+      if (w.kind === 'talk') {
+        w.lines.forEach((l, i) => { scene.local.li = i; settle(); snapFrame(`${where} · ${l.who}`); });
+      } else if (['cut', 'act', 'ending'].includes(w.kind)) {
+        settle();
+        const L = scene.local;
+        if (L.cuts?.length && scene.Stage) {
+          L.stageObj = scene.stage(L.cuts[0].cut);
+          L.cutT0 = performance.now() - (L.stageObj?.len || 0) * 0.4;
+        }
+        snapFrame(`${where} · ${w.kind} ${w.id || w.n || ''}`);
+      } else if (w.kind === 'choice') {
+        settle(); snapFrame(`${where} · choix`);
+        const pick = strat === 'first' ? w.opts[0] : w.opts[Math.floor(R() * w.opts.length)];
+        input = { type: 'choose', id: pick.id };
+      } else if (w.kind === 'map') {
+        settle(); scene.local.selected = w.nodes[0]; snapFrame('carte');
+        const fresh = w.nodes.filter((id) => !st.done[id]);
+        const list = fresh.length ? fresh : w.nodes;
+        input = { type: 'travel', node: list[Math.floor(R() * list.length)] };
+      } else if (w.kind === 'play') {
+        settle(); snapFrame(`${where} · épisode ${w.ep}`);
+        const ep = E.episodeOf(DATA, w.ep);
+        const labels = Object.keys(ep.results || { win: 1, lose: 1 });
+        input = { type: 'outcome', ep: w.ep, label: strat === 'win' ? (labels.includes('heros') ? 'heros' : 'win') : strat === 'lose' ? 'lose' : labels[Math.floor(R() * labels.length)] };
+      } else if (w.kind === 'result') { settle(); snapFrame(`${where} · résultat ${w.label}`); }
+      res = E.next(st, input, DATA, env);
+      if (!res.ok) { log(`entrée refusée ${JSON.stringify(input)}`); break; }
+    }
+    info.textContent = `visite graine ${seed}, ${nh} joueur(s) : vignettes ${from} à ${Math.min(n, from + count) - 1} (${n} au moins)`;
+  } else if (q.has('scene')) {
+    const { runLocal } = await import('./js/story/client.js');
+    const [c] = canvas(z || 3);
+    out.appendChild(c);
+    runLocal(c, { players, node: q.get('node'), map: q.has('atmap'), flags: (q.get('flags') || '').split(',').filter(Boolean) });
+  } else {
+    const { CUTS } = await import('./js/story/cuts.js');
+    out.innerHTML = `<p><a href="?map=1">Carte</a> · <a href="?box=1">Boîte de dialogue</a> · <a href="?music=all">Musiques</a> · <a href="?scene=1">Aventure (hôte local)</a></p>`
+      + `<p>Cinématiques : ${Object.keys(CUTS).map((id) => `<a href="?cut=${id}">${id}</a> (<a href="?cut=${id}&frames=auto">planche</a>)`).join(' · ')}</p>`;
+  }
+} catch (e) { log(e.stack || e.message); }
+</script>
+</body>
+</html>
