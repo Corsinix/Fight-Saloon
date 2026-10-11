@@ -1503,7 +1503,8 @@ export class Scene {
     // tenu : tremblement et souffle au pixel près ; il suit son buste (balancement, recul quand il est touché)
     const dx = hold ? Math.round(o.tremble + (o.sway?.[0] || 0) * 3) : 0;
     const dy = (hold ? Math.round((o.sway?.[1] || 0) * 2 + (o.breath || 0) * 2) : 0) + Math.round((oy - OPP_Y) * f.u) - (f.kick === 1 ? 2 : 0);
-    for (const w of img.wr) FX.oppLimb(ctx, oppShoulder(oy, w.s), { x: w.e.x, y: w.e.y + oy - OPP_Y }, { x: w.x + dx, y: w.y + dy, r: w.r }, sk, sl);
+    // (ses bras seulement s'il a des mains sur le fusil : rlart.js, RL_OPT)
+    if (RL.RL_OPT.hands) for (const w of img.wr) FX.oppLimb(ctx, oppShoulder(oy, w.s), { x: w.e.x, y: w.e.y + oy - OPP_Y }, { x: w.x + dx, y: w.y + dy, r: w.r }, sk, sl);
     ctx.drawImage(img, img.x + dx, img.y + dy);
     this.held = { muzzle: { x: img.muz[0] + dx, y: img.muz[1] + dy, r: self ? 2 : 4 }, port: { x: img.port[0] + dx, y: img.port[1] + dy } };
   }

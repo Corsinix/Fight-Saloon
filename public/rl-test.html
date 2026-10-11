@@ -6,6 +6,7 @@
 // Aperçu de ce que l'on tient à la roulette (outil de dev, non publié) : mes poings, mon fusil, mon derringer, et chez
 // l'adversaire ses poings, son fusil (prise, visée, tir, réarmement, contre lui) et son derringer, posés comme en jeu.
 //   rl-test.html?gun=pump&sawed=1&skin=2&cloth=0&z=2&only=opp
+//   &hands : remet les mains sur le fusil (et ses bras quand il le tient)
 //   &crop=x,y,w,h : seulement ce coin de l'écran
 //   &dump : repères de chaque image en texte
 //   capture : node tools/vmshot.mjs <fichier.png> "<requête>" 1600 1400 rl-test.html
@@ -18,6 +19,7 @@ const q = new URLSearchParams(location.search);
 const cr = (q.get('crop') || '0,0,384,216').split(',').map(Number);
 const gun = q.get('gun') || 'pump', sawed = q.has('sawed'), z = +(q.get('z') || 2), only = q.get('only');
 const sk = SKIN[+(q.get('skin') ?? 1)], cl = CLOTH_COLORS[+(q.get('cloth') ?? 2)], sl = { up: cl, fore: cl };
+RL.RL_OPT.hands = q.has('hands');
 const OPP_X = 144, OPP_Y = 40;
 const sh = (s) => ({ x: OPP_X + 2 * (s > 0 ? 37 : 11), y: OPP_Y + 90 });
 const bg = S.renderSaloon(), table = S.renderTable();
@@ -69,9 +71,9 @@ for (const mode of ['aim', 'self']) {
       if (f.u === 0) c.drawImage(S.gunSprite(sawed, 0, gun), 142, 156);
       const img = RL.rlOppGunView(gun, sawed, mode, f, sk);
       if (f.u === 0) {
-        [-1, 1].forEach((s) => FX.oppArm(c, sh(s), img.hc[s][0], img.hc[s][1], sk, sl, s));
+        if (RL.RL_OPT.hands) [-1, 1].forEach((s) => FX.oppArm(c, sh(s), img.hc[s][0], img.hc[s][1], sk, sl, s));
       } else {
-        for (const w of img.wr) FX.oppLimb(c, sh(w.s), w.e, w, sk, sl);
+        if (RL.RL_OPT.hands) for (const w of img.wr) FX.oppLimb(c, sh(w.s), w.e, w, sk, sl);
         c.drawImage(img, img.x, img.y);
       }
       c.fillStyle = '#0f0'; c.fillRect(Math.round(img.muz[0]), Math.round(img.muz[1]), 1, 1);

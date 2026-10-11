@@ -1,13 +1,13 @@
 // Ce que l'on tient à la roulette, en pixel art 2D : mes poings, mon fusil, mon derringer (vue subjective), et chez
 // l'adversaire ses poings, son fusil (pris, levé, braqué sur moi ou retourné contre lui) et son derringer.
-// Tout est dessiné au pixel près : les mains sont des grilles faites main (dos du poing, poing de face, main enroulée
-// sur la pompe, main à la poignée), le fusil un profil détaillé (comme celui posé sur la table, en plus fin). Le fusil
-// est tenu comme à Buckshot Roulette : de profil, une main à la poignée, l'autre enroulée sous la pompe ; incliné, le
-// tout (fusil et mains) est tourné d'un bloc à la manière de RotSprite (agrandi ×8 en Scale2x, tourné, réduit), qui
-// garde les traits nets. Braqué vers l'écran (sur moi, ou contre moi), le fusil est dessiné de face : la bouche, la
-// pompe, les poings serrés de chaque côté. Les miens sont en pixels doubles (plus près), les siens en pixels simples.
+// Le fusil est tenu comme à Buckshot Roulette : de profil, une main à la poignée, l'autre enroulée sous la pompe (en
+// 3/4 vers lui quand je tire, la crosse en bas à droite), ou de face quand il est braqué vers l'écran (contre moi, ou
+// sur moi) ; fusil et mains qui le tiennent sont dessinés en pixels fins à leur angle par rlgun.js. Les poings (dos du
+// poing pour les miens, de face pour les siens) et le derringer sont des grilles faites main ; le derringer incliné est
+// tourné à la manière de RotSprite (agrandi ×8 en Scale2x, tourné, réduit), qui garde les traits nets.
 // Chaque image est dessinée une fois (cache) ; scene.js la recopie, décalée au pixel près (montée, tremblement, recul).
-import { OUT, shade, makeCanvas, freeCanvas, lru, disc, gunEnd, GUNS, WOODS, METALS } from './sprites.js';
+import { OUT, shade, makeCanvas, freeCanvas, lru, disc, gunEnd, GUNS } from './sprites.js';
+import { sheet, gunMap, gunMapPersp, drawGun, drawMuzzles, foreHand, gripHand, forearm } from './rlgun.js';
 
 const rd = Math.round;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -119,13 +119,6 @@ function mirror(src) {
   x.translate(src.width, 0); x.scale(-1, 1); x.drawImage(src, 0, 0);
   return c;
 }
-// Quart de tour exact (dir 1 : sens horaire)
-function quarter(src, dir) {
-  const c = cv(src.height, src.width), x = ctxOf(c);
-  if (dir > 0) { x.translate(src.height, 0); x.rotate(Math.PI / 2); } else { x.translate(0, src.width); x.rotate(-Math.PI / 2); }
-  x.drawImage(src, 0, 0);
-  return c;
-}
 function fillPoly(x, pts, col) {
   const ys = pts.map((p) => p[1]), y0 = Math.floor(Math.min(...ys)), y1 = Math.ceil(Math.max(...ys));
   x.fillStyle = col;
@@ -192,21 +185,6 @@ const FIST_FRONT = [
   '.ddddddd.dd.',
 ];
 const FRONT_FINGERS = [[1, 2], [4, 5], [7, 8], [10, 11]];
-// Main enroulée sous la pompe, de profil (le fusil pointe à droite) : la paume dessous, les quatre doigts qui remontent
-// sur le flanc (l'auriculaire derrière, à gauche ; l'index devant), le poignet qui part en bas à gauche.
-const FORE = [
-  '........Ls..Ls.',
-  '....Ls..LsdkLsd',
-  '.Ls.LsdkLsdkLsd',
-  '.LskLsdkLsdkLsd',
-  '.LskLsdkLsdkLsd',
-  '.ddkdddkdddkddd',
-  'Lsssssssssssssd',
-  '.sssssssssssd..',
-  '.ssssssssd.....',
-  'Lsssssd........',
-];
-const FORE_WRIST = [3, 10];
 // Main à la poignée, de profil : le pouce par-dessus, le dos de la main sur la poignée, les doigts repliés dessous,
 // l'index tendu vers la détente, le poignet qui part en bas à gauche.
 const GRIP = [
@@ -228,7 +206,7 @@ function handSprite(kind, skin, o = {}) {
   const key = `${kind}|${skin}|${o.flip ? 1 : 0}|${o.lift ?? -1}`;
   let c = hands.get(key);
   if (c) return c;
-  let rows = { back: FIST_BACK, front: FIST_FRONT, fore: FORE, grip: GRIP }[kind];
+  let rows = { back: FIST_BACK, front: FIST_FRONT, grip: GRIP }[kind];
   if (kind === 'front' && o.lift >= 0) {
     // doigt levé : ses quatre lignes du haut remontent d'un pixel
     const [a, b] = FRONT_FINGERS[o.lift], R = ['.'.repeat(rows[0].length), ...rows];
@@ -237,93 +215,6 @@ function handSprite(kind, skin, o = {}) {
   c = grid(rows, skinPal(skin), o.flip);
   hands.set(key, c);
   return c;
-}
-
-// ------------------------------------------------------------------ fusil de profil (pixels simples)
-// Le fusil de la table (sprites.js : gunSprite) en plus fin : mêmes coordonnées (x de la crosse à la bouche, y vers le
-// bas, décalé de TOP), bois veiné, carcasse, canon et magasin éclairés par-dessus, pompe rainurée. pump : pompe tirée de
-// tant de px (levier ouvert, canons cassés) ; hd : chien(s) abattu(s). Renvoie le canvas et ses repères.
-const TOP = 3;
-const metalOf = (M) => ({ l: M.l, b: M.b, d: M.d, x: M.x || shade(M.d, -0.2) });
-function gunSide(kind, sawed, pump = 0, hd = false) {
-  const g = GUNS[kind] || GUNS.pump, Wd = WOODS[g.wood], M = metalOf(METALS[g.metal]), X = metalOf(METALS[g.recv]);
-  const end = gunEnd(sawed, kind), act = g.action, c = cv(end + 4, 26), x = ctxOf(c);
-  const R = (a, b, w, h, col) => { x.fillStyle = col; x.fillRect(a, b + TOP, w, h); };
-  const box = (a, b, w, h, col) => { R(a - 1, b - 1, w + 2, h + 2, OUT); R(a, b, w, h, col); };
-  // crosse : plaque de couche, bois qui s'affine, veines
-  for (let i = 1; i <= 30; i++) { const t = rd(8 - (2 * i) / 30), bt = rd(16 - (6 * i) / 30); R(i - 1, t - 1, 3, bt - t + 2, OUT); }
-  for (let i = 1; i <= 30; i++) {
-    const t = rd(8 - (2 * i) / 30), bt = rd(16 - (6 * i) / 30);
-    R(i, t, 1, bt - t, Wd.b); R(i, t, 1, 1, Wd.l); R(i, bt - 1, 1, 1, Wd.d);
-  }
-  for (let i = 5; i <= 26; i += 6) { R(i, 10 - rd(i / 15), 4, 1, Wd.d); R(i + 2, 12 - rd(i / 12), 3, 1, Wd.d); }
-  R(1, 8, 2, 8, Wd.dd); R(1, 8, 1, 8, '#2a1a10');
-  // poignée
-  box(28, 6, 8, 5, Wd.b); R(28, 6, 8, 1, Wd.l); R(28, 10, 8, 1, Wd.d);
-  // carcasse
-  box(34, 3, 16, 8, X.b); R(34, 3, 16, 1, X.l); R(49, 3, 1, 8, X.d); R(34, 10, 16, 1, X.d);
-  if (act === 'pump') { R(38, 5, 7, 3, OUT); R(39, 6, 5, 1, '#3a3e46'); }
-  R(36, 4, 1, 1, X.l); R(47, 8, 1, 1, X.d);
-  // chiens (deux-coups, levier)
-  if (act === 'double') for (const hx of [35, 39]) { const y = hd ? 1 : 0; R(hx - 1, y - 1, 4, 4 - y, OUT); R(hx, y, 2, 3 - y, M.d); R(hx, y, 1, 1, M.l); }
-  if (act === 'lever') { const y = hd ? 2 : 0; R(34, y, 4, 4 - y, OUT); R(35, y + 1, 2, 3 - y, M.d); R(35, y + 1, 1, 1, M.l); }
-  // pontet et détente, ou levier (ouvert au réarmement)
-  if (act === 'lever') {
-    const o = pump ? 3 : 0;
-    R(36 - o, 11 + o, 12, 1, OUT); R(36 - o, 11 + o, 1, 7, OUT); R(48 - o, 11 + o, 1, 4, OUT); R(36 - o, 17 + o, 8, 1, OUT); R(43 - o, 14 + o, 6, 1, OUT);
-    R(37 - o, 12 + o, 11, 1, X.b); R(37 - o, 12 + o, 1, 5, X.b); R(37 - o, 16 + o, 6, 1, X.b); R(42 - o, 15 + o, 1, 1, X.b);
-  } else {
-    R(37, 11, 8, 1, OUT); R(37, 11, 1, 4, OUT); R(44, 11, 1, 4, OUT); R(37, 14, 8, 1, OUT);
-    R(40, 11, 1, 3, M.b);
-  }
-  let muzY = 5.5;
-  if (act === 'double') {
-    // deux canons superposés (de profil, l'un sur l'autre) ; cassés, ils basculent autour de la charnière
-    const dy = (i) => (pump ? rd((i - 48) * 0.16) : 0);
-    for (let i = 48; i < end; i++) R(i, 2 + dy(i), 1, 9, OUT);
-    for (let i = 49; i < end - 1; i++) {
-      const y = 3 + dy(i);
-      R(i, y, 1, 1, M.l); R(i, y + 1, 1, 2, M.b); R(i, y + 3, 1, 1, OUT); R(i, y + 4, 1, 1, M.l); R(i, y + 5, 1, 1, M.b); R(i, y + 6, 1, 1, M.d);
-    }
-    // fût sous les canons
-    for (let i = 50; i < 64; i++) { R(i, 10 + dy(i), 1, 4, OUT); R(i, 10 + dy(i), 1, 3, Wd.b); R(i, 10 + dy(i), 1, 1, Wd.l); }
-    R(50, 10 + dy(50), 1, 3, Wd.d);
-    if (!sawed) R(end - 3, 1 + dy(end), 2, 1, '#e0b040');
-    muzY = 6.5 + dy(end);
-  } else {
-    // canon, puis magasin dessous
-    const thin = act === 'lever';
-    box(48, 4, end - 48, thin ? 2 : 3, M.b); R(48, 4, end - 48, 1, M.l); if (!thin) R(48, 6, end - 48, 1, M.d);
-    const me = (sawed ? end - 2 : end - 8) - (thin ? 4 : 0);
-    box(48, thin ? 7 : 8, me - 48, 2, M.d); R(48, thin ? 7 : 8, me - 48, 1, M.b);
-    if (!sawed) R(end - 2, 3, 2, 1, '#e0b040');
-    if (thin) muzY = 5;
-  }
-  // pompe (tirée vers la carcasse au réarmement) ou fût du levier
-  if (act === 'pump') {
-    const px = 58 - pump;
-    box(px, 7, 18, 5, Wd.b); R(px, 7, 18, 1, Wd.l); R(px, 11, 18, 1, Wd.d);
-    for (let i = px + 2; i < px + 17; i += 3) R(i, 8, 1, 3, Wd.d);
-  } else if (act === 'lever') { box(56, 7, 12, 4, Wd.b); R(56, 7, 12, 1, Wd.l); R(56, 10, 12, 1, Wd.d); }
-  const foreX = act === 'pump' ? 58 - pump : act === 'double' ? 51 : 55;
-  return { c, end, muz: [end + 0.5, muzY + TOP], port: [41, 6 + TOP], fore: [foreX, 7 + TOP], grip: [25, 3 + TOP] };
-}
-
-// Fusil tenu de profil : le fusil, la main enroulée sous la pompe (fore : où la poser, en px du fusil ; sinon la
-// pompe), la main à la poignée. Renvoie le canvas et les repères (bouche, fenêtre, poignets, milieu des mains).
-function heldSide(kind, sawed, skin, o = {}) {
-  const G = gunSide(kind, sawed, o.pump || 0, o.hd), x = ctxOf(G.c);
-  const grip = handSprite('grip', skin), fore = handSprite('fore', skin);
-  const gx = G.grip[0] - 1, gy = G.grip[1];
-  x.drawImage(grip, gx, gy);
-  const f = o.fore || [G.fore[0] + 1, G.fore[1] + 1];
-  const fx = f[0] - 1, fy = f[1] - 1;
-  x.drawImage(fore, fx, fy);
-  return {
-    c: G.c, muz: G.muz, port: G.port,
-    gripW: [gx + 1 + GRIP_WRIST[0], gy + 1 + GRIP_WRIST[1]], foreW: [fx + 1 + FORE_WRIST[0], fy + 1 + FORE_WRIST[1]],
-    gripC: [gx + 9, gy + 6], foreC: [fx + 8, fy + 5],
-  };
 }
 
 // ------------------------------------------------------------------ derringer de profil (pixels simples)
@@ -345,6 +236,9 @@ function derSide(hd = false) {
   R(8, 9, 1, 2, OUT);
   return { c, muz: [22.5, 3], grip: [3, 7] };
 }
+
+// Mains sur le fusil (et mes avant-bras) : retirées, le fusil se tient seul ; rl-test.html?hands les remet
+export const RL_OPT = { hands: false };
 
 // ------------------------------------------------------------------ caches
 const CACHE = lru(70), OCACHE = lru(170);
@@ -381,7 +275,7 @@ function myForearm(x, w, dir, skin, cloth, len = 70) {
 // ================================================================== moi (vue subjective, pixels doubles)
 // Les images de mes armes couvrent le bas de l'écran (384 × 130), posées en (RL_X, RL_Y) ; dessinées en demi-pixels.
 export const RL_X = 0, RL_Y = 86;
-const HW = 192, HH = 65;
+const HW = 192, HH = 65, VW = 384, VH = 130;
 const toScreen = (p) => [p[0] * 2 + RL_X, p[1] * 2 + RL_Y];
 
 // Mon poing pour les objets : le dos de la main, les jointures en haut (l'objet tenu se dessine dessous, il dépasse),
@@ -401,114 +295,74 @@ export function rlFist(side, skin, cloth, far = false) {
   });
 }
 
-// Fusil tenu de profil, retourné (la bouche à gauche : la crosse à mon épaule droite) et incliné vers lui ; mes
-// avant-bras qui sortent par le bas. Dessiné en demi-pixels : bouche en M, angle a (la bouche monte vers lui).
-function myHeld(H, M, a, skin, cloth, after) {
-  const c = cv(HW, HH), x = ctxOf(c);
-  const src = mirror(H.c), fl = (p) => [src.width - p[0], p[1]];
-  const r = rotate(src, a, ...fl(H.muz));
-  const m = r.map(...fl(H.muz)), ox = rd(M[0] - m[0]), oy = rd(M[1] - m[1]);
-  const at = (p) => { const q = r.map(...fl(p)); return [q[0] + ox, q[1] + oy]; };
-  // avant-bras d'abord : la main à la poignée vers le bas à droite, celle de la pompe vers le bas
-  myForearm(x, at(H.gripW), [0.3, 1], skin, cloth);
-  myForearm(x, at(H.foreW), [-0.1, 1], skin, cloth);
-  x.drawImage(r.c, ox, oy);
-  after?.(x, at);
-  if (r.c !== src) freeCanvas(r.c);
-  freeCanvas(src);
-  return { c, at };
-}
-// Mon fusil braqué sur lui : tenu de profil, incliné vers lui, la crosse en bas à droite. États : 'idle', 'fire' (0
-// éclair, 1 fumée), 'reload' (0, 1, 2 : pompe tirée, douille éjectée, pompe renvoyée ; levier ouvert ; canons cassés).
-// c.muz : la bouche sur l'écran.
-const ME_AIM = { muz: [104, 28], a: 0.42 };
+// Mon fusil braqué sur lui, en 3/4 : de profil (l'autre flanc : la bouche à gauche), la crosse qui sort en bas à
+// droite vers mon épaule, le canon qui monte vers lui ; main gauche enroulée sous la pompe, main droite à la poignée,
+// avant-bras qui sortent par le bas. États : 'idle', 'fire' (0 éclair, 1 fumée), 'reload' (0, 1, 2 : pompe tirée,
+// douille éjectée, pompe renvoyée ; levier ouvert ; canons cassés). c.muz : la bouche sur l'écran.
+const ME_AIM = { muz: [190, 130], a: 0.42, K: 2.4, th: 1.25 };
 export function rlGunView(kind, state, frame, skin, cloth, sawed = false) {
   return memo(CACHE, `gun|${kind}|${state}|${frame}|${skin}|${cloth}|${sawed ? 1 : 0}`, () => {
-    const g = GUNS[kind] || GUNS.pump, fired = state === 'fire';
-    const pump = state === 'reload' ? [6, 10, 4][frame] || 0 : 0;
-    const H = heldSide(kind, sawed, skin, { pump: g.action === 'double' ? (state === 'reload' ? 1 : 0) : pump, hd: fired });
-    const { c, at } = myHeld(H, ME_AIM.muz, ME_AIM.a, skin, cloth, (x, P) => {
-      const m = P(H.muz);
-      if (fired && frame === 0) flash(x, m[0] - 4, m[1] - 2, 9, 3);
-      if (fired && frame === 1) smoke(x, m[0] - 2, m[1] - 3, 3, 4, 0.8);
-      if (state === 'reload' && frame === 1) {
-        const p = P(H.port);
-        for (let i = 0; i < (g.action === 'double' ? 2 : 1); i++) shell(x, p[0] + 4 + i * 5, p[1] - 9 - i * 4, g.action === 'lever');
-      }
-    });
-    freeCanvas(H.c);
-    const out = scaleUp(c, 2);
-    freeCanvas(c);
-    out.muz = toScreen(at(H.muz));
-    return out;
+    const g = GUNS[kind] || GUNS.pump, fired = state === 'fire', act = state === 'reload' ? [0.6, 1, 0.35][frame] || 0 : 0;
+    const pump = g.action === 'pump' ? act * 9 : act;
+    const T = ME_AIM, a = Math.PI + T.a, end = gunEnd(sawed, kind);
+    const G0 = gunMap([0, 0], a, T.K, true, T.th), m0 = G0.P(end + 0.3, 5.6);
+    const G = gunMap([T.muz[0] - RL_X - m0[0], T.muz[1] - RL_Y - m0[1]], a, T.K, true, T.th);
+    const S = sheet(VW, VH);
+    // le bras droit passe sous la crosse ; le gauche vient d'en bas, sous la pompe
+    const hands = RL_OPT.hands;
+    if (hands) forearm(S, G.P(25.6, 13.4), [0.32, 1], T.K, skin, cloth);
+    const A = drawGun(S, G, kind, sawed, { pump, hd: fired, spent: frame === 1 });
+    const F = A.fore, FG = F.G || G;
+    if (hands) {
+      forearm(S, FG.P(F.u - 3.4, F.vb + 4.2), [-0.12, 1], T.K, skin, cloth);
+      foreHand(S, FG, skin, F.u, F.vt, F.vb);
+      gripHand(S, G, skin);
+    }
+    const m = A.muz;
+    if (fired && frame === 0) flash(S.ctx, m[0] - 8, m[1] - 4, 18, 3);
+    if (fired && frame === 1) smoke(S.ctx, m[0] - 3, m[1] - 6, 3, 5, 1.4);
+    if (state === 'reload' && frame === 1) for (let i = 0; i < (g.action === 'double' ? 2 : 1); i++) shell(S.ctx, A.port[0] + 6 + i * 10, A.port[1] - 22 - i * 8, g.action === 'lever', 2);
+    const c = S.done();
+    c.muz = [m[0] + RL_X, m[1] + RL_Y];
+    return c;
   });
 }
-// Cartouche en l'air (demi-pixels) : étui rouge (ou laiton), culot de laiton
-function shell(x, cx, cy, brass = false) {
-  const px = rd(cx), py = rd(cy);
-  x.fillStyle = OUT; x.fillRect(px - 1, py - 1, 4, 7);
-  x.fillStyle = brass ? BRASS.b : '#a8281c'; x.fillRect(px, py, 2, 4);
-  x.fillStyle = brass ? BRASS.l : '#d84a34'; x.fillRect(px, py, 1, 4);
-  x.fillStyle = BRASS.b; x.fillRect(px, py + 4, 2, 1);
+// Cartouche en l'air : étui rouge (ou laiton), culot de laiton ; k : taille du pixel
+function shell(x, cx, cy, brass = false, k = 1) {
+  const px = rd(cx), py = rd(cy), R = (a, b, w, h, col) => { x.fillStyle = col; x.fillRect(px + a * k, py + b * k, w * k, h * k); };
+  R(-1, -1, 4, 7, OUT);
+  R(0, 0, 2, 4, brass ? BRASS.b : '#a8281c'); R(0, 0, 1, 4, brass ? BRASS.l : '#d84a34');
+  R(0, 4, 2, 1, BRASS.b);
 }
 
-// Fusil de face (la bouche vers l'écran), autour de la bouche C ; r : rayon de la bouche (px de la feuille).
-// slide : pompe ramenée vers la carcasse (elle s'éloigne : remonte un peu) ; stock : direction de la carcasse et de
-// la crosse, loin derrière (vers le bas pour moi, vers son épaule pour lui). Renvoie le milieu et la taille de la pompe.
-function gunFront(x, kind, C, r, slide = 0, stock = [0, 1]) {
-  const g = GUNS[kind] || GUNS.pump, Wd = WOODS[g.wood], M = metalOf(METALS[g.metal]), X = metalOf(METALS[g.recv]);
-  const dbl = g.action === 'double', lever = g.action === 'lever';
-  const P = (dx, dy) => [rd(C[0] + dx * r), rd(C[1] + dy * r)];
-  const box = (p, w, h, col, l, d) => {
-    const a = rd(p[0] - w / 2), b = rd(p[1] - h / 2), W = rd(w), Hh = rd(h);
-    x.fillStyle = OUT; x.fillRect(a - 1, b - 1, W + 2, Hh + 2);
-    x.fillStyle = col; x.fillRect(a, b, W, Hh);
-    x.fillStyle = l; x.fillRect(a, b, W, 1); x.fillRect(a, b, 1, Hh);
-    x.fillStyle = d; x.fillRect(a, b + Hh - 1, W, 1); x.fillRect(a + W - 1, b, 1, Hh);
-  };
-  // crosse et carcasse, loin derrière
-  box(P(stock[0] * 3.6, stock[1] * 3.6), r * 1.3, r * 1.6, Wd.b, Wd.l, Wd.d);
-  box(P(stock[0] * 2.2, stock[1] * 2.2), r * 2, r * 1.5, X.b, X.l, X.d);
-  // pompe (ou fût) sous le canon, rainurée
-  const py = (dbl ? 1.55 : 1.7) - slide * 0.25, pw = r * (dbl ? 2.8 : 2.6), ph = r * (dbl ? 1.1 : 1.35);
-  box(P(0, py), pw, ph, Wd.b, Wd.l, Wd.d);
-  if (!dbl && !lever) { x.fillStyle = Wd.d; const p = P(0, py); for (let i = -2; i <= 2; i++) x.fillRect(rd(p[0] - pw / 2 + 2), p[1] + rd(i * r * 0.22), rd(pw - 4), 1); }
-  const ring = (p, rr, col) => {
-    disc(x, p[0], p[1], rd(rr) + 1, OUT);
-    disc(x, p[0], p[1], rd(rr), col.d);
-    disc(x, p[0] - 1, p[1] - 1, Math.max(1, rd(rr) - 1), col.b);
-    x.fillStyle = col.l; for (let a = 3.5; a < 4.8; a += 0.12) x.fillRect(rd(p[0] + Math.cos(a) * (rr - 1)), rd(p[1] + Math.sin(a) * (rr - 1)), 1, 1);
-  };
-  // bout du magasin, sous la bouche
-  if (!dbl) { const p = P(0, lever ? 1.25 : 1.15); ring(p, r * 0.42, M); disc(x, p[0], p[1], Math.max(1, rd(r * 0.16)), OUT); }
-  // bouche(s), l'âme noire
-  const bores = dbl ? [P(-0.9, 0), P(0.9, 0)] : [P(0, 0)], br = dbl ? r * 0.88 : lever ? r * 0.85 : r;
-  for (const p of bores) { ring(p, br, M); disc(x, p[0], p[1], rd(br * 0.62), BORE); disc(x, p[0] + 1, p[1] + 1, Math.max(1, rd(br * 0.32)), '#000000'); }
-  return { pump: P(0, py), pw, ph };
-}
-
-// Fusil retourné contre moi : la bouche juste sous mes yeux, vue de face, la pompe dessous, la carcasse et la crosse
-// loin derrière ; mes deux poings serrés de chaque côté (le gauche contre la pompe, le droit contre le canon), les
+// Fusil retourné contre moi : la bouche juste sous mes yeux, vue de face (l'anneau, l'âme noire, le magasin dessous),
+// et le fusil qui fuit derrière elle en perspective, en biais vers le bas à droite (le flanc, la pompe rainurée, la
+// carcasse, la crosse de plus en plus petites) ; ma main gauche enroulée sous la pompe, la droite à la poignée, les
 // avant-bras qui sortent par le bas. f : 0 tenu, 1 éclair, 2 fumée, 3, 4, 5 réarmement.
+const ME_SELF = { muz: [196, 130], a: -2.05, K: 2.4, tilt: 0.62, Zm: 3.4, Dm: 24, th: 1.15 };
+const boreV = (kind) => ({ double: 5.9, lever: 5.2 })[(GUNS[kind] || GUNS.pump).action] ?? 5.6;
 export function rlSelfView(kind, f, skin, cloth, sawed = false) {
   return memo(CACHE, `self|${kind}|${f}|${skin}|${cloth}|${sawed ? 1 : 0}`, () => {
-    const act = f >= 3 ? [0.6, 1, 0.35][f - 3] : 0, C = [98, 24];
-    const c = cv(HW, HH), x = ctxOf(c), r = sawed ? 5 : 6;
-    // poings serrés de chaque côté, jointures vers le fusil : le dos de la main tourné d'un quart de tour
-    const L = quarter(handSprite('back', skin, { flip: true }), 1), Rh = quarter(handSprite('back', skin), -1);
-    const pl = [rd(C[0] - r * 1.3 - L.width + 3), rd(C[1] + r * 1.1 + act * 2)], pr = [rd(C[0] + r * 1.15 - 2), C[1] + 1];
-    myForearm(x, [pl[0] + 3, pl[1] + L.height - 3], [-0.35, 1], skin, cloth);
-    myForearm(x, [pr[0] + Rh.width - 4, pr[1] + Rh.height - 3], [0.35, 1], skin, cloth);
-    gunFront(x, kind, C, r, act, [0, 1]);
-    x.drawImage(L, pl[0], pl[1]);
-    x.drawImage(Rh, pr[0], pr[1]);
-    freeCanvas(L); freeCanvas(Rh);
-    if (f === 1) flash(x, C[0], C[1] - 2, 15, 3);
-    if (f === 2) smoke(x, C[0], C[1] - 6, 3, 5, 0.9);
-    const out = scaleUp(c, 2);
-    freeCanvas(c);
-    out.muz = toScreen(C);
-    return out;
+    const g = GUNS[kind] || GUNS.pump, act = f >= 3 ? [0.6, 1, 0.35][f - 3] : 0, T = ME_SELF;
+    const end = gunEnd(sawed, kind), S = sheet(VW, VH);
+    // (on ne casse pas le deux-coups tourné vers soi)
+    const G = gunMapPersp([T.muz[0] - RL_X, T.muz[1] - RL_Y], T.a, T.K, { tilt: T.tilt, Zm: T.Zm, Dm: T.Dm, end, vm: boreV(kind), flip: true, th: T.th });
+    const hands = RL_OPT.hands;
+    if (hands) forearm(S, G.P(25.6, 13.4), [0.15, 1], T.K * G.z(26), skin, cloth);
+    // (la main à la poignée, loin derrière la bouche : dessinée avant le fusil, qui passe devant)
+    if (hands) gripHand(S, G, skin);
+    const A = drawGun(S, G, kind, sawed, { pump: g.action === 'pump' ? act * 9 : g.action === 'lever' ? act : 0, hd: f === 1, front: true });
+    if (hands) {
+      const F = A.fore;
+      forearm(S, G.P(F.u - 3.4, F.vb + 4.2), [-0.45, 1], T.K * G.z(F.u), skin, cloth);
+      foreHand(S, G, skin, F.u, F.vt, F.vb);
+    }
+    const m = drawMuzzles(S, G, kind, sawed);
+    if (f === 1) flash(S.ctx, m[0], m[1] - 3, 34, 3);
+    if (f === 2) smoke(S.ctx, m[0], m[1] - 12, 3, 5, 1.8);
+    const c = S.done();
+    c.muz = [m[0] + RL_X, m[1] + RL_Y];
+    return c;
   });
 }
 
@@ -596,12 +450,14 @@ export function rlOppFist(s, a, skin, lift = -1) {
 // le fusil posé).
 const GUN_REST = { x: 142, y: 156 };
 // poses de profil : le milieu de sa main à la poignée à l'écran, l'angle ; contre lui, la bouche sous son menton
-const OPP_SELF = { muz: [205, 116], a: -0.56 };
+const OPP_SELF = { muz: [205, 116], a: -0.56 }, OPP_K = 1.15;
+// braqué sur moi : en perspective, la bouche de face (gunMapPersp)
+const OPP_AIM = { a: -0.5, K: 1.15, tilt: 0.5, Zm: 3.4, Dm: 26, th: 1.1 };
 function oppSidePose(mode, u, end) {
-  const rest = { gx: GUN_REST.x + 33, gy: GUN_REST.y + 9, a: 0 };
+  const rest = { gx: GUN_REST.x + 31.5, gy: GUN_REST.y + 8.5, a: 0 };
   let hold;
   if (mode === 'self') {
-    const a = OPP_SELF.a, l = end - 33;
+    const a = OPP_SELF.a, l = (end - 31.5) * OPP_K;
     hold = { gx: OPP_SELF.muz[0] - Math.cos(a) * l, gy: OPP_SELF.muz[1] - Math.sin(a) * l, a };
   } else hold = { gx: 168, gy: 136, a: -0.3 };
   const e = sm(u);
@@ -621,48 +477,60 @@ export function rlOppGunView(kind, sawed, mode, f, skin) {
       return { x: lerp(e.x, k.x, hu), y: lerp(e.y, k.y, hu) };
     };
     if (u < AIM_FRONT || self) {
-      // de profil ; sa main gauche (à ma droite) sous la pompe, ou (contre lui) remontée serrer le canon sous la bouche
-      const end = gunEnd(sawed, kind), sl = self ? f.s ?? 0 : 1;
-      const pumpPx = g.action === 'double' ? (act > 0 ? 1 : 0) : rd(act * 9);
-      const G0 = gunSide(kind, sawed, pumpPx, f.hd);
-      const fore = [rd(lerp(end - 16, G0.fore[0] + 1, sl)), G0.fore[1] + 1 - rd((1 - sl) * 2)];
-      freeCanvas(G0.c);
-      const H = heldSide(kind, sawed, skin, { pump: pumpPx, hd: f.hd, fore });
-      const p = oppSidePose(mode, u, end), a = p.a - (self ? 0.1 : 0.2) * (f.kick || 0);
-      const r = rotate(H.c, a, ...H.gripC), gc = r.map(...H.gripC), ox = rd(p.gx - gc[0]), oy = rd(p.gy - gc[1]);
-      const at = (pt) => { const v = r.map(...pt); return [v[0] + ox, v[1] + oy]; };
-      const c = cv(r.c.width + 40, r.c.height + 40), x = ctxOf(c);
-      x.drawImage(r.c, 20, 20);
-      const m = at(H.muz);
-      if (f.fire === 0) flash(x, m[0] - ox + 20 + (self ? 1 : 3), m[1] - oy + 20, self ? 8 : 12, kind.length);
-      if (f.fire === 1) smoke(x, m[0] - ox + 20, m[1] - oy + 17, kind.length, 4, 0.8);
-      c.x = ox - 20; c.y = oy - 20;
-      const hc = { '-1': at(H.gripC), 1: at(H.foreC) };
-      c.muz = m; c.port = at(H.port); c.hc = hc;
-      c.wr = [{ s: -1, ...xy(at(H.gripW)), r: 2.2, e: elbow(-1, hc[-1]) }, { s: 1, ...xy(at(H.foreW)), r: 2.2, e: elbow(1, hc[1]) }];
-      if (r.c !== H.c) freeCanvas(r.c);
-      freeCanvas(H.c);
+      // de profil : le fusil dessiné à son angle ; sa main gauche (à ma droite) sous la pompe, ou (contre lui)
+      // remontée serrer le canon sous la bouche
+      const end = gunEnd(sawed, kind), p = oppSidePose(mode, u, end), a = p.a - (self ? 0.1 : 0.2) * (f.kick || 0);
+      const S = sheet(240, 150), O0 = [p.gx - 120, p.gy - 75];
+      const G1 = gunMap([0, 0], a, OPP_K, false, 1.15), g0 = G1.P(31.5, 8.5);
+      const G = gunMap([120 - g0[0], 75 - g0[1]], a, OPP_K, false, 1.15), L = (pt) => [pt[0] + O0[0], pt[1] + O0[1]];
+      const A = drawGun(S, G, kind, sawed, { pump: g.action === 'pump' ? act * 9 : act, hd: f.hd });
+      const F = A.fore, FG = F.G || G, sl = self ? f.s ?? 0 : 1, end2 = A.end;
+      const fu = lerp(end2 - 13, F.u, sl), fvt = lerp(3.4, F.vt, sl), fvb = lerp(10.4, F.vb, sl);
+      const FH = sl > 0.5 ? FG : G;
+      const fw = RL_OPT.hands ? foreHand(S, FH, skin, fu, fvt, fvb) : FH.P(fu - 3.4, fvb + 4.2);
+      const gw = RL_OPT.hands ? gripHand(S, G, skin) : G.P(25.6, 13.4);
+      const m = A.muz;
+      if (f.fire === 0) flash(S.ctx, m[0] + (self ? 1 : 3), m[1], self ? 8 : 12, kind.length);
+      if (f.fire === 1) smoke(S.ctx, m[0], m[1] - 3, kind.length, 4, 0.8);
+      const c = crop(S.done());
+      c.x += O0[0]; c.y += O0[1];
+      const hc = { '-1': L(A.grip), 1: L((sl > 0.5 ? FG : G).P(fu, (fvt + fvb) / 2)) };
+      c.muz = L(m); c.port = L(A.port); c.hc = hc;
+      c.wr = [{ s: -1, ...xy(L(gw)), r: 2.2, e: elbow(-1, hc[-1]) }, { s: 1, ...xy(L(fw)), r: 2.2, e: elbow(1, hc[1]) }];
       return c;
     }
-    // de face : la bouche vers moi, devant son menton ; la crosse vers son épaule droite (à ma gauche)
-    const k = sm((u - AIM_FRONT) / (1 - AIM_FRONT)), C = [rd(lerp(184, 192, k)), rd(lerp(124, 114, k)) - rd((f.kick || 0) * 3)];
-    const c = cv(80, 70), x = ctxOf(c), O = [C[0] - 40, C[1] - 30], L = (p) => [p[0] - O[0], p[1] - O[1]];
-    const front = gunFront(x, kind, L(C), 5, act, [-0.2, 0.85]);
-    // ses poings de face sous la pompe (sa main gauche, à ma droite) et à la poignée, plus bas à gauche
-    const hl = handSprite('front', skin), hr = handSprite('front', skin, { flip: true });
-    const pump = [front.pump[0] + O[0], front.pump[1] + O[1]];
-    const pl = [rd(pump[0] + front.pw / 2 - hl.width / 2 + 2), rd(pump[1] + front.ph / 2 - 2)];
-    const pg = [rd(C[0] - 9 - hr.width / 2), rd(C[1] + 13)];
-    x.drawImage(hr, pg[0] - O[0], pg[1] - O[1]);
-    x.drawImage(hl, pl[0] - O[0], pl[1] - O[1]);
-    if (f.fire === 0) flash(x, C[0] - O[0], C[1] - O[1], g.action === 'double' ? 18 : 15, kind.length);
-    if (f.fire === 1) smoke(x, C[0] - O[0], C[1] - O[1] - 4, kind.length);
-    c.x = O[0]; c.y = O[1];
-    const hc = { '-1': [pg[0] + hr.width / 2, pg[1] + hr.height / 2], 1: [pl[0] + hl.width / 2, pl[1] + hl.height / 2] };
-    c.muz = C; c.port = [C[0] - 6, C[1] + 10]; c.hc = hc;
-    c.wr = [-1, 1].map((s) => ({ s, x: hc[s][0], y: hc[s][1] - 2, r: 3, e: elbow(s, hc[s]) }));
+    // braqué sur moi : la bouche de face, devant son menton, et le fusil qui fuit derrière elle en perspective vers son
+    // épaule droite (à ma gauche) ; sa main gauche enroulée sous la pompe, la droite à la poignée
+    const k = sm((u - AIM_FRONT) / (1 - AIM_FRONT)), C = [lerp(186, 192, k), lerp(122, 113, k) - (f.kick || 0) * 3];
+    const T = OPP_AIM, end = gunEnd(sawed, kind), S = sheet(140, 100), O = [rd(C[0]) - 90, rd(C[1]) - 40];
+    const G = gunMapPersp([C[0] - O[0], C[1] - O[1]], T.a + (f.kick || 0) * 0.15, T.K, { tilt: T.tilt, Zm: lerp(1.6, T.Zm, k), Dm: T.Dm, end, vm: boreV(kind), th: T.th });
+    // (sa main à la poignée, loin derrière la bouche : dessinée avant le fusil, qui passe devant)
+    const gw = RL_OPT.hands ? gripHand(S, G, skin) : G.P(25.6, 13.4);
+    const A = drawGun(S, G, kind, sawed, { pump: g.action === 'pump' ? act * 9 : g.action === 'lever' ? act : 0, hd: f.hd, front: true });
+    const F = A.fore, L = (pt) => [pt[0] + O[0], pt[1] + O[1]];
+    const fw = RL_OPT.hands ? foreHand(S, G, skin, F.u, F.vt, F.vb) : G.P(F.u - 3.4, F.vb + 4.2);
+    const m = drawMuzzles(S, G, kind, sawed);
+    if (f.fire === 0) flash(S.ctx, m[0], m[1], g.action === 'double' ? 18 : 15, kind.length);
+    if (f.fire === 1) smoke(S.ctx, m[0], m[1] - 4, kind.length);
+    const c = crop(S.done());
+    c.x += O[0]; c.y += O[1];
+    const hc = { '-1': L(A.grip), 1: L(G.P(F.u, (F.vt + F.vb) / 2)) };
+    c.muz = L(m); c.port = L(A.port); c.hc = hc;
+    c.wr = [{ s: -1, ...xy(L(gw)), r: 2.2, e: elbow(-1, hc[-1]) }, { s: 1, ...xy(L(fw)), r: 2.2, e: elbow(1, hc[1]) }];
     return c;
   });
+}
+// Recadre un canvas sur ce qui est dessiné : c.x, c.y = décalage du coin gardé
+function crop(src) {
+  const w = src.width, h = src.height, d = ctxOf(src).getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) { x0 = y0 = x1 = y1 = 0; }
+  const c = cv(x1 - x0 + 1, y1 - y0 + 1);
+  ctxOf(c).drawImage(src, -x0, -y0);
+  freeCanvas(src);
+  c.x = x0; c.y = y0;
+  return c;
 }
 const xy = (p) => ({ x: p[0], y: p[1] });
 
