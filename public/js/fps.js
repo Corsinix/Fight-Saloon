@@ -612,9 +612,13 @@ export class FpsScene extends MiniScene {
 
   canSpawn() { return this.t >= 0 && this.t - this.my.deadAt >= FPS.respawn && this.playing; }
 
+  // avant le départ, le bouton PRÊT de l'armurerie est aussi le « prêt » de la table (miniscene.js, sendReady)
+  get readyOnClick() { return false; }
+
   ready() {
     if (!this.menu) return;
     this.menu.ready = true;
+    if (this.t < 0) this.sendReady();
     this.saveLoadout();
     sfx('reload');
     if (this.canSpawn()) this.requestSpawn();
@@ -709,7 +713,7 @@ export class FpsScene extends MiniScene {
     ctx.fillStyle = this.menu?.ready ? '#5a7a3a' : can ? '#a8302a' : '#4a3a30';
     ctx.fillRect(ox, oy, ow, oh);
     const wait = Math.max(0, Math.ceil((FPS.respawn - (this.t - this.my.deadAt)) / 1000));
-    const label = this.menu?.ready ? (t < 0 ? 'PRÊT ! ATTENDS LE SIGNAL' : 'EN ROUTE…') : wait > 0 && this.t >= 0 ? `ATTENDS ${wait} S` : this.touch ? 'PRÊT !' : 'PRÊT ! (ESPACE)';
+    const label = this.menu?.ready ? (t < 0 ? (this.startGate ? 'PRÊT ! ON ATTEND LES AUTRES' : 'C\'EST PARTI !') : 'EN ROUTE…') : wait > 0 && this.t >= 0 ? `ATTENDS ${wait} S` : this.touch ? 'PRÊT !' : 'PRÊT ! (ESPACE)';
     canvasText(ctx, label, ox + ow / 2, oy + 5, { color: '#fdf6e0' });
     if (t < 0) {
       // règles en couleur (ruletext.js), dans le cadre : sous le bouton PRÊT, au-dessus du bord du bas (L.y0 + 169)
@@ -717,8 +721,6 @@ export class FpsScene extends MiniScene {
       const lines = ruleLines(this.help(), maxW);
       const lh = lines.length > 3 ? 9 : 10;
       drawRuleLines(ctx, lines, W / 2, Math.max(L.ok[1] + L.ok[3] + 3, Math.min(L.y0 + 143, L.y0 + 169 - 11 - (lines.length - 1) * lh)), { lh, maxW });
-      const c = Math.ceil(-t / 1000);
-      if (c <= 3) canvasText(ctx, String(c), W - 30, 24, { size: 24, color: '#f0705a' });
     } else if (!dead) {
       const left = Math.max(0, Math.ceil((FPS.autoSpawn - (this.t - (this.menu?.openAt || 0))) / 1000));
       canvasText(ctx, `DÉPART AUTOMATIQUE DANS ${left} S`, W / 2, L.y0 + 146, { color: '#8a7a68' });

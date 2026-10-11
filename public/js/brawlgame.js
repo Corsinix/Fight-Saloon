@@ -31,6 +31,7 @@ export class BrawlGame {
     this.duration = this.cfg.duration;
     this.unit = this.cfg.unit; // unité du score (écran de fin, historique)
     this.countdown = brawlCountdown();
+    this.gateCfg = BR.gate; // départ quand tous ont cliqué « prêt » au choix du kit (net.js, holdGate)
     const n = players.length;
     // équipes tirées au hasard (en nombre impair, l'équipe la moins nombreuse a plus de PV et frappe plus fort)
     const team = players.map((_, i) => i);
@@ -97,6 +98,7 @@ export class BrawlGame {
   enemy(i, j) { return this.p[i].team !== this.p[j].team; }
   teamOf(i) { return this.p[i].team; }
   alivePl() { return this.p.filter((p) => p.alive && !p.left); }
+  gateReady(i) { return !!this.p[i].ready; }
 
   start() {
     this.startAt = Date.now() + this.countdown;
@@ -192,7 +194,8 @@ export class BrawlGame {
     Object.assign(p, cleanPick(a), { ready: !!a.ready });
     const humans = this.p.filter((q) => !q.bot && !q.left);
     let go;
-    if (humans.every((q) => q.ready) && t < -3200) {
+    // à une table, c'est la porte de départ de l'hôte (net.js) qui lance la partie ; ici, le banc d'essai
+    if (!this.startGate && humans.every((q) => q.ready) && t < -3200) {
       // le compte à rebours saute à 3 s
       this.startAt = Date.now() + 3000;
       go = 3000;

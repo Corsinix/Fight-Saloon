@@ -157,6 +157,7 @@ export class BrawlScene extends MiniScene {
   variantName() { return this.world ? mapName(this.world) : ''; }
   help() { return [this.cfg.goal]; }
   goText() { return this.sub === 'manches' ? 'MANCHE 1 !' : 'À VOUS !'; }
+  get readyOnClick() { return false; } // le « prêt » de la table, c'est le bouton JE SUIS PRÊT du choix du kit
   // la cinématique, puis le choix du kit (au lieu du panneau des règles)
   cutEl() {
     if (!this.cut || this.cutSkip || this.t0 == null || !this.pickT0) return null;
@@ -1890,8 +1891,9 @@ export class BrawlScene extends MiniScene {
     ctx.fillRect(0, 0, W, H);
     // mode, carte, compte à rebours
     canvasText(ctx, `${this.cfg.name} - ${mapName(this.world)}`, 6, 4, { color: '#f8d070', align: 'left' });
+    // pas de chrono tant que tous ne sont pas prêts (startGate) : ensuite, les 3 dernières secondes
     const left = Math.max(0, Math.ceil(-t / 1000));
-    canvasText(ctx, `${left}`, W - 6, 1, { size: 16, color: left <= 3 ? '#f05050' : '#f8e8c0', align: 'right' });
+    if (!this.startGate) canvasText(ctx, `${left}`, W - 6, 1, { size: 16, color: left <= 3 ? '#f05050' : '#f8e8c0', align: 'right' });
     // les kits
     const look = this.looks[this.me];
     for (const c of L.cards) {

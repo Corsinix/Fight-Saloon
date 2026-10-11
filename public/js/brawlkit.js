@@ -27,6 +27,7 @@ export const BR = {
   regenWait: 3000, regenRate: 0.13, // récupération : 13 % des PV par seconde, 3 s après le dernier coup donné ou reçu
   spawnShield: 1800,
   pick: 15000, // choix du kit (pendant le compte à rebours, après la cinématique)
+  gate: { at: -3300, go: 3000 }, // le choix dure tant que tous ne sont pas prêts, puis 3 s avant le départ (START_GATE)
   uses: 3, gadgetCd: 2500, // chaque objet sert 3 fois, 2,5 s entre deux objets
   power: { hp: 350, dmg: 0.1, max: 8 }, // fioles de poudre (chacun pour soi) : PV max et dégâts en plus, par fiole
   chestHp: 2600,

@@ -1,0 +1,142 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Roulette en main</title></head>
+<body style="margin:0;background:#111;color:#ccc;font:11px monospace">
+<div id="grid" style="display:flex;flex-wrap:wrap;gap:6px;padding:6px"></div>
+<pre id="errlog" style="color:#f66"></pre>
+<script type="module">
+// Aperçu de ce que l'on tient à la roulette (outil de dev, non publié) : mes poings, mon fusil, mon derringer, et chez
+// l'adversaire ses poings, son fusil (prise, visée, tir, réarmement, contre lui) et son derringer, posés comme en jeu.
+//   rl-test.html?gun=pump&sawed=1&skin=2&cloth=0&z=2&only=opp
+//   &crop=x,y,w,h : seulement ce coin de l'écran
+//   &dump : repères de chaque image en texte
+//   capture : node tools/vmshot.mjs <fichier.png> "<requête>" 1600 1400 rl-test.html
+import * as S from './js/sprites.js';
+import * as FX from './js/itemfx.js';
+import * as RL from './js/rlart.js';
+import { SKIN, CLOTH_COLORS } from './js/data.js';
+window.onerror = (m, s, l, c, e) => { (window.errs ||= []).push(String(e?.stack || m)); };
+const q = new URLSearchParams(location.search);
+const cr = (q.get('crop') || '0,0,384,216').split(',').map(Number);
+const gun = q.get('gun') || 'pump', sawed = q.has('sawed'), z = +(q.get('z') || 2), only = q.get('only');
+const sk = SKIN[+(q.get('skin') ?? 1)], cl = CLOTH_COLORS[+(q.get('cloth') ?? 2)], sl = { up: cl, fore: cl };
+const OPP_X = 144, OPP_Y = 40;
+const sh = (s) => ({ x: OPP_X + 2 * (s > 0 ? 37 : 11), y: OPP_Y + 90 });
+const bg = S.renderSaloon(), table = S.renderTable();
+const look = { skin: 1, outfitColor: 2 };
+const grid = document.getElementById('grid');
+function panel(label, draw, opp = true) {
+  const box = grid.appendChild(document.createElement('div'));
+  const k = box.appendChild(document.createElement('canvas'));
+  k.width = cr[2]; k.height = cr[3];
+  k.style.cssText = `width:${cr[2] * z}px;height:${cr[3] * z}px;image-rendering:pixelated;display:block`;
+  const full = document.createElement('canvas');
+  full.width = 384; full.height = 216;
+  const c = full.getContext('2d');
+  c.imageSmoothingEnabled = false;
+  c.drawImage(bg, 0, 0);
+  if (opp) c.drawImage(S.characterSprite(look, {}), OPP_X, OPP_Y, S.CHAR_W * 2, S.CHAR_H * 2);
+  c.drawImage(table, 0, 0);
+  try { draw(c); } catch (e) { (window.errs ||= []).push(`${label}: ${e.stack}`); }
+  k.getContext('2d').drawImage(full, -cr[0], -cr[1]);
+  box.appendChild(document.createElement('div')).textContent = label;
+}
+const want = (g) => !only || only.split(',').includes(g);
+if (want('hands')) {
+  panel('poings posés, pianote', (c) => {
+    FX.oppArm(c, sh(-1), 158, 137, sk, sl, -1);
+    FX.oppArm(c, sh(1), 226, 137, sk, sl, 1, null, 1);
+    const wl = FX.fpArm(c, 160, 184, sk, cl, -1, { cuff: true }), wr = FX.fpArm(c, 224, 184, sk, cl, 1, { cuff: true });
+    FX.chain(c, wl.x + 12, wl.y + 1, wr.x - 12, wr.y + 1, 3, true);
+  });
+  panel('bras levés, poing lointain', (c) => {
+    FX.oppArm(c, sh(1), 203, 104, sk, sl, 1, (x) => x.drawImage(S.itemIcon('beer'), 195, 92));
+    FX.oppArm(c, sh(-1), 150, 120, sk, sl, -1);
+    FX.fpArm(c, 210, 186, sk, cl, 1);
+    FX.fpArm(c, 160, 150, sk, cl, -1, { small: true });
+  });
+}
+const OPP_U = [0.15, 0.35, 0.55, 0.75, 0.9], OPP_SU = [1, 1, 1, 0.6, 0.25];
+function frames(self) {
+  const F = [{ u: 0, s: 1 }, { u: 1, s: 0 }, { u: 1, s: 0, fire: 0, kick: 1, hd: 1 }, { u: 1, s: 0, fire: 1, kick: 0.3, hd: 1 }];
+  OPP_U.forEach((u, i) => F.push({ u, s: self ? OPP_SU[i] : 1 }));
+  if (self) F.push({ u: 1, s: 0.5, hd: 1 });
+  for (const pump of [0.6, 1, 0.35]) F.push({ u: 1, s: 1, pump });
+  return F;
+}
+for (const mode of ['aim', 'self']) {
+  if (!want('opp')) break;
+  for (const f of frames(mode === 'self')) {
+    panel(`lui ${mode} ${JSON.stringify(f)}`, (c) => {
+      if (f.u === 0) c.drawImage(S.gunSprite(sawed, 0, gun), 142, 156);
+      const img = RL.rlOppGunView(gun, sawed, mode, f, sk);
+      if (f.u === 0) {
+        [-1, 1].forEach((s) => FX.oppArm(c, sh(s), img.hc[s][0], img.hc[s][1], sk, sl, s));
+      } else {
+        for (const w of img.wr) FX.oppLimb(c, sh(w.s), w.e, w, sk, sl);
+        c.drawImage(img, img.x, img.y);
+      }
+      c.fillStyle = '#0f0'; c.fillRect(Math.round(img.muz[0]), Math.round(img.muz[1]), 1, 1);
+      c.fillStyle = '#f0f'; c.fillRect(Math.round(img.port[0]), Math.round(img.port[1]), 1, 1);
+    });
+  }
+}
+if (want('oder')) for (const f of ['r0', 'r1', 'aim', 'fire0', 'fire1']) {
+  panel(`lui derringer ${f}`, (c) => {
+    const img = RL.rlOppDerringerView(f, sk), hx = 184, hy = 118, L = hx - img.ax, T = hy - img.ay, s = sh(-1);
+    FX.oppLimb(c, s, RL.rlOppElbow(s, { x: hx, y: hy }), { x: L + img.wx, y: T + img.wy, r: img.wr }, sk, sl);
+    c.drawImage(img, L, T);
+    c.fillStyle = '#0f0'; c.fillRect(L + img.mx, T + img.my, 1, 1);
+  });
+}
+if (want('me')) {
+  for (const [st, n] of [['idle', 1], ['fire', 2], ['reload', 3]]) for (let f = 0; f < n; f++) {
+    panel(`moi ${st} ${f}`, (c) => {
+      const img = RL.rlGunView(gun, st, f, sk, cl, sawed);
+      c.drawImage(img, RL.RL_X, RL.RL_Y);
+      c.fillStyle = '#0f0'; c.fillRect(Math.round(img.muz[0]), Math.round(img.muz[1]), 1, 1);
+    });
+  }
+  for (let f = 0; f < 6; f++) panel(`moi contre moi ${f}`, (c) => {
+    const img = RL.rlSelfView(gun, f, sk, cl, sawed);
+    c.drawImage(img, RL.RL_X, RL.RL_Y);
+    c.fillStyle = '#0f0'; c.fillRect(Math.round(img.muz[0]), Math.round(img.muz[1]), 1, 1);
+  });
+  for (const [st, f] of [['idle', 0], ['fire', 0], ['fire', 1]]) panel(`moi derringer ${st} ${f}`, (c) => {
+    const img = RL.rlDerringerView(st, f, sk, cl);
+    c.drawImage(img, RL.RL_X, RL.RL_Y);
+    c.fillStyle = '#0f0'; c.fillRect(Math.round(img.muz[0]), Math.round(img.muz[1]), 1, 1);
+  });
+}
+if (want('scene')) {
+  // les vraies méthodes de dessin de la table (scene.js), à quelques instants du tir
+  const { Scene } = await import('./js/scene.js');
+  const sc = new Scene(document.createElement('canvas'), {});
+  cancelAnimationFrame(sc.raf);
+  const ch = { skin: +(q.get('skin') ?? 1), outfitColor: +(q.get('cloth') ?? 2) };
+  sc.state = { me: 0, players: [{ character: ch, items: [] }, { character: ch, items: [] }], sawed, spent: [] };
+  sc.gun = gun;
+  const o = { tremble: 0, sway: [0, 0], breath: 0, Tb: 900, live: true, sawed };
+  for (const [mode, el] of [['oppAim', 60], ['oppAim', 300], ['oppAim', 700], ['oppAim', 930], ['oppAim', 1800], ['oppSelf', 700], ['oppSelf', 1750]]) {
+    panel(`scene ${mode} ${el}`, (c) => sc.drawOppGun(c, mode, el, o));
+  }
+  for (const [mode, x] of [['meAim', {}], ['meAim', { fire: 0, recoil: 1 }], ['meSelf', {}], ['meSelf', { rack: 1 }]]) {
+    panel(`scene ${mode} ${JSON.stringify(x)}`, (c) => sc.drawMyGun(c, mode, { tremble: 0, rise: 0, fire: -1, rack: -1, sawed, ...x }), false);
+  }
+  panel('scene mains', (c) => { sc.drawOppHands(c, ch, 0, 0, { cuff: { k: 1, bands: true } }); sc.drawMyCuffs(c, { rise: 1, k: 1, bands: true }, 0); });
+  sc.destroy();
+}
+if (q.has('dump')) {
+  // repères de chaque image (position, bouche, poignets…) en texte
+  const r = (v) => (Array.isArray(v) ? v.map(r) : typeof v === 'number' ? Math.round(v) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, r(x)])) : v);
+  const pick = (c) => r({ x: c.x, y: c.y, w: c.width, h: c.height, muz: c.muz, port: c.port, wr: c.wr, hc: c.hc, ax: c.ax, ay: c.ay, wx: c.wx, wy: c.wy, mx: c.mx, my: c.my });
+  const out = (window.errs ||= []);
+  for (const mode of ['aim', 'self']) for (const f of frames(mode === 'self')) out.push(`opp ${mode} ${JSON.stringify(f)} ${JSON.stringify(pick(RL.rlOppGunView(gun, sawed, mode, f, sk)))}`);
+  for (const f of ['r0', 'r1', 'aim', 'fire0', 'fire1']) out.push(`oder ${f} ${JSON.stringify(pick(RL.rlOppDerringerView(f, sk)))}`);
+  for (const a of [0, 4, 8, 12]) for (const s of [-1, 1]) out.push(`ofist ${s} ${a} ${JSON.stringify(pick(RL.rlOppFist(s, a, sk)))}`);
+  for (const [side, far] of [[1, false], [-1, false], [1, true]]) out.push(`fist ${side} ${far} ${JSON.stringify(pick(RL.rlFist(side, sk, cl, far)))}`);
+  for (const [st, f] of [['idle', 0], ['reload', 1]]) out.push(`gun ${st} ${f} ${JSON.stringify(pick(RL.rlGunView(gun, st, f, sk, cl, sawed)))}`);
+  out.push(`self ${JSON.stringify(pick(RL.rlSelfView(gun, 0, sk, cl, sawed)))}`);
+  out.push(`der ${JSON.stringify(pick(RL.rlDerringerView('idle', 0, sk, cl)))}`);
+}
+document.getElementById('errlog').textContent = (window.errs || []).join('\n');
+</script>
+</body></html>

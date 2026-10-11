@@ -9,7 +9,9 @@
 //   ITEM_IDS : la liste des objets dessinés ;
 //   itemArt(id, size, opts) : le canvas (size × F de côté), gardé en cache ; opts.q : 0, 1 (« de choix » : liseré et
 //     éclat bleus) ou 2 (« de légende » : liseré et éclat d'or, opts.f : image 0 à GLINT_FRAMES - 1 de l'éclat qui
-//     scintille) ; opts.off : grisé ; opts.mono : une seule couleur (silhouette) ;
+//     scintille) ; opts.off : grisé ; opts.mono : une seule couleur (silhouette) ; opts.tint : teinté d'une couleur
+//     (les ombres vers l'encre, les lumières vers le blanc : le modelé reste) ; opts.art : le dessin réduit même en
+//     tout petit (sans le signe fait main, pour comparer) ;
 //   drawItem(ctx, id, cx, cy, size, opts) : le pose centré en (cx, cy), sur un ctx en setTransform(F) ;
 //   hasItemArt(id).
 import * as S from './sprites.js';
@@ -22,6 +24,10 @@ const pack = (r, g, b, a = 255) => ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
 const hex = (h) => { const n = parseInt(h.replace('#', ''), 16); return pack(n >> 16, (n >> 8) & 255, n & 255); };
 const ramp = (s) => s.split(' ').map(hex);
 const scale = (p, k) => pack(Math.min(255, (p & 255) * k) | 0, Math.min(255, ((p >>> 8) & 255) * k) | 0, Math.min(255, ((p >>> 16) & 255) * k) | 0, p >>> 24);
+const blend = (p, q, t) => {
+  const c = (s) => { const a = (p >>> s) & 255; return (a + (((q >>> s) & 255) - a) * t) | 0; };
+  return pack(c(0), c(8), c(16));
+};
 const lum = (p) => ((p & 255) * 0.3 + ((p >>> 8) & 255) * 0.55 + ((p >>> 16) & 255) * 0.15) / 255;
 
 const OUT = hex('1a0f0a');
@@ -54,6 +60,8 @@ const PAL = {
   green: ramp('0e1c0a 182c12 24401c 34582a 487238 628e4c 82aa66 a8c88a'),
   dyn: ramp('2a0604 4e0c08 761810 a0241a c2382a da5238 ec7652 f6a080'),
   cream: ramp('5a4c3a 7c6c54 a08e72 c2b092 dccca8 eee2c2 faf4e0 fffdf4'),
+  skin: ramp('3a1c10 5a2e1a 7e4628 a2643a c08250 d8a06a eabf8c f6dcb4'),
+  felt: ramp('1c120c 2e2016 443222 5c4630 765c40 907452 aa8e68 c4aa84'),
 };
 const CREAM = hex('fdf6e0'), INK = hex('2a1a10'), BLACK = hex('0c0806');
 
@@ -89,6 +97,8 @@ const M = {
   green: mat(PAL.green, 0.5, 0.95, 0.2, 8),
   dyn: mat(PAL.dyn, 0.5, 1.0, 0.35, 10),
   cream: mat(PAL.cream, 0.55, 0.9, 0.3, 10),
+  skin: mat(PAL.skin, 0.55, 0.9, 0.25, 8),
+  felt: mat(PAL.felt, 0.48, 1.0, 0.2, 8),
 };
 
 // ------------------------------------------------------------ tramage et lumière
@@ -197,16 +207,25 @@ function frame(cx = 16, cy = 16, a = 0, sx = 1, sy = sx) {
 }
 const I = frame();
 // en petit, les objets longs et fins (fusils, couteau, longue-vue) sont épaissis en travers pour rester lisibles
-const thick = (D) => (D.lo ? 1.55 : D.A <= 24 ? 1.3 : 1);
+// (en grand aussi, un peu : des armes trapues, qui ont du corps, comme des objets de collection)
+const thick = (D) => (D.lo ? 1.55 : D.A <= 24 ? 1.3 : D.A < 96 ? 1.4 : 1.5);
 
 // ------------------------------------------------------------ la toile de l'icône
 class Art {
-  constructor(A) {
+  // z, ox, oy : un cadrage (agrandi z fois, le point (ox, oy) du modèle au coin haut gauche) : en petit, l'objet est
+  // recadré pour remplir sa case (voir base)
+  constructor(A, z = 1, ox = 0, oy = 0) {
     this.A = A; // côté en pixels d'art
-    this.s = A / 32; // pixels d'art par unité du modèle
+    this.s = (A / 32) * z; // pixels d'art par unité du modèle
+    this.ox = ox; this.oy = oy;
     this.px = new Uint32Array(A * A);
     this.dz = A >= 48 ? 1 : 0.45; // tramage plein en grand, discret en petit (plus net)
   }
+  // le point du modèle au centre du pixel d'art (X, Y), et l'inverse
+  mu(X) { return (X + 0.5) / this.s + this.ox; }
+  mv(Y) { return (Y + 0.5) / this.s + this.oy; }
+  pX(u) { return (u - this.ox) * this.s; }
+  pY(v) { return (v - this.oy) * this.s; }
   // la teinte d'une matière pour une normale (nx, ny, nz), un décalage de niveau add, au pixel (x, y)
   tone(m, nx, ny, nz, add, x, y) {
     const n = m.R.length - 1;
@@ -223,17 +242,17 @@ class Art {
   shape(f, sd, m, o = {}) {
     const { A, s, px } = this, ls = 1 / (s * f.sc), bw = o.bev || 0;
     const edge = o.edge === true ? m.R[0] : o.edge;
-    const at = (X, Y) => { const [u, v] = f.inv((X + 0.5) / s, (Y + 0.5) / s); return sd(u, v); };
+    const at = (X, Y) => { const [u, v] = f.inv(this.mu(X), this.mv(Y)); return sd(u, v); };
     const drop = o.drop ? Math.max(1, Math.round(o.drop)) : 0;
     // on parcourt la toile par blocs de 8 pixels, en sautant ceux que la forme ne peut pas toucher (sa distance au
     // centre du bloc dépasse le rayon du bloc, avec une marge pour les distances approchées et l'ombre portée)
     const B = 8, rad = ((B * 0.71 + 2 + drop) / (s * f.sc)) * 1.25 + 0.5;
     for (let by = 0; by < A; by += B) for (let bx = 0; bx < A; bx += B) {
-      const [cu, cv] = f.inv((bx + B / 2) / s, (by + B / 2) / s);
+      const [cu, cv] = f.inv(this.mu(bx + B / 2 - 0.5), this.mv(by + B / 2 - 0.5));
       if (sd(cu, cv) > rad) continue;
       for (let Y = by; Y < Math.min(A, by + B); Y++) for (let X = bx; X < Math.min(A, bx + B); X++) {
         const i = Y * A + X;
-        const [lx, ly] = f.inv((X + 0.5) / s, (Y + 0.5) / s), d = sd(lx, ly);
+        const [lx, ly] = f.inv(this.mu(X), this.mv(Y)), d = sd(lx, ly);
         if (d > 0) {
           if (drop && px[i] && d < (drop + 1.5) * ls && at(X - drop, Y - drop) <= 0) px[i] = scale(px[i], 0.62);
           continue;
@@ -278,7 +297,7 @@ class Art {
       const [x0, y0] = f.fwd(pts[i][0], pts[i][1]), [x1, y1] = f.fwd(pts[i + 1][0], pts[i + 1][1]);
       const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * s * 2) + 1;
       for (let k = 0; k <= n; k++) {
-        const X = Math.floor((x0 + ((x1 - x0) * k) / n) * s - (w - 1) / 2), Y = Math.floor((y0 + ((y1 - y0) * k) / n) * s - (w - 1) / 2);
+        const X = Math.floor(this.pX(x0 + ((x1 - x0) * k) / n) - (w - 1) / 2), Y = Math.floor(this.pY(y0 + ((y1 - y0) * k) / n) - (w - 1) / 2);
         const key = Y * A + X;
         if (key === last) continue;
         last = key;
@@ -287,15 +306,16 @@ class Art {
           if (xx < 0 || yy < 0 || xx >= A || yy >= A) continue;
           const ii = yy * A + xx;
           if (o.clip && !px[ii]) continue;
-          px[ii] = typeof c === 'function' ? c(xx, yy, px[ii]) : c;
+          const v = typeof c === 'function' ? c(xx, yy, px[ii]) : c;
+          if (v != null) px[ii] = v; // null : un trou du pointillé, on laisse ce qui est dessous
         }
       }
     }
   }
-  dot(f, x, y, c) { const [u, v] = f.fwd(x, y), X = Math.floor(u * this.s), Y = Math.floor(v * this.s); if (X >= 0 && Y >= 0 && X < this.A && Y < this.A) this.px[Y * this.A + X] = c; }
+  dot(f, x, y, c) { const [u, v] = f.fwd(x, y), X = Math.floor(this.pX(u)), Y = Math.floor(this.pY(v)); if (X >= 0 && Y >= 0 && X < this.A && Y < this.A) this.px[Y * this.A + X] = c; }
   // un éclat : une petite croix lumineuse (r pixels d'art), cœur blanc
   glint(f, x, y, r, c1 = hex('fffbe8'), c2 = hex('f8d878')) {
-    const [u, v] = f.fwd(x, y), X = Math.floor(u * this.s), Y = Math.floor(v * this.s), A = this.A;
+    const [u, v] = f.fwd(x, y), X = Math.floor(this.pX(u)), Y = Math.floor(this.pY(v)), A = this.A;
     const put = (xx, yy, c) => { if (xx >= 0 && yy >= 0 && xx < A && yy < A) this.px[yy * A + xx] = c; };
     for (let k = 1; k <= r; k++) { const c = k <= r / 2 ? c1 : c2; put(X + k, Y, c); put(X - k, Y, c); put(X, Y + k, c); put(X, Y - k, c); }
     if (r >= 3) { put(X + 1, Y + 1, c2); put(X - 1, Y - 1, c2); put(X + 1, Y - 1, c2); put(X - 1, Y + 1, c2); }
@@ -307,7 +327,7 @@ class Art {
     for (let Y = 0; Y < A; Y++) for (let X = 0; X < A; X++) {
       const i = Y * A + X;
       if (!px[i]) continue;
-      const [u, v] = f.inv((X + 0.5) / s, (Y + 0.5) / s);
+      const [u, v] = f.inv(this.mu(X), this.mv(Y));
       if (sd(u, v) <= 0) px[i] = scale(px[i], k);
     }
   }
@@ -315,7 +335,7 @@ class Art {
   erase(f, sd) {
     const { A, s, px } = this;
     for (let Y = 0; Y < A; Y++) for (let X = 0; X < A; X++) {
-      const [u, v] = f.inv((X + 0.5) / s, (Y + 0.5) / s);
+      const [u, v] = f.inv(this.mu(X), this.mv(Y));
       if (sd(u, v) <= 0) px[Y * A + X] = 0;
     }
   }
@@ -561,14 +581,15 @@ const ART = {
 
   // arc amérindien bandé, la flèche encochée, pointée vers le haut à droite
   arc(g, D) {
-    const f = D.lo ? frame(16.6, 16, 0, 1) : frame(16.6, 15.4, -Math.PI / 4, 1);
+    const f = frame(16.6, 15.4, -Math.PI / 4, 1, D.lo ? 1.08 : 1);
     // la corde tirée en V jusqu'à l'encoche
     const sc = hex('efe4c6');
-    g.line(f, D.lo ? [[19.6, 2.8], [19.6, 29.2]] : [[19.6, 2.8], [9.2, 16], [19.6, 29.2]], sc);
+    g.line(f, [[19.6, 2.8], [9.2, 16], [19.6, 29.2]], sc);
     arrow(g, D, f, 8.6, 27.4, 16);
     // les branches de l'arc (un peu réflexes), plus fines aux bouts
-    const limb = sTube([[19.2, 2.6], [21.4, 4.6], [23.4, 9], [24.6, 13.6], [24.8, 16]], D.lo ? 0.9 : 0.65, D.lo ? 1.5 : 1.35);
-    const limb2 = sTube([[24.8, 16], [24.6, 18.4], [23.4, 23], [21.4, 27.4], [19.2, 29.4]], D.lo ? 1.5 : 1.35, D.lo ? 0.9 : 0.65);
+    const t0 = D.lo ? 0.9 : D.hi ? 1 : 0.65, t1 = D.lo ? 1.5 : D.hi ? 2 : 1.35;
+    const limb = sTube([[19.2, 2.6], [21.4, 4.6], [23.4, 9], [24.6, 13.6], [24.8, 16]], t0, t1);
+    const limb2 = sTube([[24.8, 16], [24.6, 18.4], [23.4, 23], [21.4, 27.4], [19.2, 29.4]], t1, t0);
     g.shape(f, U(limb, limb2), M.wood, { bev: 1.4, edge: D.lo ? undefined : true, add: 0.6 });
     // la poignée gainée de cuir rouge, les ligatures de tendon aux bouts
     g.shape(f, sBox(24.9, 16, 1.7, 2.6, 0.8), M.redm, { bev: 1.6, edge: D.lo ? undefined : true });
@@ -710,7 +731,16 @@ const ART = {
 
   // rouleau de bandages : le rouleau couché, sa tranche en spirale, la bande qui se déroule en ruban
   bandages(g, D) {
-    const f = D.lo ? frame(17, 15.4, 0, 1.16) : I, cl = M.cloth;
+    if (D.lo) {
+      const f = I, cl = M.cloth;
+      g.shape(f, sPoly([[5.4, 17], [13, 17], [12.2, 29.6], [4.6, 28.4]]), cl, { bev: 1.4, add: -0.7 });
+      cyl(g, f, 13.6, 13.6, 10, 7.2, cl, { rr: 2.4, add: 0.2 });
+      g.shape(f, sEll(23.6, 13.6, 3.6, 7.2), cl, { bev: 1.6, add: 1.2 });
+      g.shape(f, sEll(24, 13.6, 1.3, 2.4), cl, { col: PAL.cloth[1] });
+      g.shape(f, U(sBox(12.4, 13.6, 3.8, 1.4, 0.1), sBox(12.4, 13.6, 1.4, 3.8, 0.1)), M.red, { clip: true, add: 0.4 });
+      return;
+    }
+    const f = I, cl = M.cloth;
     const weave = (x, y, X, Y) => (D.hi && ((X % 3 === 0) || (Y % 3 === 0)) ? -0.3 : 0);
     // la bande déroulée : un ruban qui ondule vers le bas, de plus en plus étroit, effiloché au bout
     const c = D.lo ? [[13.4, 19.4], [14.6, 24.4], [12.4, 28.6]] : [[13.4, 19.4], [15.2, 24.4], [19.6, 27], [24.6, 26.2], [28.6, 27.6]], w = D.lo ? [4.4, 4, 3.6] : [4.4, 4, 3.4, 2.8, 2.5];
@@ -791,7 +821,7 @@ const ART = {
     g.shape(f, sEll(10.8, 17.5, 4.5, 1.2), M.bag, { add: -0.6, tex: (x, y) => (x < 9.4 && y < 17.4 ? 3 : 0) });
     g.shape(f, U(sTube([[13.6, 18.4], [13.8, 21.4]], 0.55, 0.75)), M.bag, { bev: 0.6, add: 0.4 });
     // deux rivets à tête ronde
-    for (const [x, y] of [[23.6, 25.2], [28, 21.4]]) {
+    if (!D.lo) for (const [x, y] of [[23.6, 25.2], [28, 21.4]]) {
       g.shape(f, sBox(x, y + 2, D.lo ? 0.75 : 0.6, 2.2, 0.3), M.iron, { bev: 0.5 });
       g.ball(f, x, y, 2, 1.4, M.iron, { add: 0.6 });
     }
@@ -823,7 +853,7 @@ const ART = {
   fer(g, D) {
     const f = I, cy = 17.6;
     const shoe = X(Sub(sEll(16, cy, 12, 12), sEll(16, cy - 0.4, 6.6, 7.6), sBox(16, 4, 3.6, 8)), (x, y) => 8.4 - y);
-    g.shape(f, shoe, M.iron, { bev: 3, edge: D.lo ? undefined : true, drop: D.hi ? 1 : 0, add: 0.4 });
+    g.shape(f, shoe, M.iron, { bev: 3, edge: D.lo ? undefined : true, drop: D.hi ? 1 : 0, add: D.hi ? 0.8 : 1.6 });
     // la rainure et les trous de clous
     if (!D.lo) {
       g.line(f, arcPts(16, cy - 0.2, 9.3, 9.8, -1.08, Math.PI + 1.08, 40), (X, Y, p) => scale(p, 0.6), { clip: true });
@@ -1047,7 +1077,7 @@ const ART = {
     const f = I;
     for (const [x, y] of [[22.6, 7.6], [28, 16], [22.6, 24.4]]) {
       const trail = sPoly([[x - 1.2, y - 1.3], [x - 1.2, y + 1.3], [x - 17, y + 0.2], [x - 17, y - 0.2]]);
-      g.shape(f, trail, M.fire, { add: 1, g: [0.12, 0], holes: (X, Y) => { const t = ((X + 0.5) / g.s - (x - 17)) / 16; return bay(X, Y) > t * 1.3; } });
+      g.shape(f, trail, M.fire, { add: 1, g: [0.12, 0], holes: (X, Y) => { const t = (g.mu(X) - (x - 17)) / 16; return bay(X, Y) > t * 1.3; } });
       g.shape(f, U(sEll(x + 0.4, y, 2.8, 1.45), sBox(x - 1.2, y, 1.4, 1.45, 0.2)), M.copper, { edge: D.lo ? undefined : true, nrm: (px, py) => { const t = clamp((py - y) / 1.7, -0.95, 0.95); return [0, t, Math.sqrt(1 - t * t)]; } });
     }
   },
@@ -1057,7 +1087,7 @@ const ART = {
     const f = frame(16, 16, -0.42);
     // le cône de fumée et de plombs, tramé de plus en plus clair
     const cone = X(sCirc(7, 16, 26), sHalf(7, 16, 31, 6.4), sHalf(31, 25.6, 7, 16));
-    g.shape(f, cone, M.sand, { add: 2, holes: (X, Y) => { const [u] = f.inv((X + 0.5) / g.s, (Y + 0.5) / g.s); return bay(X, Y) > 0.75 - (u - 7) / 32; } });
+    g.shape(f, cone, M.sand, { add: 2, holes: (X, Y) => { const [u] = f.inv(g.mu(X), g.mv(Y)); return bay(X, Y) > 0.75 - (u - 7) / 32; } });
     g.shape(f, sPoly([[7.4, 16], [14.6, 11.2], [12.6, 16], [14.6, 20.8]]), M.fire, { add: 1.6 });
     for (const [x, y] of [[15, 13.4], [17.4, 18.4], [20.2, 11.4], [21.6, 15.6], [23.6, 20.4], [25.8, 9.4], [26.8, 14], [27.6, 18.6], [24.4, 23.6]]) g.ball(f, x, y, D.lo ? 1.3 : 1.1, D.lo ? 1.3 : 1.1, M.lead, { edge: D.hi ? true : undefined });
     // le canon et sa bouche
@@ -1140,7 +1170,7 @@ const ART = {
   // roulade : une silhouette roulée en boule, l'arc de son mouvement
   roulade(g, D) {
     const f = I;
-    g.shape(f, sArc(16, 16.4, 13, D.lo ? 1.1 : 0.8, Math.PI * 0.62, Math.PI * 1.62), M.cream, { add: 1, holes: (X, Y) => { const a = Math.atan2((Y + 0.5) / g.s - 16.4, (X + 0.5) / g.s - 16); const t = ((a - Math.PI * 0.62 + Math.PI * 4) % (Math.PI * 2)) / Math.PI; return bay(X, Y) > t * 1.2; } });
+    g.shape(f, sArc(16, 16.4, 13, D.lo ? 1.1 : 0.8, Math.PI * 0.62, Math.PI * 1.62), M.cream, { add: 1, holes: (X, Y) => { const a = Math.atan2(g.mv(Y) - 16.4, g.mu(X) - 16); const t = ((a - Math.PI * 0.62 + Math.PI * 4) % (Math.PI * 2)) / Math.PI; return bay(X, Y) > t * 1.2; } });
     g.shape(f, sPoly([[24.2, 3.6], [29.4, 6.8], [23.4, 9.6]]), M.cream, { add: 1.2 });
     // le dos rond, les genoux repliés, les bras qui les tiennent, la tête et le chapeau
     const fg = M.fig;
@@ -1192,14 +1222,15 @@ const ART = {
     for (const [r, c, k] of [[5.8, M.redm, 0.4], [4.1, M.cloth, 0], [2.4, M.redm, 0.6]]) g.ball(f, tx, ty, r, r, c, { flat: 0.8, add: k, edge: r > 5 && !D.lo ? true : undefined });
     if (D.lo) g.ball(f, tx, ty, 1, 1, M.cloth, { col: CREAM });
     // une empreinte : la semelle et le talon, la pointe vers la cible ; le creux éclairé à l'envers
-    const print = (cx, cy, a) => {
+    const print = (cx, cy, a, k = 1) => {
       // la semelle (large à la pointe, cambrée), le talon à part ; un creux sombre, le bord bas éclairé
-      const sole = grow(sPoly([[cx - 2, cy - 5.4], [cx, cy - 6.4], [cx + 2, cy - 5.4], [cx + 2.2, cy - 2.2], [cx + 1.2, cy + 0.6], [cx - 1.2, cy + 0.6], [cx - 2.2, cy - 2.2]]), 0.5);
-      const sd = sRot(U(sole, sBox(cx, cy + 3.6, 1.7, 1.4, 0.7)), cx, cy, a);
-      g.shape(f, sd, M.sand, { bev: D.lo ? 1 : 1.3, inv: true, add: -0.6, edge: D.lo ? undefined : PAL.sand[1] });
+      const P = (dx, dy) => [cx + dx * k, cy + dy * k];
+      const sole = grow(sPoly([P(-2, -5.4), P(0, -6.4), P(2, -5.4), P(2.2, -2.2), P(1.2, 0.6), P(-1.2, 0.6), P(-2.2, -2.2)]), 0.5 * k);
+      const sd = sRot(U(sole, sBox(cx, cy + 3.6 * k, 1.7 * k, 1.4 * k, 0.7 * k)), cx, cy, a);
+      g.shape(f, sd, M.sand, { bev: D.lo ? 1.4 : 1.3, inv: !D.lo, add: D.lo ? 1 : -0.6, edge: D.lo ? undefined : PAL.sand[1] });
       if (D.hi) for (const oy of [-4.2, -2.4]) g.line(f, [-1.2, 1.2].map((o) => { const c = Math.cos(a), s = Math.sin(a); return [cx + o * c - oy * s, cy + o * s + oy * c]; }), PAL.sand[2], { clip: true });
     };
-    print(6.6, 25, 0.86); print(15.2, 21.6, 0.86); print(17, 12.6, 0.86);
+    if (D.lo) { print(4.6, 24, 0.86, 1.05); print(17.4, 18.4, 0.86, 1.05); } else { print(6.6, 25, 0.86); print(15.2, 21.6, 0.86); print(17, 12.6, 0.86); }
   },
 
   // mèche : la mèche torsadée qui brûle, ses étincelles et sa fumée
@@ -1222,7 +1253,7 @@ const ART = {
       arms: [[[17.6 + dx, 11.4], [19.4 + dx, 16], [19.8 + dx, 20.4]], [[14.4 + dx, 11.4], [12.6 + dx, 16], [12.2 + dx, 20.4]]],
       legs: [[[15 + dx, 20], [14.4 + dx, 24.6], [13.8 + dx, 29.4]], [[17 + dx, 20], [17.6 + dx, 24.6], [18.2 + dx, 29.4]]],
     });
-    const y0 = D.A <= 24 ? 19 : 14, fade = (k) => (X, Y) => bay(X, Y) < clamp(((Y + 0.5) / g.s - y0) / 14, 0, 1) * k;
+    const y0 = D.A <= 24 ? 19 : 14, fade = (k) => (X, Y) => bay(X, Y) < clamp((g.mv(Y) - y0) / 14, 0, 1) * k;
     if (D.hi) figure(g, D, f, stand(-5.4), M.ghost, { add: -1.2, edge: false, holes: (X, Y) => ((X + Y) & 1) === 1 || fade(1.2)(X, Y) });
     figure(g, D, D.hi ? f : frame(16, 16, 0, 1.08), stand(D.hi ? 1 : 0), M.ghost, { holes: fade(D.hi ? 1 : 0.7) });
   },
@@ -1275,6 +1306,194 @@ const ART = {
     g.shape(f, U(sTube([[7, 7], [25, 25]], r), sTube([[25, 7], [7, 25]], r)), M.red, { bev: r, edge: D.lo ? undefined : true, add: 0.2 });
   },
 
+  // ---------------------------------------------------------------- petits signes de l'interface
+  // une flamme de cran, faite pour être toute petite (5 à 8 pixels du jeu, en rang serré) : deux langues seulement
+  cran_s(g, D) {
+    const f = I, pts = [[15.6, 1.4], [20.8, 8.6], [23.2, 13.6], [25, 9.2], [27.6, 16.2], [27.4, 22.4], [24.2, 27.6], [16, 30.4], [7.8, 27.6], [4.6, 22.4], [5.4, 15.6], [9.6, 9.4], [11.4, 14.2]];
+    g.shape(f, grow(sPoly(pts), 0.6), M.fire, { bev: 8, prof: 'soft', add: -1.2, g: [0, 0.08] });
+    g.shape(f, grow(sPoly(shrink(pts, 16, 29.6, 0.52)), 0.4), M.fire, { bev: 4, prof: 'soft', add: 2.6 });
+    if (D.hi) g.shape(f, sEll(14.6, 25.4, 2.2, 3), M.fire, { col: PAL.fire[7] });
+  },
+
+  // ---------------------------------------------------------------- lieux du territoire (chacun la couleur de son
+  // médaillon sur la carte : rouge des hors-la-loi, bleu des rencontres, vert du comptoir, orange du camp…)
+  // hors-la-loi : la tête d'un bandit, chapeau rabattu, le foulard rouge sur le nez
+  n_combat(g, D) {
+    const f = I, felt = M.felt;
+    // le visage, les sourcils froncés, les yeux
+    g.shape(f, sEll(16, 18.4, D.lo ? 8.2 : 7.6, 8.6), M.skin, { bev: 5, prof: 'soft', edge: D.lo ? undefined : true, add: -0.2 });
+    for (const sx of [-1, 1]) {
+      g.shape(f, sEll(16 + sx * 3.3, 15.6, D.lo ? 1.5 : 1.15, D.lo ? 1.6 : 1.45), M.skin, { col: BLACK });
+      if (!D.lo) g.line(f, [[16 + sx * 1.2, 13.6], [16 + sx * 5.2, 12.8]], PAL.skin[1], { w: D.hi ? 2 : 1 });
+    }
+    // le foulard : la pointe qui pend sur la poitrine, ses plis et ses pois
+    const scarf = grow(sPoly([[6.8, 18], [25.2, 18], [24.2, 23.2], [16, 31], [7.8, 23.2]]), 0.6);
+    g.shape(f, scarf, M.redm, { bev: 3, edge: D.lo ? undefined : true, drop: D.hi ? 1 : 0, add: 0.4, tex: (x, y) => (D.hi && Math.abs(x - 16 - (y - 22) * 0.4) < 0.5 && y > 21 ? -1.4 : 0) });
+    if (D.hi) for (const [x, y] of [[11.4, 20.8], [16, 20.4], [20.6, 20.8], [13.6, 24.6], [18.4, 24.6], [16, 28]]) g.ball(f, x, y, 0.75, 0.75, M.cloth, { add: 0.6 });
+    // le chapeau : la calotte pincée, le ruban, le bord large un peu cintré
+    const crown = grow(sPoly([[9.2, 10.4], [10.2, 2.8], [13.2, 1.2], [16, 3], [18.8, 1.2], [21.8, 2.8], [22.8, 10.4]]), 0.6);
+    g.shape(f, crown, felt, { bev: 3, edge: D.lo ? undefined : true, add: 0.3 });
+    if (!D.lo) g.line(f, [[16, 3.4], [16, 7.4]], PAL.felt[1], { clip: true });
+    g.shape(f, sBox(16, 8.8, 6.8, D.lo ? 1.3 : 1, 0.2), felt, { clip: true, nrm: () => [0, 0, 1], add: -2.6 });
+    const brim = X(sEll(16, 10.4, 14.8, 3.4), (x, y) => -(Math.hypot(x - 16, y - 0.6) - 10.8));
+    g.shape(f, U(brim, sEll(16, 10.8, 14.4, 1.8)), felt, { bev: 1.6, edge: D.lo ? undefined : true, add: 0.7, drop: D.hi ? 1 : 0 });
+  },
+
+  // rencontre : un grand point d'interrogation bleu, en relief
+  n_event(g, D) {
+    const f = I, w = D.lo ? 3.3 : 2.8;
+    const q = U(sArc(16, 10.4, 6.6, w, Math.PI * 0.96, Math.PI * 2.36), sTube([[19.2, 16.4], [16.2, 18.8], [16, 21.2]], w));
+    g.shape(f, q, M.blue, { bev: w, edge: D.lo ? undefined : true, drop: D.lo ? 0 : D.hi ? 2 : 1, add: 1.2 });
+    g.ball(f, 16, 27.2, w + 0.5, w + 0.5, M.blue, { add: 1.2, edge: D.lo ? undefined : true });
+    if (!D.lo) g.glint(f, 11.4, 6.8, D.hi ? 2 : 1, hex('ffffff'), hex('c4defe'));
+  },
+
+  // comptoir : une bourse de toile ficelée, le dollar au pochoir, deux pièces d'or
+  n_comptoir(g, D) {
+    const f = I, weave = (x, y, X, Y) => (D.hi && ((X + Y) % 4 === 0 || (X - Y + 64) % 4 === 0) ? -0.45 : 0);
+    const body = sSmooth(sEll(15, 21.2, 10.6, 8.8), sBox(15, 11.4, 3.4, 2.4, 1), 3);
+    g.shape(f, body, M.burlap, { bev: 6, prof: 'soft', edge: D.lo ? undefined : true, drop: D.hi ? 1 : 0, tex: weave });
+    // le haut froncé qui s'évase au-dessus du lien
+    g.shape(f, grow(sPoly([[10.4, 4.2], [13.4, 7.4], [16.6, 7.4], [19.6, 4.2], [19, 9.6], [11, 9.6]]), 0.5), M.burlap, { bev: 1.6, add: 0.6, edge: D.lo ? undefined : true, tex: (x) => (D.hi && Math.abs(x - 15) < 0.5 ? -1.2 : 0) });
+    g.shape(f, sBox(15, 10, 4.8, D.lo ? 1.3 : 1, 0.6), M.redm, { bev: 1, add: 0.4, edge: D.hi ? true : undefined });
+    if (!D.lo) g.shape(f, sTube([[19.4, 10.2], [21.6, 12.6], [21, 14.6]], 0.55), M.redm, { bev: 0.5, add: 0.6 });
+    // le dollar au pochoir, vert sombre
+    g.shape(f, sDollar(15, 21.6, D.lo ? 0.92 : 0.82), M.green, { clip: true, add: D.lo ? -1.4 : -1.8, bev: 0.6 });
+    // les pièces devant
+    if (D.hi) for (const [x, y] of [[25.4, 28.2], [27.8, 25.6]]) {
+      g.shape(f, U(sEll(x, y + 0.8, 3.4, 1.4), sBox(x, y + 0.4, 3.4, 0.4, 0)), M.gold, { add: -1.2, edge: true });
+      g.shape(f, sEll(x, y, 3.4, 1.4), M.gold, { bev: 0.8, add: 0.8, edge: true });
+    }
+  },
+
+  // campement : le feu de camp sur ses bûches croisées, cerné de pierres
+  n_camp(g, D) {
+    const f = I;
+    if (!D.lo) for (const [x, y, r] of [[4.2, 27.4, 2.4], [27.8, 27.4, 2.4], [9.6, 29.6, 2.2], [22.4, 29.6, 2.2], [16, 30.4, 2]]) g.ball(f, x, y, r, r * 0.8, M.smoke, { add: -0.4, edge: true });
+    for (const [a, b, k] of [[[5, 21.4], [27, 28.2], -0.6], [[5, 28.2], [27, 21.4], 0.2]]) {
+      g.shape(f, sTube([a, b], D.lo ? 2.6 : 2.2), M.wood, { bev: 2.2, add: k + 0.6, edge: D.lo ? undefined : true, tex: grain(D, 0.9, 0.3) });
+      if (!D.lo) for (const p of [a, b]) g.ball(f, p[0], p[1], 1.5, 1.9, M.oak, { add: 2.4, flat: 0.6 });
+    }
+    const pts = [[15.4, 1.6], [19.4, 7.4], [21.6, 11], [23, 7.8], [25.4, 13], [25.6, 18.4], [23.4, 22.8], [16, 25], [8.6, 22.8], [6.4, 18.4], [7.2, 13.6], [9.2, 10], [10.8, 13.6], [12.6, 8.8]];
+    const lay = (s, add) => g.shape(f, grow(sPoly(shrink(pts, 16, 24, s)), 0.5), M.fire, { bev: 6 * s, prof: 'soft', add, g: [0, 0.07], edge: s === 1 && !D.lo ? PAL.fire[0] : undefined });
+    lay(1, -1.4);
+    lay(0.66, 0.6);
+    if (!D.lo) lay(0.36, 2.6);
+    if (D.hi) for (const [x, y] of [[26.4, 4.4], [6.4, 6.6]]) g.glint(f, x, y, 1, hex('fff0a0'), hex('f6942a'));
+  },
+
+  // recrue : un chapeau de cow-boy (le bord relevé sur les côtés, qui plonge devant) et le signe plus, vert
+  n_recrue(g, D) {
+    const f = I, felt = mat(PAL.felt, 0.56, 1.0, 0.25, 8);
+    const crown = grow(sPoly([[7.6, 16.4], [8.6, 6.4], [12.2, 3.6], [16, 6], [19.8, 3.6], [23.4, 6.4], [24.4, 16.4]]), 0.8);
+    g.shape(f, crown, felt, { bev: 4, edge: D.hi ? true : undefined, add: 0.2 });
+    if (!D.lo) g.shape(f, sTube([[16, 6.6], [16, 11.6]], 0.7, 1.1), felt, { clip: true, add: -1.6, nrm: () => [0.4, 0, 0.9] });
+    g.shape(f, sBox(16, 14.6, 8.4, D.lo ? 1.6 : 1.3, 0.3), M.redm, { clip: true, add: 0.3, nrm: (x) => { const t = clamp((x - 16) / 9, -0.9, 0.9); return [t, 0, Math.sqrt(1 - t * t)]; } });
+    // le bord : un croissant, épais devant, effilé et relevé aux deux bouts
+    const brim = Sub(sEll(16, 13.8, 15.6, 7.2), sEll(16, 11.6, 13.8, 6.6), (x, y) => y - 8);
+    g.shape(f, brim, felt, { bev: 2, add: 0.6, edge: D.hi ? true : undefined, drop: D.hi ? 1 : 0, nrm: (x, y) => { const t = clamp((y - 19.4) / 2.6, -0.9, 0.9); return [clamp((x - 16) / 20, -0.5, 0.5), t, Math.sqrt(1 - t * t * 0.9 - 0.06)]; } });
+    // le plus
+    const t = D.lo ? 2.1 : 1.7, px = 25, py = 25.4;
+    g.shape(I, U(sBox(px, py, 5.6, t, 0.4), sBox(px, py, t, 5.6, 0.4)), M.green, { bev: t, add: 2.4, edge: D.hi ? true : undefined, drop: D.lo ? 0 : 1 });
+  },
+
+  // cache : un coffre bombé cerclé de laiton, sa serrure
+  n_cache(g, D) {
+    const f = I, wd = M.oak;
+    const planks = (x, y) => (D.hi && (y - 17) % 3.4 < 0.4 ? -1.2 : 0) + grain(D, 0.9, 0.3)(x, y) * 0.5;
+    g.shape(f, sBox(16, 22, 13, 6.6, 1), wd, { bev: 2, edge: D.lo ? undefined : true, drop: D.hi ? 1 : 0, tex: planks });
+    const lid = U(X(sEll(16, 14.8, 13, 7.6), (x, y) => y - 14.8), sBox(16, 15.2, 13, 1.2, 0.4));
+    g.shape(f, lid, wd, { bev: 4, prof: 'soft', edge: D.lo ? undefined : true, add: 0.7, nrm: (x, y) => { const t = clamp((y - 14.8) / 8, -0.9, 0); return [clamp((x - 16) / 16, -0.4, 0.4), t, Math.sqrt(1 - t * t - 0.05)]; } });
+    g.line(f, [[3.4, 16.4], [28.6, 16.4]], PAL.oak[0], { w: D.lo ? 1 : 2 });
+    // les ferrures
+    for (const x of D.lo ? [8, 24] : [7.6, 24.4]) g.shape(f, sBox(x, 17.4, D.lo ? 1.5 : 1.25, 11.6, 0.3), M.brass, { clip: true, bev: 0.9, add: 0.2 });
+    if (!D.lo) for (const x of [3.6, 28.4]) g.shape(f, sBox(x, 22.4, 0.9, 6.2, 0.3), M.brass, { clip: true, bev: 0.6, add: -0.6 });
+    // la serrure et son trou
+    g.shape(f, sBox(16, 18, D.lo ? 2.8 : 2.6, D.lo ? 3.2 : 3, 0.8), M.brass, { bev: 1.2, add: 0.6, edge: D.lo ? undefined : true });
+    g.shape(f, U(sCirc(16, 17.4, D.lo ? 0.9 : 0.75), sBox(16, 19, 0.4, 1, 0)), M.brass, { col: BLACK });
+    if (!D.lo) g.glint(f, 9.6, 10, D.hi ? 2 : 1);
+  },
+
+  // otage : des menottes d'acier, leurs charnières et la chaîne
+  n_prisonnier(g, D) {
+    const f = I, w = D.lo ? 1.9 : 1.6, st = M.steel;
+    // la chaîne : trois maillons, un de face, un de profil
+    if (!D.lo) {
+      g.shape(f, sRing(11.6, 10.6, 1.7, 0.7), st, { bev: 0.7, add: 0.8 });
+      g.shape(f, sBox(16, 9, 2.2, 0.8, 0.8), st, { bev: 0.8, add: 1 });
+      g.shape(f, sRing(20.4, 10.6, 1.7, 0.7), st, { bev: 0.7, add: 0.8 });
+    } else g.shape(f, sBox(16, 10.6, 5.4, 1, 0.8), st, { bev: 1, add: 1 });
+    for (const [cx, k] of [[9.2, 0.4], [22.8, -0.2]]) {
+      g.shape(f, sRing(cx, 20.6, 6.2, w), st, { bev: w, add: k + 0.4, edge: D.lo ? undefined : true, drop: D.hi ? 1 : 0 });
+      // la charnière en haut de l'anneau
+      g.shape(f, sBox(cx + (cx < 16 ? 2.2 : -2.2), 14.6, 2.6, 1.8, 0.6), st, { bev: 1.2, add: k + 1, edge: D.lo ? undefined : true });
+      if (!D.lo) g.ball(f, cx + (cx < 16 ? 2.2 : -2.2), 14.6, 0.7, 0.7, M.brass);
+    }
+    if (!D.lo) g.glint(f, 4.6, 17, D.hi ? 2 : 1, hex('ffffff'), hex('b4c2d6'));
+  },
+
+  // le repaire d'El Diablo : un crâne cornu aux orbites rougeoyantes
+  n_repaire(g, D) {
+    const f = I;
+    // les cornes, effilées, qui montent en se recourbant
+    for (const sx of [-1, 1]) {
+      const p = [[16 + sx * 6, 11.2], [16 + sx * 10, 8.8], [16 + sx * 12.6, 5.4], [16 + sx * 12.6, 1.6]];
+      g.shape(f, sTube(p, D.lo ? 3.4 : 2.6, D.lo ? 1.2 : 0.6), M.red, { bev: 2.4, edge: D.lo ? undefined : true, add: sx > 0 ? -0.4 : 0.4 });
+      if (D.hi) for (const t of [0.3, 0.55]) { const [x, y] = [16 + sx * (6 + t * 7.4), 11.2 - t * 5]; g.line(f, [[x - 1.2, y - 1.2 * sx], [x + 1.2, y + 1.2 * sx]], PAL.red[1], { clip: true }); }
+    }
+    const skull = U(sEll(16, 15.4, 8.6, 8), sBox(16, 23, 5.2, 4, 1.8));
+    g.shape(f, skull, M.bone, { bev: 4.4, prof: 'soft', edge: D.lo ? undefined : true, drop: D.hi ? 1 : 0, add: 0.5 });
+    for (const sx of [-1, 1]) {
+      g.shape(f, sRot(sEll(16 + sx * 3.5, 16.2, D.lo ? 2.6 : 2.4, D.lo ? 2.4 : 2.1), 16 + sx * 3.5, 16.2, sx * 0.35), M.bone, { col: BLACK });
+      g.ball(f, 16 + sx * 3.4, 16.6, D.lo ? 0.9 : 0.8, D.lo ? 0.9 : 0.8, M.fire, { col: D.lo ? PAL.fire[3] : PAL.fire[4] });
+    }
+    g.shape(f, sPoly([[16, 19.2], [17.3, 21.6], [14.7, 21.6]]), M.bone, { col: BLACK });
+    if (!D.lo) for (const x of [13.4, 16, 18.6]) g.line(f, [[x, 23.4], [x, 26.4]], PAL.bone[1], { clip: true });
+    if (D.hi) g.line(f, arcPts(11.6, 10.4, 2.4, 1.6, Math.PI * 1.1, Math.PI * 1.6, 6), PAL.bone[7], { clip: true });
+  },
+
+  // le départ (Dusty Gulch) : une maison de planches, toit rouge, fenêtres allumées
+  n_depart(g, D) {
+    const f = I;
+    const planks = (x, y, X) => (D.hi && Math.abs(((x - 6) % 3.2) - 1.6) > 1.3 ? -1 : 0);
+    g.shape(f, sBox(16, 21.4, 10.6, 8.2, 0.4), M.oak, { bev: 1.4, edge: D.lo ? undefined : true, add: 0.6, tex: planks, drop: D.hi ? 1 : 0 });
+    // la cheminée, puis le toit
+    g.shape(f, sBox(22.4, 6.6, 1.6, 3.4, 0.3), M.redm, { bev: 1, add: -0.6, edge: D.lo ? undefined : true });
+    g.shape(f, grow(sPoly([[2.6, 14.2], [16, 3.6], [29.4, 14.2]]), 0.8), M.redm, { bev: 2.4, edge: D.lo ? undefined : true, add: 0.4, drop: D.hi ? 1 : 0, tex: (x, y) => (D.hi && (y - 4) % 2.6 < 0.5 ? -1 : 0) });
+    // la porte et les fenêtres éclairées
+    g.shape(f, sBox(16, 25, D.lo ? 2.6 : 2.4, 4.8, 0.3), M.wood, { col: PAL.wood[1] });
+    if (!D.lo) g.dot(f, 17.6, 25.4, PAL.brass[6]);
+    for (const x of [9.6, 22.4]) {
+      g.shape(f, sBox(x, 19.6, D.lo ? 2.4 : 2.2, D.lo ? 2.4 : 2.2, 0.2), M.fire, { col: PAL.fire[5] });
+      if (!D.lo) g.line(f, [[x, 17.6], [x, 21.6]], PAL.wood[2], { clip: true });
+    }
+    if (D.hi) for (const [x, y, r] of [[23.8, 1.8, 1.6], [26.2, -0.4, 1.2]]) g.ball(f, x, y + 1, r, r, M.smoke, { add: 2, holes: (X, Y) => ((X ^ Y) & 1) === 1 });
+  },
+
+  // territoire (encore inconnu) : une carte pliée en trois, la piste en pointillés rouges jusqu'à la croix
+  n_unknown(g, D) {
+    const f = I, pp = M.paper;
+    const panes = [
+      [[[2.6, 8.4], [11.4, 5.4], [11.4, 26], [2.6, 29]], [-0.34, 0, 0.94]],
+      [[[11.4, 5.4], [20.6, 8.4], [20.6, 29], [11.4, 26]], [0.4, 0, 0.92]],
+      [[[20.6, 8.4], [29.4, 5.4], [29.4, 26], [20.6, 29]], [-0.34, 0, 0.94]],
+    ];
+    for (const [pts, n] of panes) g.shape(f, sPoly(pts), pp, { nrm: () => n, edge: D.lo ? undefined : true, add: 0.8, tex: (x, y, X, Y) => (D.hi && (X * 5 + Y * 3) % 13 === 0 ? -0.8 : 0) });
+    const trail = [[5, 25], [8.4, 20.2], [13.4, 19.6], [16.4, 15], [21.4, 14.6], [24.6, 11.4]];
+    if (D.lo) g.line(f, trail, PAL.red[3], { clip: true });
+    else {
+      // la piste en points, réguliers le long du tracé
+      let acc = 0;
+      for (let i = 0; i < trail.length - 1; i++) {
+        const [ax, ay] = trail[i], [bx, by] = trail[i + 1], l = Math.hypot(bx - ax, by - ay);
+        for (; acc < l; acc += D.hi ? 2.2 : 2.8) g.ball(f, ax + ((bx - ax) * acc) / l, ay + ((by - ay) * acc) / l, D.hi ? 0.8 : 0.7, D.hi ? 0.8 : 0.7, M.red, { col: PAL.red[3], clip: true });
+        acc -= l;
+      }
+    }
+    const r = D.lo ? 2.2 : 2;
+    g.shape(f, U(sTube([[25.6 - r, 10.4 - r], [25.6 + r, 10.4 + r]], D.lo ? 1 : 0.8), sTube([[25.6 + r, 10.4 - r], [25.6 - r, 10.4 + r]], D.lo ? 1 : 0.8)), M.red, { add: 0.6, clip: true });
+  },
+
   // ---------------------------------------------------------------- états (au-dessus des têtes)
   s_bleed(g, D) { drop(g, D, I, 16, 16, 13.4); },
 
@@ -1294,11 +1513,13 @@ const ART = {
 
   // épinglé : deux gros clous plantés en croix
   s_pin(g, D) {
-    for (const a of [0.72, -0.72]) {
-      const f = frame(16, 16, a);
-      g.shape(f, sPoly([[14.6, 6.6], [17.4, 6.6], [16.6, 26.6], [16, 29.6], [15.4, 26.6]]), M.iron, { bev: 1.5, edge: D.lo ? undefined : true, add: 0.5, drop: D.hi ? 1 : 0 });
-      g.shape(f, sEll(16, 5.4, 5.2, 1.9), M.iron, { bev: 1.6, edge: D.lo ? undefined : true, add: 0.8 });
-    }
+    const f = I;
+    // la planche, ses veines ; le clou enfoncé jusqu'à mi-hauteur, sa tête ronde ; les éclats autour du trou
+    g.shape(f, sBox(16, 25, 14, 4.4, 1), M.oak, { bev: 1.6, add: 0.6, edge: D.lo ? undefined : true, tex: grain(D, 0.9, 0.4) });
+    cyl(g, f, 16, 14.6, 8, D.lo ? 2.4 : 2, M.iron, { vert: true, add: 1.4, edge: D.lo ? undefined : true, drop: D.hi ? 1 : 0 });
+    g.shape(f, sEll(16, 6.2, D.lo ? 7.4 : 7, D.lo ? 3 : 2.6), M.iron, { bev: 2, add: 1.8, edge: D.lo ? undefined : true, drop: D.lo ? 0 : 1 });
+    g.shape(f, sEll(16, 21.2, 3.4, 1), M.oak, { col: PAL.oak[0] });
+    if (!D.lo) for (const [x0, y0, x1, y1] of [[10.4, 19.4, 8, 17.4], [21.6, 19.4, 24, 17.4], [16, 18.4, 16, 16.6]].slice(0, 2)) g.line(f, [[x0, y0], [x1, y1]], PAL.fire[6], { w: D.hi ? 2 : 1 });
   },
 
   // fantôme : un drap qui flotte, l'ourlet ondulé, les yeux creux
@@ -1311,8 +1532,373 @@ const ART = {
   },
 };
 
+// le cadrage de chaque dessin (base) : 1 par défaut, moins pour un objet qu'on veut garder petit dans sa case, 0 : tel quel
+const FIT = {};
+
 export const ITEM_IDS = Object.keys(ART);
 export const hasItemArt = (id) => Object.prototype.hasOwnProperty.call(ART, id);
+
+// ------------------------------------------------------------ petits signes faits main (6 à 10 pixels du jeu)
+// En tout petit, un dessin réduit devient de la bouillie : les icônes d'interface (caractéristiques, ressources,
+// états, cran) ont leur version dessinée à la main, case par case (une case = deux pixels fins), en une seule
+// famille : silhouette franche, trois tons par matière (l'ombrage est calculé : le bord exposé en haut à gauche
+// s'éclaire, le bord en bas à droite s'assombrit), une lettre majuscule pour un reflet, et un contour d'un pixel fin
+// sombre posé autour. Elles se lisent d'un coup d'œil sur le bois sombre comme sur le parchemin.
+// Une grille : rows (une lettre = une matière, '.' = vide) ; mirror : la moitié gauche (colonne du milieu comprise),
+// recopiée en miroir (le côté droit, à l'ombre, un ton plus sombre) ; vmirror : de même, la moitié haute ; flat :
+// des traits fins (un ton clair partout).
+const GM = {
+  r: ramp('7a1c12 b8301c e45a3a ffb08a'), // rouge sang
+  g: ramp('8a5a14 c8901e f2c84a fff0b0'), // or, laiton
+  q: ramp('7a3410 b85a24 e08a48 ffc890'), // cuivre des balles
+  s: ramp('56607a 8a96aa c2ccdc f4f8ff'), // acier
+  b: ramp('5a2c14 8e4c22 c27a3e eeb070'), // cuir de botte
+  h: ramp('2a1810 3e2618 5a3a24 7a5434'), // semelle, cerclages sombres
+  w: ramp('6a4220 a06a34 d29a58 f2c888'), // bois clair
+  x: ramp('4a2c14 6a4220 8a5a2e a87442'), // bois à l'ombre
+  c: ramp('9a8a6c cfc2a2 f2e8cc fffdf4'), // crème, os, blanc d'œil
+  v: ramp('6a7ea8 a8bcd8 dce8f6 ffffff'), // fantôme
+  f: ramp('a82a0c e0601a f8962a ffd070'), // flamme
+  y: ramp('d88a18 f6c040 ffe68a fffbe0'), // cœur de flamme, éclat
+  u: ramp('1e3c7a 3466c0 6aa0ec bfe0ff'), // bleu
+  n: ramp('3e2c1e 64503a 927454 bc9a70'), // feutre du chapeau
+  p: ramp('8a4a28 c4845a e8b484 fcdcb4'), // peau
+  o: ramp('7a3a12 b86a2a e2a058 f8d498'), // croûte du pain
+  i: ramp('5a2a10 9a5420 c8843a f0b870'), // iris
+  d: ramp('4a2808 4a2808 5a3410 5a3410'), // gravure sombre sur l'or
+  k: ramp('1e120a 1e120a 1e120a 1e120a'), // encre (pupille, trous)
+};
+// une grille de disques concentriques (layers : [rayon, lettre], du plus petit au plus grand)
+const disk = (w, h, cx, cy, layers) => Array.from({ length: h }, (_, y) => Array.from({ length: w }, (_, x) => {
+  const d = Math.hypot(x - cx, y - cy);
+  for (const [r, ch] of layers) if (d <= r) return ch;
+  return '.';
+}).join(''));
+// une grille retouchée : cells = [[x, y, lettre], …]
+const overlay = (rows, cells) => {
+  const g = rows.map((r) => [...r]);
+  for (const [x, y, ch] of cells) g[y][x] = ch;
+  return g.map((r) => r.join(''));
+};
+const GLYPH = {
+  coeur: { mirror: true, rows: [
+    '..rrrr..',
+    '.rRRrrr.',
+    'rRRrrrrr',
+    'rRrrrrrr',
+    'rrrrrrrr',
+    'rrrrrrrr',
+    '.rrrrrrr',
+    '..rrrrrr',
+    '...rrrrr',
+    '....rrrr',
+    '.....rrr',
+    '......rr',
+    '.......r',
+  ] },
+  armure: { mirror: true, rows: [
+    'gggggggg',
+    'gSSsssss',
+    'gSssssss',
+    'gSssssss',
+    'gsssssss',
+    'gsssssss',
+    '.gssssss',
+    '.gssssss',
+    '..gsssss',
+    '..gsssss',
+    '...gssss',
+    '....gsss',
+    '.....ggg',
+    '.......g',
+  ] },
+  // une grosse botte de cow-boy : la tige et ses tirants, la pointe, le talon, l'éperon
+  botte: { rows: [
+    '..bbb.bbbb.....',
+    '..bbbbbbbb.....',
+    '..bBbbbbbb.....',
+    '..bBhhhhhb.....',
+    '..bBbbbbbb.....',
+    '..bBbbbbbb.....',
+    '..bBbbbbbb.....',
+    '..bBbbbbbbb....',
+    '..bBbbbbbbbbb..',
+    '..bbbbbbbbbbbb.',
+    's.bbbbbbbbbbbbb',
+    'sshhhhhhhhhhhhh',
+    's.hhh..........',
+  ] },
+  viseur: { flat: 1, rows: [
+    '.....sssss.....',
+    '...ss.....ss...',
+    '..s.........s..',
+    '.s.....s.....s.',
+    '.s.....s.....s.',
+    's.............s',
+    's......r......s',
+    'ssss..rrr..ssss',
+    's......r......s',
+    's.............s',
+    '.s.....s.....s.',
+    '.s.....s.....s.',
+    '..s.........s..',
+    '...ss.....ss...',
+    '.....sssss.....',
+  ] },
+  // l'esquive : une flèche courbe qui file par-dessus une silhouette qui se jette de côté
+  esquive: { flat: true, rows: [
+    '.....uuuuu.....',
+    '...uuu...uuu...',
+    '..uu.......uu..',
+    '.uu.........u..',
+    '.u...bb....uuuu',
+    'uu...bb.....uu.',
+    'u...bbbb....u..',
+    'u..b.bb.b......',
+    'u....bb........',
+    '....bbbb.......',
+    '...bb..bb......',
+    '..bb....bb.....',
+    '..b......b.....',
+  ] },
+  crit: { mirror: true, vmirror: true, rows: [
+    '.......y',
+    '.f.....y',
+    '..f...fy',
+    '...f.ffy',
+    '....ffyy',
+    '...ffyyy',
+    '..ffyyyY',
+    'yyyyyyyY',
+  ] },
+  cran: { rows: [
+    '....f........',
+    '....ff.......',
+    '...fff...f...',
+    '...ffff.ff...',
+    '..fffffffff..',
+    '..ffffyffff..',
+    '.fffffyyffff.',
+    '.ffffyyyyfff.',
+    'fffffyyyyyfff',
+    'ffffyyyYyyfff',
+    'fffyyyYYyyyff',
+    '.ffyyYYYyyyf.',
+    '.fffyyYYyyff.',
+    '..fffyyyyff..',
+    '...fffffff...',
+  ] },
+  cran_s: { rows: [
+    '...f......',
+    '...ff.....',
+    '..fff..f..',
+    '..ffff.ff.',
+    '.ffffffff.',
+    '.fffyyfff.',
+    'fffyyyyfff',
+    'ffyyYYyyff',
+    'ffyYYYYyff',
+    '.ffyYYyff.',
+    '..ffffff..',
+  ] },
+  s_affut: { flat: true, rows: [
+    '....hhhhhhh....',
+    '..hhhhhhhhhhh..',
+    '.hhcciiiiicchh.',
+    'hcccciwkkicccch',
+    'hccccikkkicccch',
+    '.hccciiiiiccch.',
+    '..hhccccccchh..',
+    '....hhhhhhh....',
+  ] },
+  s_mark: { rows: disk(15, 15, 7, 7, [[1.1, 'c'], [3.3, 'r'], [5.1, 'c'], [7.2, 'r']]) },
+  s_shield: { mirror: true, rows: [
+    'uuuuuuuu',
+    'uUUuuuuu',
+    'uUuuuuuu',
+    'uUuuuuuu',
+    'uuuuuuuu',
+    'uuuuuuuu',
+    '.uuuuuuu',
+    '.uuuuuuu',
+    '..uuuuuu',
+    '...uuuuu',
+    '....uuuu',
+    '.....uuu',
+    '.......u',
+  ] },
+  // cloué : le clou planté dans la planche
+  s_pin: { rows: [
+    '...sssssssss...',
+    '..sSSsssssssss.',
+    '......sSs......',
+    '......sSs......',
+    '......sSs......',
+    '......sSs......',
+    '......sSs......',
+    '......sSs......',
+    'wwwwwwkkkwwwwww',
+    'wwwwwwwwwwwwwww',
+    'wwwwwwwwwwwwwww',
+    'xxxxxxxxxxxxxxx',
+  ] },
+  s_bleed: { mirror: true, rows: [
+    '......r',
+    '.....rr',
+    '.....rr',
+    '....rrr',
+    '....rrr',
+    '...rrrr',
+    '..rrrrr',
+    '..rRrrr',
+    '.rRRrrr',
+    '.rRrrrr',
+    '.rrrrrr',
+    '.rrrrrr',
+    '..rrrrr',
+    '...rrrr',
+    '....rrr',
+  ] },
+  s_ghost: { mirror: true, rows: [
+    '....vvvv',
+    '..vvvvvv',
+    '.vVvvvvv',
+    '.vVkkvvv',
+    'vvvkkvvv',
+    'vvvvvvvv',
+    'vvvvvvvk',
+    'vvvvvvvk',
+    'vvvvvvvv',
+    'vvvvvvvv',
+    'vv.vvv.v',
+    'v...v...',
+  ] },
+  balles: { rows: [
+    '......qq......',
+    '.....qqqq.....',
+    '.qq..qqqq..qq.',
+    'qqqq.qqqq.qqqq',
+    'qqqq.gggg.qqqq',
+    'gggg.Gggg.gggg',
+    'Gggg.Gggg.Gggg',
+    'Gggg.Gggg.Gggg',
+    'Gggg.Gggg.Gggg',
+    'Gggg.Gggg.Gggg',
+    'gggg.gggg.gggg',
+    'hhhh.hhhh.hhhh',
+  ] },
+  // une caisse de trois quarts : le dessus clair, la face avant cerclée et son écharpe, le côté à l'ombre
+  fourn: { rows: [
+    '...WWWWWWWWWWW',
+    '..WWWWWWWWWWWx',
+    '.WWWWWWWWWWWxx',
+    'wwwwwwwwwwwxxx',
+    'whhhhhhhhhwxxx',
+    'whwwwwwwhhwxxx',
+    'whwwwwwhhwwxxx',
+    'whwwwwhhwwwxxx',
+    'whwwwhhwwwwxxx',
+    'whwwhhwwwhwxxx',
+    'whwhhwwwwhwxxx',
+    'whhhhhhhhhwxxx',
+    'wwwwwwwwwwwxx.',
+    'wwwwwwwwwwwx..',
+  ] },
+  // une miche entaillée
+  vivres: { rows: [
+    '....oooooo.....',
+    '..oooooooooo...',
+    '.oooooccoooocc.',
+    'ooocooocooooco.',
+    'oocoooocoooocoo',
+    'ooooooooooooooo',
+    'ooooooooooooooo',
+    '.ooooooooooooo.',
+    '..ooooooooooo..',
+  ] },
+  dollars: { rows: overlay(disk(13, 13, 6, 6, [[6.4, 'g']]), [
+    [6, 2, 'd'], [5, 3, 'd'], [6, 3, 'd'], [7, 3, 'd'], [8, 3, 'd'], [4, 4, 'd'], [6, 4, 'd'], [5, 5, 'd'], [6, 5, 'd'],
+    [6, 6, 'd'], [7, 6, 'd'], [6, 7, 'd'], [8, 7, 'd'], [4, 8, 'd'], [5, 8, 'd'], [6, 8, 'd'], [7, 8, 'd'], [6, 9, 'd'],
+    [3, 2, 'G'], [4, 2, 'G'], [2, 3, 'G'], [2, 4, 'G'],
+  ]) },
+  xp: { mirror: true, rows: [
+    '.......g',
+    '......gg',
+    '......gg',
+    '.....ggg',
+    'gGGGgggg',
+    '.ggggggg',
+    '..gggggg',
+    '...ggggg',
+    '...ggggg',
+    '..gggggg',
+    '..ggggg.',
+    '.gggg...',
+    '.gg.....',
+  ] },
+  // un bandit : chapeau rabattu, les yeux, le foulard rouge sur le nez
+  n_combat: { mirror: true, rows: [
+    '.....nn.',
+    '....nnnn',
+    '....hhhh',
+    '.nnnnnnn',
+    'nnnnnnnn',
+    '...ppppp',
+    '...pkppp',
+    '...ppppp',
+    '..rrrrrr',
+    '..rrrrrr',
+    '...rrrrr',
+    '....rrrr',
+    '.....rrr',
+    '......rr',
+  ] },
+};
+// les grilles complètes (miroirs déroulés), et la part à l'ombre
+const glyphMemo = {};
+function glyphGrid(id) {
+  if (glyphMemo[id]) return glyphMemo[id];
+  const G = GLYPH[id];
+  let rows = G.rows.map((r) => [...r]), dark = rows.map((r) => r.map(() => false));
+  if (G.mirror) {
+    rows = rows.map((r) => [...r, ...r.slice(0, -1).reverse().map((ch) => ch.toLowerCase())]);
+    dark = rows.map((r) => r.map((_, x) => x >= (r.length + 1) / 2));
+  }
+  if (G.vmirror) {
+    rows = [...rows, ...rows.slice(0, -1).reverse().map((r) => r.map((ch) => ch.toLowerCase()))];
+    dark = [...dark, ...dark.slice(0, -1).reverse().map((r) => r.map(() => true))];
+  }
+  return (glyphMemo[id] = { rows, dark, w: Math.max(...rows.map((r) => r.length)), h: rows.length });
+}
+// les pixels (N × N, N = size × F) d'un petit signe, ou null s'il n'a pas de grille ou qu'elle ne tient pas
+function glyphPixels(id, size) {
+  if (!GLYPH[id]) return null;
+  const { rows, dark, w, h } = glyphGrid(id), G = GLYPH[id], N = size * F, c = 2;
+  if (w * c + 2 > N || h * c + 2 > N) return null;
+  const at = (x, y) => (y >= 0 && y < h && x >= 0 && rows[y][x] && rows[y][x] !== '.' ? rows[y][x].toLowerCase() : null);
+  const px = new Uint32Array(N * N), ox = Math.floor((N - w * c) / 2), oy = Math.floor((N - h * c) / 2);
+  for (let y = 0; y < h; y++) for (let x = 0; x < rows[y].length; x++) {
+    const ch = rows[y][x];
+    if (ch === '.') continue;
+    const m = ch.toLowerCase(), R = GM[m];
+    let t;
+    if (ch !== m) t = 3;
+    else {
+      // (seul le bord contre le vide s'éclaire ou s'assombrit : un détail posé sur une matière reste net)
+      const tl = !at(x, y - 1) || !at(x - 1, y), br = !at(x, y + 1) || !at(x + 1, y);
+      t = tl ? 2 : br ? 0 : 1;
+      // (les traits fins, anneaux et flèches : un seul ton clair, sans le grain des marches d'escalier)
+      if (G.flat) t = typeof G.flat === 'number' ? G.flat : br && !tl ? 1 : 2;
+      if (dark[y][x]) t = Math.max(0, t - 1);
+    }
+    for (let j = 0; j < c; j++) for (let i = 0; i < c; i++) px[(oy + y * c + j) * N + ox + x * c + i] = R[t];
+  }
+  // le contour d'un pixel fin
+  const src = px.slice(), o = (x, y) => x >= 0 && y >= 0 && x < N && y < N && src[y * N + x];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (!src[y * N + x] && (o(x - 1, y) || o(x + 1, y) || o(x, y - 1) || o(x, y + 1))) px[y * N + x] = OUT;
+  return px;
+}
+export const GLYPH_IDS = Object.keys(GLYPH);
 
 // ------------------------------------------------------------ rendu, variantes et cache
 // les pixels de base (sans variante) d'une icône : calculés une fois par (id, taille)
@@ -1320,19 +1906,52 @@ const bases = new Map();
 // au plus tant de dessins gardés (pixels de base, et canvas finis) : bien assez pour un combat, la mémoire reste sage
 const MAX_ARTS = 400;
 const artK = (size) => (size <= 12 ? 2 : 1); // pixels fins par pixel d'art
-function base(id, size) {
-  const key = `${id}|${size}`;
+function base(id, size, noGlyph = false) {
+  const key = `${id}|${size}|${noGlyph ? 1 : 0}`;
   let b = bases.get(key);
   if (b) return b;
-  const k = artK(size), A = Math.max(8, Math.round((size * F) / k));
-  const g = new Art(A), D = { A, lo: A <= 20, hi: A >= 48, xhi: A >= 96 };
-  ART[id](g, D);
-  g.outline(OUT);
-  b = { A, k, px: g.px };
+  // en tout petit, le signe fait main s'il y en a un (et qu'il tient dans la case)
+  const gp = size <= 10 && !noGlyph ? glyphPixels(id, size) : null;
+  if (gp) b = { A: size * F, k: 1, px: gp };
+  else {
+    const k = artK(size), A = Math.max(8, Math.round((size * F) / k));
+    const g = render(id, A, k);
+    g.outline(OUT);
+    if (A >= 80) g.outline(OUT); // en grand (20 pixels du jeu et plus), un contour franc de deux pixels fins
+    b = { A, k, px: g.px };
+  }
   if (bases.size >= MAX_ARTS) bases.delete(bases.keys().next().value);
   bases.set(key, b);
   return b;
 }
+// le dessin d'un objet sur une toile de A pixels d'art (k : pixels fins par pixel d'art, 2 en petit), sans contour
+function render(id, A, k = 1) {
+  const D = { A, lo: A <= 20, hi: A >= 48, xhi: A >= 96 };
+  let g = new Art(A);
+  ART[id](g, D);
+  // le cadrage : l'objet agrandi (un peu) et recentré pour remplir sa case, surtout en petit où chaque pixel compte
+  // (on mesure le dessin, puis on le refait cadré : deux rendus, une seule fois par taille)
+  const fit = FIT[id] ?? 1;
+  if (fit) {
+    let x0 = A, y0 = A, x1 = -1, y1 = -1;
+    for (let y = 0; y < A; y++) for (let x = 0; x < A; x++) if (g.px[y * A + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 >= 0) {
+      const m = Math.max(x1 - x0 + 1, y1 - y0 + 1), room = k === 2 ? A - 2 : Math.round(A * 0.9);
+      const z = clamp(room / m, 1, k === 2 ? 1 + 0.42 * fit : 1 + 0.16 * fit), s1 = A / 32;
+      const cx = (x0 + x1 + 1) / 2, cy = (y0 + y1 + 1) / 2;
+      if (z > 1.03 || Math.abs(cx - A / 2) > 0.6 || Math.abs(cy - A / 2) > 0.6) {
+        const s = s1 * z;
+        g = new Art(A, z, cx / s1 - A / (2 * s), cy / s1 - A / (2 * s));
+        ART[id](g, D);
+      }
+    }
+  }
+  return g;
+}
+// les pixels bruts (entiers RGBA) d'un dessin de A × A pixels fins, sans contour ni cache : pour les emblèmes des
+// médaillons de la carte (pistepawn.js), qui les recolorent ; FIRE : les teintes du feu (gardées telles quelles)
+export function artPixels(id, A) { return hasItemArt(id) ? render(id, A, 1).px.slice() : null; }
+export const FIRE = new Set(PAL.fire);
 
 // le liseré et l'éclat des objets de qualité (1 : bleu, 2 : or), l'éclat d'or scintille (f : son image)
 const QCOL = [null, { line: hex('3a64b0'), hi: hex('8cc0fa'), core: hex('eef6ff') }, { line: hex('a87818'), hi: hex('f8d070'), core: hex('fffbe0') }];
@@ -1354,10 +1973,10 @@ const arts = new Map();
 export function itemArt(id, size = 16, opts = {}) {
   if (!hasItemArt(id)) return null;
   const q = opts.q | 0, fr = q === 2 ? (opts.f | 0) % GLINT_FRAMES : 0;
-  const key = `${id}|${size}|${q}|${fr}|${opts.off ? 1 : 0}|${opts.mono || ''}`;
+  const key = `${id}|${size}|${q}|${fr}|${opts.off ? 1 : 0}|${opts.mono || ''}|${opts.tint || ''}|${opts.art ? 1 : 0}`;
   let c = arts.get(key);
   if (c) { arts.delete(key); arts.set(key, c); return c; } // remis en tête : le moins servi partira le premier
-  const b = base(id, size), A = b.A, px = b.px.slice();
+  const b = base(id, size, !!opts.art), A = b.A, px = b.px.slice();
   if (q) decorate(px, A, q, fr);
   if (opts.off) {
     // grisé : la luminosité seule, éteinte et un peu froide
@@ -1365,6 +1984,14 @@ export function itemArt(id, size = 16, opts = {}) {
       if (!px[i]) continue;
       const l = lum(px[i]), v = 34 + l * 120;
       px[i] = pack(v * 0.96, v * 0.95, v, 255);
+    }
+  }
+  if (opts.tint) {
+    const t = hex(opts.tint), wh = hex('fffbf0');
+    for (let i = 0; i < px.length; i++) {
+      if (!px[i] || px[i] === OUT) continue;
+      const l = lum(px[i]);
+      px[i] = l < 0.5 ? blend(OUT, t, 0.25 + l * 1.5) : blend(t, wh, (l - 0.5) * 1.1);
     }
   }
   if (opts.mono) { const m = hex(opts.mono); for (let i = 0; i < px.length; i++) if (px[i]) px[i] = m; }

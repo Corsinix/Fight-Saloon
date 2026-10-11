@@ -8,18 +8,26 @@
 // assez loin (60 % de la diagonale), du couvert près des départs, pas (trop) de ligne de vue au départ, des flancs,
 // un encombrement raisonnable, des bords de vide sans dents, mine dans le noir et sous le brouillard, saloon sans
 // brouillard de jour, brouillard dehors une fois sur trois environ, même graine → même carte, moins de 30 ms par carte.
+// Décor interactif et lumière (contrat v2) : l'heure, les lumières (dans la carte, sur des cases qui ont du sens : lustre
+// au-dessus du plancher libre, lampe sur une table ou le comptoir, réverbère sur son poteau, fenêtre éclairée devant une
+// fenêtre, lanterne et torche au pied de leur support, feu sur un feu de camp ou un brasero), les objets interactifs (sur
+// les bonnes cases, jamais sur un départ, liés à leur lumière), les points de vie des couverts (= coverHp), l'usure à
+// zéro, les rails continus (wagonnets sur les rails), le vocabulaire de chaque thème (pas de cactus en forêt…).
+//   --deco : le dessin montre aussi la déco et les objets (+ fenêtre, ' porte, U lustre, L lampe, Y lanterne, R réverbère
+//   allumé, r éteint, t torche, F feu, b brasero, W whisky, M wagonnet, o lumière d'une fenêtre, E escalier, Q piano)
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'js');
 const PM = await import(pathToFileURL(path.join(ROOT, 'pistemaps.js')).href);
-const { CELL, blocksMove, blocksSight, coverValue, makeBattle, themeFor, THEMES, clutterOf, CLUTTER } = PM;
+const { CELL, DECO, blocksMove, blocksSight, coverValue, coverHp, debrisFor, makeBattle, themeFor, THEMES, clutterOf, CLUTTER } = PM;
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const a = args.find((s) => s.startsWith(`--${k}`)); if (!a) return d; const v = a.split('=')[1]; return v === undefined ? true : v; };
 const N = +opt('n', 300);
 const SHOW = opt('show', 0) === true ? 2 : +opt('show', 0);
 const AMB = !!opt('amb', false);
+const DECOS = !!opt('deco', false);
 const FAILS = !!opt('fails', false);
 const SEED = opt('seed', null);
 const only = args.find((a) => !a.startsWith('--'));
@@ -44,6 +52,18 @@ for (let c = 0; c <= 13; c++) {
   if (blocksSight(c) !== expect.sight.includes(c)) fail(`blocksSight(${c}) faux`);
   const cv = expect.cover2.includes(c) ? 2 : expect.cover1.includes(c) ? 1 : 0;
   if (coverValue(c) !== cv) fail(`coverValue(${c}) = ${coverValue(c)} au lieu de ${cv}`);
+}
+// les points de vie des couverts (contrat v2) et les nouveaux noms de déco
+{
+  const D = DECO;
+  const want = [[C.CRATE, 0, 2], [C.TABLE, 0, 2], [C.FENCE, 0, 1], [C.SAND, 0, 3], [C.CHEST, 0, 1], [C.BUSH, 0, 1], [C.COUNTER, 0, 4],
+    [C.WALL, D.ROCHER, 0], [C.PILLAR, D.POTEAU, 0], [C.WALL, D.PARAVENT, 2], [C.PILLAR, D.EPOUVANTAIL, 1], [C.PILLAR, D.ARBRE_MORT, 3],
+    [C.FLOOR, 0, 0], [C.WATER, 0, 0], [C.VOID, 0, 0], [C.RAIL, 0, 0], [C.PILLAR, D.BRASERO, 0], [C.CRATE, D.TONNEAU_WHISKY, 1]];
+  for (const [c, d, hp] of want) if (coverHp(c, d) !== hp) fail(`coverHp(${c}, ${d}) = ${coverHp(c, d)} au lieu de ${hp}`);
+  for (const n of ['DEBRIS_BOIS', 'DEBRIS_SAC', 'DEBRIS_PIERRE', 'DEBRIS_LUSTRE', 'TONNEAU_WHISKY', 'WAGONNET', 'BRASERO']) if (!(DECO[n] > 0)) fail(`DECO.${n} manquant`);
+  // les numéros d'avant n'ont pas bougé
+  if (DECO.ROCHER !== 1 || DECO.FOUGERE !== 69 || DECO.WAGONNET !== 35) fail('les numéros de DECO ont bougé');
+  if (debrisFor(C.SAND, D.SACS) !== D.DEBRIS_SAC || debrisFor(C.CRATE, D.CAISSE) !== D.DEBRIS_BOIS || debrisFor(C.WALL, D.ROCHER) !== 0) fail('debrisFor faux');
 }
 
 // ------------------------------------------------------------ le choix des thèmes
@@ -190,14 +210,155 @@ function check(m) {
   if (m.theme === 'mine' && (!m.fog || !m.dark || m.lights.length < 3)) errs.push('la mine doit être noire, sous le brouillard, avec des lanternes');
   if (m.theme === 'saloon' && m.fog && m.sky === 'jour') errs.push('brouillard au saloon en plein jour');
   for (const l of m.lights) if (!inMap(m, l.x, l.y) || !(l.r > 0)) { errs.push('lanterne hors de la carte'); break; }
+  checkV2(m, errs, st);
   return { errs, st };
 }
 
+// ------------------------------------------------------------ décor interactif et lumière (contrat v2)
+const D = DECO;
+const TIMES = ['aube', 'midi', 'crepuscule', 'nuit'];
+const LKINDS = ['lanterne', 'lampe', 'lustre', 'reverbere', 'feu', 'fenetre', 'torche'];
+const PKINDS = ['lustre', 'lanterne', 'lampe', 'whisky', 'wagonnet', 'cloche', 'enseigne'];
+const NATURE = ['desert', 'canyon', 'prairie', 'foret', 'neige'];
+// le vocabulaire interdit de chaque thème
+const FORBID = {
+  desert: ['SAPIN', 'ARBRE', 'CONGERE', 'GLACE', 'FOUGERE', 'BLE', 'WAGONNET', 'STALAGMITE', 'MOULIN', 'ETAI'],
+  canyon: ['SAPIN', 'ARBRE', 'PALMIER', 'CONGERE', 'GLACE', 'FOUGERE', 'BLE', 'WAGONNET', 'STALAGMITE', 'MOULIN', 'ETAI', 'TONNEAU_WHISKY'],
+  prairie: ['CACTUS', 'PALMIER', 'SAPIN', 'CONGERE', 'GLACE', 'WAGONNET', 'STALAGMITE', 'ETAI', 'MESA'],
+  foret: ['CACTUS', 'PALMIER', 'SAPIN', 'CONGERE', 'GLACE', 'BLE', 'WAGONNET', 'STALAGMITE', 'MOULIN', 'ETAI', 'MESA'],
+  neige: ['CACTUS', 'PALMIER', 'ARBRE', 'BLE', 'FOUGERE', 'ROSEAUX', 'WAGONNET', 'STALAGMITE', 'MOULIN', 'ETAI', 'MESA'],
+  mine: ['CACTUS', 'PALMIER', 'SAPIN', 'ARBRE', 'CONGERE', 'BLE', 'FOUGERE', 'ROSEAUX', 'BROUSSAILLE', 'MESA', 'FENETRE'],
+  saloon: ['CACTUS', 'PALMIER', 'SAPIN', 'ARBRE', 'CONGERE', 'BLE', 'ROCHER', 'ROCHE', 'MESA', 'WAGONNET', 'ETAGERE_LIBRE'],
+  ville: ['SAPIN', 'PALMIER', 'CONGERE', 'GLACE', 'WAGONNET', 'MESA', 'FALAISE', 'STALAGMITE', 'ETAI'],
+  hacienda: ['SAPIN', 'ARBRE', 'CONGERE', 'GLACE', 'FOUGERE', 'WAGONNET', 'STALAGMITE', 'ETAI'],
+};
+function checkV2(m, errs, st) {
+  const { w, h, cells, deco } = m, n = w * h;
+  const at = (x, y) => (inMap(m, x, y) ? cells[y * w + x] : C.VOID);
+  const dat = (x, y) => (inMap(m, x, y) ? deco[y * w + x] : 0);
+  const walk = (x, y) => inMap(m, x, y) && !blocksMove(cells[y * w + x]);
+  if (!TIMES.includes(m.time)) errs.push(`heure inconnue ${m.time}`);
+  if (m.sky === 'nuit' && m.time !== 'nuit') errs.push('ciel de nuit mais pas l\'heure');
+  if (m.time === 'nuit' && m.sky !== 'nuit' && m.sky !== 'mine') errs.push(`nuit sous un ciel ${m.sky}`);
+  for (const k of ['chp', 'dmg', 'rail']) if (!(m[k] instanceof Uint8Array) || m[k].length !== n) errs.push(`m.${k} absent ou de mauvaise taille`);
+  if (!(m.fire instanceof Map) || m.fire.size || !(m.puddle instanceof Map) || m.puddle.size) errs.push('m.fire / m.puddle doivent être des Map vides');
+  if (m.lightsVer !== 0 || m.fxVer !== 0) errs.push('compteurs lightsVer / fxVer non nuls');
+  if (!Array.isArray(m.props)) { errs.push('m.props absent'); return; }
+  let badHp = 0, wear = 0;
+  for (let k = 0; k < n; k++) {
+    if (m.chp[k] !== coverHp(cells[k], deco[k])) badHp++;
+    if (m.dmg[k]) wear++;
+  }
+  if (badHp) errs.push(`${badHp} cases dont chp ne vaut pas coverHp`);
+  if (wear) errs.push('usure (dmg) non nulle au départ');
+  // les lumières
+  const props = new Map(m.props.map((p) => [p.id, p]));
+  const lk = {};
+  m.lights.forEach((l, i) => {
+    lk[l.kind] = (lk[l.kind] || 0) + 1;
+    const where = `${l.kind} ${l.x},${l.y}`;
+    if (!LKINDS.includes(l.kind)) { errs.push(`lumière de sorte inconnue ${l.kind}`); return; }
+    if (!(l.h >= 0) || !/^#[0-9a-f]{6}$/.test(l.col) || l.off !== false || !(l.r > 0 && l.r <= 8)) errs.push(`lumière mal remplie (${where})`);
+    const dx = l.dx || 0, dy = l.dy || 0;
+    if (Math.abs(dx) + Math.abs(dy) > 1) errs.push(`direction de lumière fausse (${where})`);
+    // accrochées : (x, y) est le support, (x + dx, y + dy) la case de sol devant
+    const c = at(l.x, l.y), d = dat(l.x, l.y), fx = l.x + dx, fy = l.y + dy;
+    let ok = true;
+    if (l.kind === 'lustre') ok = (c === C.FLOOR || c === C.PATH) && !dx && !dy;
+    else if (l.kind === 'lampe') ok = (c === C.TABLE || c === C.COUNTER) && !dx && !dy;
+    else if (l.kind === 'reverbere') ok = c === C.PILLAR && d === D.REVERBERE && !dx && !dy;
+    else if (l.kind === 'feu') ok = ((c === C.FLOOR && d === D.FEU) || (c === C.PILLAR && d === D.BRASERO)) && !dx && !dy;
+    else if (l.kind === 'fenetre') ok = walk(fx, fy) && (dx || dy) && c === C.WALL && d === D.FENETRE;
+    else if (l.kind === 'torche') ok = walk(fx, fy) && (dx || dy) && (c === C.WALL || c === C.PILLAR);
+    else if (l.kind === 'lanterne') ok = walk(fx, fy) && (dx || dy) && (c === C.WALL || c === C.PILLAR || (c === C.CRATE && d === D.CHARIOT));
+    if (!ok) errs.push(`lumière mal placée (${where}, case ${c} déco ${d}, devant ${at(fx, fy)})`);
+    if (l.prop != null) { const p = props.get(l.prop); if (!p || p.light !== i || p.x !== fx || p.y !== fy) errs.push(`lumière ${where} mal liée à son objet`); }
+    for (let j = 0; j < i; j++) { const o = m.lights[j]; if (o.x === l.x && o.y === l.y && o.kind === l.kind) { errs.push(`deux lumières ${where}`); break; } }
+  });
+  st.lights = lk;
+  // les objets
+  const dep = m.deploy, starts = new Set([...dep.p, ...dep.e, ...dep.amb, ...(dep.boss ? [dep.boss] : [])].map((s) => s.y * w + s.x));
+  const pk = {}, ids = new Set(), cellsWith = new Set();
+  for (const p of m.props) {
+    pk[p.kind] = (pk[p.kind] || 0) + 1;
+    const where = `${p.kind} ${p.x},${p.y}`, k = p.y * w + p.x;
+    if (!PKINDS.includes(p.kind) || ids.has(p.id) || !(p.hp >= 1) || !inMap(m, p.x, p.y)) { errs.push(`objet mal rempli (${where})`); continue; }
+    ids.add(p.id);
+    if (cellsWith.has(k)) errs.push(`deux objets sur la case ${p.x},${p.y}`);
+    cellsWith.add(k);
+    if (starts.has(k)) errs.push(`objet sur un départ (${where})`);
+    const c = cells[k], d = deco[k];
+    let ok = true;
+    if (p.kind === 'lustre') ok = c === C.FLOOR || c === C.PATH;
+    else if (p.kind === 'lanterne') ok = walk(p.x, p.y);
+    else if (p.kind === 'lampe') ok = c === C.TABLE || c === C.COUNTER;
+    else if (p.kind === 'whisky') ok = c === C.CRATE && d === D.TONNEAU_WHISKY;
+    else if (p.kind === 'wagonnet') ok = c === C.CRATE && d === D.WAGONNET && m.rail[k] === 1;
+    if (!ok) errs.push(`objet sur une mauvaise case (${where}, case ${c} déco ${d})`);
+    const carries = ['lustre', 'lanterne', 'lampe'].includes(p.kind);
+    if (carries !== (p.light != null)) errs.push(`objet ${where} : lumière ${p.light}`);
+    if (p.light != null && m.lights[p.light]?.prop !== p.id) errs.push(`objet ${where} mal lié à sa lumière`);
+  }
+  st.props = pk;
+  // la déco et ses objets, ses lumières
+  let rails = 0, lone = 0;
+  for (let k = 0; k < n; k++) {
+    const c = cells[k], d = deco[k], x = k % w, y = (k - x) / w;
+    if (c === C.CRATE && (d === D.WAGONNET || d === D.TONNEAU_WHISKY) && !cellsWith.has(k)) errs.push(`${d === D.WAGONNET ? 'wagonnet' : 'tonneau de whisky'} sans objet en ${x},${y}`);
+    if (c === C.CRATE && d === D.WAGONNET && m.rail[k] !== 1) errs.push(`wagonnet hors des rails en ${x},${y}`);
+    if (c === C.FLOOR && d === D.FEU && !m.lights.some((l) => l.kind === 'feu' && l.x === x && l.y === y)) errs.push(`feu de camp sans lumière en ${x},${y}`);
+    if (d === D.REVERBERE && c !== C.PILLAR) errs.push(`réverbère sur une case ${c}`);
+    if (d === D.FENETRE) {
+      if (c !== C.WALL) errs.push(`fenêtre sur une case ${c} en ${x},${y}`);
+      else if (!((at(x - 1, y) === C.WALL && at(x + 1, y) === C.WALL) || (at(x, y - 1) === C.WALL && at(x, y + 1) === C.WALL))) errs.push(`fenêtre hors d'un mur en ${x},${y}`);
+    }
+    if (m.rail[k] !== ((c === C.RAIL || (c === C.CRATE && d === D.WAGONNET)) ? 1 : 0)) errs.push(`m.rail faux en ${x},${y}`);
+    if (m.rail[k]) {
+      rails++;
+      if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => inMap(m, x + dx, y + dy) && m.rail[(y + dy) * w + x + dx])) lone++;
+    }
+  }
+  if (lone) errs.push(`${lone} bouts de rail isolés`);
+  // le vocabulaire du thème
+  const bad = new Set((FORBID[m.theme] || []).map((s) => D[s]).filter(Boolean));
+  const seenBad = new Set();
+  for (let k = 0; k < n; k++) if (bad.has(deco[k]) && cells[k] !== C.VOID) seenBad.add(Object.keys(D).find((s) => D[s] === deco[k]));
+  if (seenBad.size) errs.push(`vocabulaire hors thème : ${[...seenBad].join(', ')}`);
+  if (m.theme === 'hacienda') { // la cour est balayée : ni cactus ni broussaille derrière le portail
+    let gx = w;
+    for (let k = 0; k < n; k++) if (deco[k] === D.PORTAIL) gx = Math.min(gx, k % w);
+    for (let k = 0; k < n; k++) if ((k % w) > gx + 1 && (deco[k] === D.CACTUS || deco[k] === D.BROUSSAILLE || deco[k] === D.ROCHE)) { errs.push('cactus, broussaille ou roche dans la cour de la hacienda'); break; }
+  }
+  // ce que chaque thème doit avoir
+  const L = (s) => lk[s] || 0, P = (s) => pk[s] || 0;
+  if (m.theme === 'saloon') {
+    if (P('lustre') < 1 || P('lustre') > 3) errs.push(`saloon : ${P('lustre')} lustres`);
+    if (P('lampe') < 1) errs.push('saloon sans lampe');
+    if (P('whisky') < 1 || P('whisky') > 3) errs.push(`saloon : ${P('whisky')} tonneaux de whisky`);
+    if (!cells.some((c) => c === C.COUNTER)) errs.push('saloon sans comptoir');
+    if (!deco.some((d, k) => d === D.PIANO && cells[k] === C.WALL) || !deco.some((d, k) => d === D.ESCALIER && cells[k] === C.WALL)) errs.push('saloon sans piano ou sans escalier');
+  }
+  if (m.theme === 'mine' && P('lanterne') < 3) errs.push(`mine : ${P('lanterne')} lanternes`);
+  if (m.theme === 'ville') {
+    if (deco.filter((d, k) => d === D.REVERBERE && cells[k] === C.PILLAR).length < 2) errs.push('ville sans réverbères');
+    if ((m.time === 'nuit' || m.time === 'crepuscule') && L('reverbere') < 2) errs.push('ville de nuit sans réverbère allumé');
+    if (m.time === 'midi' && L('reverbere')) errs.push('réverbère allumé à midi');
+    if (!deco.some((d) => d === D.FENETRE)) errs.push('ville sans fenêtres');
+  }
+  if (m.theme === 'hacienda' && (L('torche') < 2 || L('feu') < 1)) errs.push(`hacienda : ${L('torche')} torches, ${L('feu')} feux`);
+  if (NATURE.includes(m.theme) && m.time === 'nuit' && !m.lights.length) errs.push('dehors, la nuit, sans aucune lumière');
+}
+
 // ------------------------------------------------------------ dessin ASCII
+const DECO_CH = { FENETRE: '+', PORTE: "'", PORTE_CLOSE: '|', REVERBERE: 'r', BRASERO: 'b', TONNEAU_WHISKY: 'W', WAGONNET: 'M', FEU: 'F', ESCALIER: 'E', PIANO: 'Q', PORTAIL: "'", BRECHE: '_' };
+const LIGHT_CH = { lustre: 'U', lampe: 'L', lanterne: 'Y', reverbere: 'R', feu: 'F', fenetre: 'o', torche: 't' };
 function draw(m) {
   const over = new Map();
+  if (DECOS) {
+    for (let k = 0; k < m.w * m.h; k++) for (const [n, ch] of Object.entries(DECO_CH)) if (m.deco[k] === DECO[n]) over.set(k, ch);
+  }
   if (AMB) for (const s of m.deploy.amb) over.set(s.y * m.w + s.x, 'a');
-  for (const l of m.lights) over.set(l.y * m.w + l.x, 'o');
+  for (const l of m.lights) over.set(l.y * m.w + l.x, DECOS ? LIGHT_CH[l.kind] || 'o' : 'o');
   for (const s of m.deploy.p) over.set(s.y * m.w + s.x, 'p');
   for (const s of m.deploy.e) over.set(s.y * m.w + s.x, 'e');
   if (m.deploy.boss) over.set(m.deploy.boss.y * m.w + m.deploy.boss.x, 'B');
@@ -230,7 +391,7 @@ for (const theme of THEME_LIST) {
     // déterminisme
     if (agg.n < 40) {
       const m2 = makeBattle(seed, { region, col, kind, theme });
-      if (m2.w !== m.w || m2.h !== m.h || m2.cells.some((v, i) => v !== m.cells[i]) || JSON.stringify(m2.deploy) !== JSON.stringify(m.deploy) || m2.name !== m.name) agg.msgs['carte différente pour la même graine'] = (agg.msgs['carte différente pour la même graine'] || 0) + 1;
+      if (m2.w !== m.w || m2.h !== m.h || m2.cells.some((v, i) => v !== m.cells[i]) || JSON.stringify(m2.deploy) !== JSON.stringify(m.deploy) || m2.name !== m.name || m2.time !== m.time || m2.deco.some((v, i) => v !== m.deco[i]) || JSON.stringify([m2.lights, m2.props]) !== JSON.stringify([m.lights, m.props])) agg.msgs['carte différente pour la même graine'] = (agg.msgs['carte différente pour la même graine'] || 0) + 1;
     }
     if (m.theme !== theme) agg.msgs[`thème ${m.theme} au lieu de ${theme}`] = 1;
     const { errs, st } = check(m);
@@ -244,7 +405,8 @@ for (const theme of THEME_LIST) {
     if (OUTDOOR.has(theme)) { fogOut.n++; if (m.fog) fogOut.fog++; }
     if (shown < SHOW && (FAILS ? errs.length > 0 : SEED != null || seed % 3 === shown % 3)) {
       shown++;
-      console.log(`\n   ${m.name} — ${theme}/${m.layout} (${m.shape}) ${m.w}×${m.h} graine ${seed} ${region} col ${col} ${kind}${m.fog ? ` brouillard (${m.sky})` : ''}${m.dark ? ' noir' : ''}`);
+      console.log(`\n   ${m.name} — ${theme}/${m.layout} (${m.shape}) ${m.w}×${m.h} graine ${seed} ${region} col ${col} ${kind}${m.fog ? ` brouillard (${m.sky})` : ''}${m.dark ? ' noir' : ''} — ${m.time}`);
+      console.log(`   lumières ${Object.entries(st.lights || {}).map(([k, v]) => `${k} ${v}`).join(', ') || 'aucune'} ; objets ${Object.entries(st.props || {}).map(([k, v]) => `${k} ${v}`).join(', ') || 'aucun'}`);
       console.log(`   vue ${Math.round(st.los * 100)} %, encombrement ${Math.round(st.inner * 100)} % (brut ${Math.round(st.raw * 100)} %), écart ${Math.round(st.dist * 100)} %, couvert p ${st.coverP} e ${st.coverE}${errs.length ? `\n   ✗ ${errs.join('\n   ✗ ')}` : ''}`);
       console.log(draw(m));
     }

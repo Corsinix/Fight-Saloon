@@ -27,7 +27,7 @@ export const PINTE = {
   CAT_R: 6, // rayon du chat endormi
   COIN_R: 3, COIN: 30, // pièce d'or : rayon, et points pour celui qui l'empoche
   MAT_R: 6, MAT: 50, // sous-bock : rayon, et points pour la chope qui s'y arrête
-  CURL: 0.06, // tord-boyaux : poussée de côté, en part du freinage
+  CURL: 0.12, // tord-boyaux : poussée de côté, en part du freinage (à 0,06 on ne voyait pas l'effet ; lancé droit, il tombe)
   REACH: 1.25, // à pleine puissance, sur bois sec, la chope irait 25 % plus loin que le bout
   MAXA: 0.1, // direction : ±0,1 rad (plus sur les comptoirs à rambardes)
   E: 0.9, // rebond entre deux chopes
@@ -182,15 +182,16 @@ export function counterFor(seed, n) {
 // ------------------------------------------------------------ bières
 // Le barman sert une bière différente à chaque lancer (la même pour toute la table, tirée de la graine).
 // r : rayon ; m : masse dans les chocs ; mu : freinage (moins de freinage = elle va plus loin à puissance égale) ;
-// e : rebond dans les chocs (le piment fait gicler les autres) ; curl : le tord-boyaux tourne vers toi (+1) ou vers le mur (-1).
+// e : rebond dans les chocs (le piment fait gicler les autres) ; curl : le tord-boyaux tourne vers le bas de l'écran (+1) ou vers le haut (-1).
+// (« vers toi » ne voulait rien dire : le lanceur est au bout gauche du comptoir)
 export const BEERS = {
   blonde: { name: 'UNE BLONDE', desc: 'LA CLASSIQUE', r: 4, m: 1, mu: 1, w: 6, col: '#f0c858' },
   brune: { name: 'UNE BRUNE', desc: 'LOURDE : ELLE POUSSE FORT', r: 4, m: 1.9, mu: 1, w: 2.5, col: '#d89a68' },
   shot: { name: 'UN PETIT WHISKY', desc: 'PETIT ET LÉGER', r: 3, m: 0.5, mu: 1, w: 2, col: '#e8a048' },
   mousse: { name: 'UNE MOUSSEUSE', desc: 'ELLE GLISSE PLUS LOIN', r: 4, m: 1, mu: 0.8, w: 2, col: '#fdf6e0' },
   geante: { name: 'LA CHOPE DU MINEUR', desc: 'ÉNORME ET LOURDE : UN VRAI MUR', r: 6, m: 2.6, mu: 1, w: 1.2, col: '#f8d070' },
-  tordt: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS TOI', r: 4, m: 1, mu: 1, curl: 1, w: 0.9, art: 'tord', col: '#c8d070' },
-  tordm: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS LE MUR', r: 4, m: 1, mu: 1, curl: -1, w: 0.9, art: 'tord', col: '#c8d070' },
+  tordt: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS LE BAS : VISE PLUS HAUT', r: 4, m: 1, mu: 1, curl: 1, w: 0.9, art: 'tord', col: '#c8d070' },
+  tordm: { name: 'UN TORD-BOYAUX', desc: 'IL TOURNE VERS LE HAUT : VISE PLUS BAS', r: 4, m: 1, mu: 1, curl: -1, w: 0.9, art: 'tord', col: '#c8d070' },
   piment: { name: 'LE PIMENT D\'EL DIABLO', desc: 'ÇA BRÛLE : AU CHOC, ELLE FAIT GICLER', r: 4, m: 1.2, mu: 1, e: 1.6, w: 1.4, col: '#f0705a' },
 };
 export const beerOf = (q) => BEERS[q?.b] || BEERS.blonde;

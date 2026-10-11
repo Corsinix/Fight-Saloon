@@ -11,7 +11,6 @@ import { Cutscene, CUT_FADE } from './cutscene.js';
 const LIVE_MS = 150; // cadence max des positions envoyées aux autres joueurs
 const RULES_IN = 420; // apparition du panneau des règles (ms)
 const GO_MS = 900; // durée du « GO ! » après le compte à rebours
-const COUNT_COL = '#f0705a';
 const popY = (p) => Math.round(p.y - (p.t / 1100) * 18); // hauteur d'un texte flottant (monte de 18 px), au pixel
 // « mouvements réduits » demandé par le système : le panneau des règles apparaît sans glisser
 const CALM = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -24,6 +23,7 @@ export class MiniScene {
     this.hooks = hooks;
     this.state = null;
     this.t0 = null;
+    this.startGate = null; // avant le départ : { at, ready, sent } tant que tous les joueurs n'ont pas cliqué
     this.duration = 60000;
     this.over = null;
     this.popups = [];
@@ -53,8 +53,13 @@ export class MiniScene {
   }
 
   // Horloge de la partie (ms depuis le départ) : lue en direct, pour rester juste même si l'onglet
-  // passe en arrière-plan et que les images ne sont plus dessinées.
-  get t() { return this.t0 == null ? -1e9 : performance.now() - this.t0; }
+  // passe en arrière-plan et que les images ne sont plus dessinées. Figée sous les règles tant que la table
+  // n'est pas prête (startGate, voir holdGate dans net.js).
+  get t() {
+    if (this.t0 == null) return -1e9;
+    const t = performance.now() - this.t0, g = this.startGate;
+    return g && t > g.at ? g.at : t;
+  }
   get me() { return this.state ? this.state.me : 0; }
   get n() { return this.state ? this.state.players.length : 1; }
   get playing() { return this.t0 != null && this.t >= 0 && this.t < this.duration && !this.over; }
@@ -75,8 +80,16 @@ export class MiniScene {
     if (!this.state && ev.type !== 'mgStart') return; // rien avant le début de la partie
     if (ev.type === 'mgStart') {
       this.setState(ev.state);
+      this.gateFrom(ev.gate);
       this.begin(ev.seed, ev.duration, ev.countdown);
       return;
+    }
+    if (ev.type === 'mgReady' && this.startGate) this.startGate.ready = ev.ready;
+    if (ev.type === 'mgGo') {
+      // tout le monde est prêt : l'horloge repart, ev.go ms avant le départ
+      this.startGate = null;
+      this.t0 = performance.now() + ev.go;
+      this.lastCount = Math.ceil(ev.go / 1000);
     }
     this.onEvent(ev);
     this.setState(ev.state);
@@ -88,12 +101,28 @@ export class MiniScene {
 
   sync(st) {
     this.setState(st);
+    this.gateFrom(st.gate);
     this.begin(st.seed, st.duration, -st.elapsed);
     this.applySync(st);
     if (st.phase === 'over') {
       this.over = { winner: st.winner, ranking: st.ranking || [] };
       this.hooks.onEnd?.(this.over);
     }
+  }
+
+  gateFrom(gate) {
+    this.startGate = gate ? { at: gate.at, ready: gate.ready || [], sent: (gate.ready || []).includes(this.me) } : null;
+  }
+
+  // Clic (ou Espace) sur le panneau des règles : « prêt ». La mêlée et le FPS ont leur bouton à eux (readyOnClick).
+  get readyOnClick() { return true; }
+  sendReady() {
+    const g = this.startGate;
+    if (!g || g.sent || this.watch || this.over || this.t0 == null) return;
+    g.sent = true;
+    if (!g.ready.includes(this.me)) g.ready = [...g.ready, this.me];
+    sfx('ready');
+    this.hooks.send?.({ kind: 'ready' });
   }
 
   begin(seed, duration, countdown) {
@@ -183,7 +212,9 @@ export class MiniScene {
     }, sig);
     window.addEventListener('pointercancel', () => { this.drag = null; this.onRelease?.(); }, sig);
     this.cv.addEventListener('pointerdown', (e) => {
+      const ready = this.readyOnClick && this.cutEl() == null; // le clic qui passe la cinématique n'est pas un « prêt »
       this.skipCut();
+      if (ready) this.sendReady();
       const p = pos(e);
       if (p.x < 0 || p.y < 0 || p.x > W || p.y > H) return; // bandes noires autour de l'image
       Object.assign(this.mouse, p, { in: true });
@@ -200,6 +231,7 @@ export class MiniScene {
     const typing = (e) => e.target instanceof HTMLInputElement;
     document.addEventListener('keydown', (e) => {
       if (typing(e)) return;
+      if (e.key === ' ' && this.readyOnClick && this.cutEl() == null) this.sendReady();
       if (e.key !== 'Enter') this.skipCut(); // Entrée ouvre le chat
       const k = e.key.toLowerCase();
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
@@ -256,6 +288,7 @@ export class MiniScene {
   }
 
   countdownSounds() {
+    if (this.startGate) { this.lastCount = null; return; } // pas de tic-tac tant qu'on attend les joueurs
     const t = this.t;
     const c = t < 0 ? Math.ceil(-t / 1000) : 0;
     if (c !== this.lastCount && c <= 3) {
@@ -291,17 +324,34 @@ export class MiniScene {
     const lines = ruleLines(this.help(), W - 12);
     const many = lines.length > 5;
     const lh = lines.length > 8 ? 10 : 11, y0 = many ? 68 : 72;
-    // le cadre s'arrête sous la dernière ligne quand le compte à rebours passe dans le coin
-    panel(ctx, 2, 26, W - 4, many ? Math.min(146, y0 + lines.length * lh + 6 - 26) : 146, 'ink');
+    // le cadre s'arrête sous la ligne « prêt » (sous les règles)
+    const yReady = y0 + lines.length * lh + (many ? 2 : 6);
+    panel(ctx, 2, 26, W - 4, Math.min(H - 28, yReady + 13 - 26), 'ink');
     // l'ambiance (heure, météo) et la variante du jeu (abords, carte, salle…), s'il en a une
     const where = [this.env && this.showEnv && this.env.name, this.variantName?.()].filter(Boolean).join(' - ');
     if (where) canvasText(ctx, where, W / 2, 31, { color: '#c8b8e8' });
     titlePlate(ctx, this.title(), W / 2, 41);
     drawRuleLines(ctx, lines, W / 2, y0, { lh, maxW: W - 12 });
+    this.drawReady(ctx, yReady);
     ctx.restore();
-    // le compte à rebours : sous les règles s'il y a la place, sinon dans le coin
-    const c = Math.ceil(-t / 1000);
-    if (c <= 3) popText(ctx, String(c), many ? W - 22 : W / 2, many ? 32 : 136, many ? 16 : 24, c * 1000 + t, COUNT_COL);
+  }
+
+  // Sous les règles : « clique quand tu es prêt » (clignote), puis qui on attend encore, puis le départ
+  drawReady(ctx, y) {
+    const g = this.startGate;
+    if (!g) { canvasText(ctx, 'TOUT LE MONDE EST PRÊT !', W / 2, y, { color: '#b8e070' }); return; }
+    const pl = this.state?.players || [];
+    const wait = pl.map((p, i) => ({ p, i })).filter(({ p, i }) => !p.bot && !p.left && !g.ready.includes(i));
+    if (!this.watch && !g.sent) {
+      if (Math.floor(this.now / 450) % 2 === 0 || CALM) {
+        canvasText(ctx, this.touch ? 'TOUCHE L\'ÉCRAN QUAND TU ES PRÊT' : 'CLIQUE QUAND TU ES PRÊT', W / 2, y, { color: TOK.gold });
+      }
+      return;
+    }
+    const names = wait.map(({ i }) => this.name(i)).join(', ');
+    const text = !wait.length ? 'C\'EST PARTI…' : textW(`EN ATTENTE DE : ${names}`, 8) <= W - 16 ? `EN ATTENTE DE : ${names}`
+      : `EN ATTENTE DE ${wait.length} JOUEUR${wait.length > 1 ? 'S' : ''}`;
+    canvasText(ctx, (this.watch ? '' : 'PRÊT ! ') + text, W / 2, y, { color: '#c8b8e8' });
   }
 
   // « GO ! » (ou le cri du jeu) : claque en grand puis s'efface ; el = ms depuis le départ.

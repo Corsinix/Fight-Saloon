@@ -1,6 +1,6 @@
 // Armes en main en 3D (moteur « vm3d » du FPS) : petit moteur de rendu, mains articulées, armes longues (Winchester,
-// fusil à pompe, Sharps, canon scié, harpon, canardière) et derringer. Extrait de fpsart.js (qui l'importe et s'en sert
-// tel quel) pour que la roulette (scene.js) dessine les mêmes armes et les mêmes mains sans charger tout le FPS.
+// fusil à pompe, Sharps, canon scié, harpon, canardière) et derringer. Extrait de fpsart.js, qui l'importe et s'en sert
+// tel quel (la roulette, elle, dessine les siennes en 2D : rlart.js).
 import { OUT, shade, mix } from './sprites.js';
 
 // Canvas relu pixel par pixel : gardé en mémoire plutôt que sur la carte graphique
@@ -390,7 +390,8 @@ function vmHand(sc, o) {
       const mid = vmAdd(vmLerp(knuckle, tg, 0.55), [0.4, -0.5, 0]);
       joints = [knuckle, vmLerp(knuckle, mid, 1), vmLerp(mid, tg, 0.55), tg];
     } else {
-      const curl = o.curl ?? 1;
+      // (o.lift : ce doigt-là se relève, l'adversaire qui pianote sur la table)
+      const curl = o.lift === k ? 0.35 : o.curl ?? 1;
       let th = th0 + 0.25, acc = 0;
       for (const L of f.len) {
         // avance le long de l'ellipse jusqu'à couvrir L (moins serré si curl < 1)
@@ -444,8 +445,12 @@ function vmHand(sc, o) {
   sc.caps(skin, tj[2], tj[3], 0.92, 0.82);
   // poignet, avant-bras et manchette
   const wrist = ring(-1.2, y0 - 7.2, 0.9);
-  const arm = o.arm ? [o.arm[0] * side, o.arm[1], o.arm[2]] : vmAdd(wrist, [6, -30, -20]);
+  let arm = o.arm ? [o.arm[0] * side, o.arm[1], o.arm[2]] : vmAdd(wrist, [6, -30, -20]);
   const dir = vmUnit(vmSub(arm, wrist));
+  // o.stub : avant-bras coupé à stub cm du poignet (la roulette dessine le reste à part) ; o.wrist(p, q) reçoit, en
+  // repère caméra, le bout du poignet et un point plus loin sur l'avant-bras
+  if (o.stub) arm = vmAdd(wrist, vmK(dir, o.stub));
+  if (o.wrist) o.wrist(vmP(sc.top(), vmAdd(wrist, vmK(dir, 3.2))), vmP(sc.top(), vmAdd(wrist, vmK(dir, 12))));
   sc.caps(skin, vmAdd(wrist, vmK(dir, -1.5)), vmAdd(wrist, vmK(dir, 3.5)), 2.5, 2.7);
   if (o.cuff !== false) {
     sc.caps(cloth, vmAdd(wrist, vmK(dir, 3.2)), vmAdd(wrist, vmK(dir, 6.2)), 3.4, 3.6);
@@ -1270,115 +1275,7 @@ function vmGrip(sc, b, t, o) {
   sc.pop();
 }
 
-// ================================================================== roulette (scene.js) : armes et mains en vue subjective
-// La roulette dessine ce que je tiens avec ce même moteur, au même cadrage que le FPS (canvas 200x130 posé en (104, 86)
-// sur l'écran 384x216) : le fusil de la partie, le derringer et mes poings pour les objets. Chaque image est rendue une
-// fois (rlMemo) ; scene.js ne fait que la recopier, décalée au pixel près (montée, tremblement, recul).
-export const RL_X = 104, RL_Y = 86;
-const RL_CACHE = new Map();
-function rlMemo(key, make) {
-  let c = RL_CACHE.get(key);
-  if (c) { RL_CACHE.delete(key); RL_CACHE.set(key, c); return c; }
-  c = make();
-  RL_CACHE.set(key, c);
-  if (RL_CACHE.size > 60) RL_CACHE.delete(RL_CACHE.keys().next().value);
-  return c;
-}
-// Oublie toutes les images (nouvelle partie : autres peaux, autres tenues)
-export function rlForget() { RL_CACHE.clear(); }
-// Bois des fusils de la roulette qui n'existent pas au FPS (le noyer, LG_WOOD ; le merisier, LG_GOLDWOOD)
-const RL_DARKWOOD = vmMatRamp(['#170a05', '#30180c', '#4c2c16', '#6a4222', '#8c5c34']);
-const RL_BLOND = vmMatRamp(['#3a2210', '#6a4420', '#9a6c34', '#c69a52', '#ecc884']);
-// Les cinq fusils de la roulette (sprites.js : GUNS) → modèle du FPS, longueur du canon [entier, scié], matières, tenue
-const RL_GUNS = {
-  pump: { id: 'pump', L: [52, 40] },
-  nickel: { id: 'pump', L: [52, 40], recv: VM_NICKEL, metal: VM_NICKEL, wood: RL_DARKWOOD },
-  lever: { id: 'goldwin', L: [56, 42] },
-  double: { id: 'sawed', L: [46, 30], pose: { b: [89, 117], zb: 26, m: [88, 54] } },
-  coach: { id: 'sawed', L: [38, 30], recv: VM_NICKEL, wood: RL_BLOND, pose: { b: [89, 118], zb: 27, m: [88, 60] } },
-};
-const rlGun = (kind) => RL_GUNS[kind] || RL_GUNS.pump;
-const rlId = (g) => (g.id === 'goldwin' ? 'winchester' : g.id);
-
-// Fusil en joue (vers l'adversaire, au viseur), états du FPS : 'idle', 'fire' (0 éclair, 1 fumée), 'reload' (0, 1, 2 :
-// pompe tirée, douille éjectée, pompe renvoyée ; canons basculés ; levier). c.muz : la bouche sur l'écran.
-export function rlGunView(kind, state, frame, skin, cloth, sawed = false) {
-  const g = rlGun(kind), k = sawed ? 1 : 0, pose = k ? null : g.pose;
-  return rlMemo(`gun|${kind}|${state}|${frame}|${skin}|${cloth}|${k}`, () => {
-    const c = lgView(g.id, state, frame, skin, cloth, { L: g.L[k], pose, recv: g.recv, metal: g.metal, wood: g.wood });
-    const m = (pose || LG_POSE[rlId(g)]).m;
-    c.muz = [RL_X + m[0], RL_Y + m[1]];
-    return c;
-  });
-}
-
-// Fusil retourné contre moi : la bouche juste sous mes yeux, vue de face, le canon qui file vers le bas et loin devant.
-// Main gauche sous la pompe (ou le fût) comme au FPS, main droite serrée sur le canon, avant-bras qui sortent par le
-// bas de l'écran. f : 0 tenu, 1 éclair, 2 fumée, 3, 4, 5 réarmement (pompe, canons basculés, levier).
-// muz : bouche (cm, repère de l'œil) ; dir : de la bouche vers la culasse ; lf, rf : avant des mains ; la, ra : bout des
-// avant-bras (hors champ, en bas) ; rz : main droite sur le canon, de L - rz[0] à L - rz[1]
-const RL_SELF = { muz: [0.3, -2.2, 24], dir: [0.08, -0.45, 1], lf: [0.87, 0.5, 0], la: [-24, -34, 2], rf: [-0.87, 0.5, 0], ra: [24, -34, 2], rz: [22, 15] };
-export function rlSelfView(kind, f, skin, cloth, sawed = false) {
-  const g = rlGun(kind), k = sawed ? 1 : 0;
-  return rlMemo(`self|${kind}|${f}|${skin}|${cloth}|${k}`, () => rlSelf(g, f, skin, cloth, g.L[k]));
-}
-function rlSelf(g, f, skin, cloth, L) {
-  const T = RL_SELF;
-  const id = rlId(g), spec = { winchester: LG_WIN, pump: LG_PUMP, sawed: LG_SAWED }[id];
-  const act = f >= 3 ? [0.6, 1, 0.35][f - 3] : 0;
-  const M = T.muz, B = vmAdd(M, vmK(vmUnit(T.dir), L));
-  const sc = vmScene();
-  // repère de l'arme : culasse en B, canon (+z) vers la bouche M, le dessus de l'arme vers le haut
-  sc.push(vmAlong(B, M)).push(vmS(LG_K, LG_K, 1));
-  const o = { gold: g.id === 'goldwin', L, recv: g.recv, metal: g.metal, wood: g.wood, hammerDown: f === 1 };
-  if (id === 'pump') o.slide = act * 8.5;
-  // (on ne casse pas le deux-coups tourné vers soi : ses canons quitteraient l'écran)
-  if (id === 'sawed') o.hammerDown = f === 1 ? 2 : 0;
-  if (id === 'winchester') { o.lever = act; o.cycle = act; }
-  ({ winchester: lgWinchester, pump: lgPump, sawed: lgSawed })[id](sc, o);
-  const F = sc.top();
-  sc.pop().pop();
-  const [f0, f1] = spec.fore, y = spec.foreY, FR = spec.foreR;
-  const FL = id === 'sawed' ? vmMul(F, lgPivot(-1.9, 6.4, vmRx(0.62 * (o.open || 0)))) : vmMul(F, vmT(0, 0, -(o.slide || 0)));
-  lgHandAt(sc, FL, [0, y, f1], [0, y, f0], { skin, cloth, side: -1, rx: FR[0] * LG_K, rz: FR[1] * LG_K, fwd: T.lf, curl: 0.62, thumb: T.lt === 0 ? undefined : [-FR[0] - 0.15, y + 1.2, f1 + 3.0], arm: T.la });
-  lgHandAt(sc, F, [0, 0, L - T.rz[0]], [0, 0, L - T.rz[1]], { skin, cloth, side: 1, rx: 1.45 * LG_K, rz: 1.45 * LG_K, fwd: T.rf, arm: T.ra });
-  const m = vmProj(vmP(F, [0, 0, L]));
-  if (f === 1) sc.fx((p) => vmFlash(p, m[0], m[1] - 4, msFlashR(m[0], m[1] - 4, 30), 3));
-  if (f === 2) sc.fx((p) => vmSmoke(p, m[0], m[1] - 8, 3));
-  const c = vmRender(sc);
-  c.muz = [RL_X + m[0], RL_Y + m[1]];
-  return c;
-}
-
-// Derringer braqué droit devant (états du FPS : 'idle', 'fire' 0 éclair, 1 fumée), c.muz : la bouche sur l'écran
-export function rlDerringerView(state, frame, skin, cloth) {
-  return rlMemo(`der|${state}|${frame}|${skin}|${cloth}`, () => {
-    const c = msDerringerView(state, frame, skin, cloth);
-    const K = MS_DER_K, HD = MS_DER_HOLD;
-    const hold = vmChain(vmHold(HD[0], HD[1], HD[2]), vmRx(HD[3]));
-    const m = vmProj(vmP(vmChain(hold, vmS(K, K, K)), MS_DER_MUZ));
-    c.muz = [RL_X + m[0], RL_Y + m[1]];
-    return c;
-  });
-}
-
-// Mon poing pour les objets : la main du FPS serrée sur un manche vertical (l'objet tenu se dessine dessous), l'avant-bras
-// et la manche qui filent vers le bas de l'écran. side : 1 main droite, -1 main gauche ; far : poing lointain (posé sur
-// la table). c.ax, c.ay : milieu du poing dans le canvas ; c.wx, c.wy : le poignet (bracelet des menottes).
-export function rlFist(side, skin, cloth, far = false) {
-  return rlMemo(`fist|${side}|${skin}|${cloth}|${far ? 1 : 0}`, () => {
-    const z = far ? 90 : 68, w = 64, h = far ? 100 : 170;
-    const view = { w, h, f: 300, x0: 192 - w / 2, y0: 108 - 30 };
-    const sc = vmScene(view), P = [0, 0, z];
-    // doigts tournés vers moi, refermés sur le manche ; l'avant-bras descend en s'écartant un peu
-    vmGrip(sc, vmAdd(P, [0, -3, 0]), vmAdd(P, [0, 3, 0]), { skin, cloth, side, rx: 1.25, rz: 1.25, fwd: [-side, 0, 0.3], arm: vmAdd(P, [9 * side, -46, -10]) });
-    const c = vmRender(sc), wr = sc.proj(vmAdd(P, [0, -4.5, 0]));
-    c.ax = w / 2; c.ay = 30; c.wx = Math.round(wr[0]); c.wy = Math.round(wr[1]);
-    return c;
-  });
-}
-
-// Tout le moteur est partagé avec fpsart.js (VMK, modules js/fpsvm/) et la roulette
+// Tout le moteur est partagé avec fpsart.js (VMK, modules js/fpsvm/)
 export {
   canvas, rng, rd, pen, hardAlpha, VM_W, VM_H, VM_X0, VM_Y0, VM_F, vmI, vmMul, vmChain, vmT, vmS, vmRx, vmRy,
   vmRz, vmP, vmAdd, vmSub, vmK, vmDot, vmCross, vmLen, vmUnit, vmLerp, vmNormalMat, vmNM, VM_TILT, VM_DIP,

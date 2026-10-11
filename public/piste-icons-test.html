@@ -1,67 +1,198 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Icônes de la piste</title></head>
+<!doctype html><html><head><meta charset="utf-8"><title>Icônes de la piste</title><link rel="stylesheet" href="css/fonts.css"></head>
 <body style="margin:0;background:#241810;color:#fdf6e0;font:12px monospace">
 <div id="out" style="display:flex;flex-direction:column;gap:12px;padding:8px"></div>
 <pre id="errlog" style="color:#f66"></pre>
 <script type="module">
-// Planche des icônes d'objets de « La piste » (pisteicons.js), dans un canvas ×4 comme le jeu (setTransform(4)).
-// Chaque objet à ses tailles d'usage (8, 10, 12, 16, 24, 32 pixels du jeu), puis à 16 : de choix, de légende, grisé,
-// en silhouette. Sur fond sombre (bois) puis sur parchemin.
-// ?ids=revolver,arc : quelques objets ; &sizes=12,16 : les tailles ; &cols=4 : objets par rangée ; &bg=dark|parch ;
-// &z=2 : zoom d'affichage (pour regarder de près) ; &var=0 : sans les variantes.
-import { ITEM_IDS, drawItem, itemArt, GLINT_FRAMES } from './js/pisteicons.js';
+// Planche de toutes les icônes de « La piste », dans des canvas ×4 comme le jeu (setTransform(4) : un pixel du jeu =
+// quatre pixels fins), sur fond sombre (bois) et sur parchemin :
+// - items : chaque dessin détaillé (pisteicons.js : objets, ressources, coups, états, lieux, petits signes) à ses
+//   tailles d'usage (8, 10, 12, 16, 24, 32 pixels du jeu), puis à 16 : de choix, de légende, grisé, en silhouette, teinté ;
+// - ui : les icônes en situation, par drawIcon / statIcons / medal (pisteart.js) : barre des ressources, flammes de
+//   cran en rang, états au-dessus des têtes, médaillons de récit, agrandissements k = 1, 1,5, 2 ;
+// - carte : les médaillons des lieux (pistepawn.js) dans les trois états, le halo, le pion de la bande au galop ;
+// - et la liste des ids d'anciennes grilles qui n'auraient pas encore de dessin détaillé (doit être vide).
+// - avap (avant / après) : les petits signes faits main (6 à 10 pixels) à côté du dessin réduit qu'ils
+//   remplacent, et une fiche de signalement (le passeport du recrutement) dans les deux versions ; les armes à 30 ;
+// ?sec=avap,items,ui,carte : les sections ; ?ids=revolver,arc : quelques objets ; &sizes=12,16 : les tailles ;
+// &cols=4 : objets par rangée ; &bg=dark|parch ; &z=2 : zoom d'affichage ; &var=0 : sans les variantes ;
+// &loupe=4 : chaque dessin agrandi (un pixel fin = 4 pixels d'écran).
+import { ITEM_IDS, GLYPH_IDS, drawItem, itemArt } from './js/pisteicons.js';
+import { drawIcon, statIcons, medal, GRID_IDS, iconW, txt } from './js/pisteart.js';
+import { medal as placeMedal, halo, pawn, drawFine } from './js/pistepawn.js';
+import { hasItemArt } from './js/pisteicons.js';
 window.onerror = (m, s, l, c, e) => { document.getElementById('errlog').textContent += `${e?.stack || m}\n`; };
+await document.fonts.load('8px Silkscreen').catch(() => {});
 const q = new URLSearchParams(location.search);
 const ids = q.get('ids') ? q.get('ids').split(',') : ITEM_IDS;
 const sizes = (q.get('sizes') || '8,10,12,16,24,32').split(',').map(Number);
 const cols = +(q.get('cols') || 3), z = +(q.get('z') || 1), withVar = q.get('var') !== '0';
 const bgs = q.get('bg') ? [q.get('bg')] : ['dark', 'parch'];
-const VARS = [{ q: 1 }, { q: 2 }, { off: true }, { mono: '#1a0f0a' }];
+const secs = (q.get('sec') || 'avap,items,ui,carte').split(',');
+const BG = { dark: '#2a1c12', parch: '#eadcb0' }, INKS = { dark: '#c8b48a', parch: '#5a3a22' };
+const VARS = [{ q: 1 }, { q: 2 }, { off: true }, { mono: '#1a0f0a' }, { tint: '#f0705a' }];
 const R = 4, GAP = 4, LABEL = 9;
-const cellW = sizes.reduce((a, s) => a + s + GAP, GAP) + (withVar ? VARS.length * (16 + GAP) + 4 : 0);
-const cellH = Math.max(...sizes, 16) + LABEL + GAP * 2;
+const out = document.getElementById('out');
 const t0 = performance.now();
-// &loupe=4 : chaque icône agrandie (un pixel fin = 4 pixels d'écran), pour juger le dessin de près
+// un canvas de W × H pixels du jeu, mis à l'échelle R ; draw(ctx, label) dessine dedans
+function sheet(W, H, bg, draw) {
+  const cv = out.appendChild(document.createElement('canvas'));
+  cv.width = W * R; cv.height = H * R;
+  cv.style.cssText = `width:${W * R * z}px;height:${H * R * z}px;image-rendering:pixelated;align-self:flex-start`;
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = BG[bg] || bg; ctx.fillRect(0, 0, cv.width, cv.height);
+  // une étiquette en police d'écran (pixels d'écran), à (x, y) pixels du jeu
+  const label = (s, x, y) => {
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = INKS[bg] || '#c8b48a'; ctx.font = '22px monospace'; ctx.fillText(s, x * R, y * R);
+    ctx.restore();
+  };
+  ctx.setTransform(R, 0, 0, R, 0, 0);
+  draw(ctx, label);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+const title = (s) => { const h = out.appendChild(document.createElement('div')); h.textContent = s; h.style.cssText = 'font:bold 14px monospace;color:#f8d070;margin-top:8px'; };
+
+// ---------------------------------------------------------------- loupe
 if (q.get('loupe')) {
-  const m = +q.get('loupe'), out = document.getElementById('out');
+  const m = +q.get('loupe');
   out.style.cssText += ';flex-direction:row;flex-wrap:wrap;align-items:flex-start';
   for (const id of ids) for (const s of sizes) {
     const c = itemArt(id, s, q.get('q') ? { q: +q.get('q') } : {}), cv = out.appendChild(document.createElement('canvas'));
     cv.width = c.width * m; cv.height = c.height * m;
-    cv.style.background = bgs[0] === 'parch' ? '#eadcb0' : '#2a1c12';
+    cv.style.background = BG[bgs[0]];
     const g = cv.getContext('2d');
     g.imageSmoothingEnabled = false;
     g.drawImage(c, 0, 0, cv.width, cv.height);
   }
-  bgs.length = 0;
+  secs.length = 0;
 }
-for (const bg of bgs) {
-  const rows = Math.ceil(ids.length / cols), W = cellW * cols, H = cellH * rows;
-  const cv = document.getElementById('out').appendChild(document.createElement('canvas'));
-  cv.width = W * R; cv.height = H * R;
-  cv.style.cssText = `width:${W * R * z}px;height:${H * R * z}px;image-rendering:pixelated`;
-  const ctx = cv.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  ctx.fillStyle = bg === 'dark' ? '#2a1c12' : '#eadcb0';
-  ctx.fillRect(0, 0, cv.width, cv.height);
-  ids.forEach((id, n) => {
-    const ox = (n % cols) * cellW, oy = Math.floor(n / cols) * cellH;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = bg === 'dark' ? '#c8b48a' : '#5a3a22';
-    ctx.font = '22px monospace';
-    ctx.fillText(id, (ox + GAP) * R, (oy + LABEL - 1) * R);
-    ctx.setTransform(R, 0, 0, R, 0, 0);
-    // un léger cadre de cellule
-    ctx.fillStyle = bg === 'dark' ? 'rgba(255,240,200,0.04)' : 'rgba(90,58,34,0.07)';
-    ctx.fillRect(ox + 1, oy + 1, cellW - 2, cellH - 2);
-    let x = ox + GAP;
-    const base = oy + LABEL + GAP + Math.max(...sizes, 16) / 2;
-    for (const s of sizes) { drawItem(ctx, id, x + s / 2, base, s); x += s + GAP; }
-    if (withVar) {
-      x += 4;
-      for (const o of VARS) { drawItem(ctx, id, x + 8, base, 16, o); x += 16 + GAP; }
-    }
-  });
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+// ---------------------------------------------------------------- avant / après
+if (secs.includes('avap')) {
+  title(`AVANT / APRÈS : les ${GLYPH_IDS.length} petits signes faits main (à gauche : le dessin réduit d'avant, 8 et 10 ; à droite : le signe, 6, 8 et 10)`);
+  const cw = 92, ch = 22, nc = 6;
+  for (const bg of bgs) {
+    sheet(cw * nc, ch * Math.ceil(GLYPH_IDS.length / nc), bg, (ctx, label) => GLYPH_IDS.forEach((id, n) => {
+      const ox = (n % nc) * cw, oy = Math.floor(n / nc) * ch;
+      label(id, ox + 3, oy + 6);
+      ctx.fillStyle = bg === 'dark' ? 'rgba(255,240,200,0.04)' : 'rgba(90,58,34,0.07)';
+      ctx.fillRect(ox + 1, oy + 1, cw - 2, ch - 2);
+      drawItem(ctx, id, ox + 9, oy + 14, 8, { art: true }); drawItem(ctx, id, ox + 21, oy + 14, 10, { art: true });
+      ctx.fillStyle = INKS[bg]; ctx.fillRect(ox + 30, oy + 9, 0.5, 10);
+      drawItem(ctx, id, ox + 39, oy + 14, 6); drawItem(ctx, id, ox + 50, oy + 14, 8); drawItem(ctx, id, ox + 63, oy + 14, 10);
+      drawItem(ctx, id, ox + 80, oy + 14, 16);
+    }));
+  }
+  // la fiche de signalement du passeport (icônes à 8), avant et après
+  for (const bg of bgs) {
+    sheet(240, 52, bg, (ctx, label) => {
+      const col = bg === 'dark' ? '#fdf6e0' : '#3a1a0c';
+      [['avant', true, 6], ['après', false, 124]].forEach(([nm, art, x0]) => {
+        label(nm, x0, 6);
+        [['coeur', 'Santé', '45 PV'], ['botte', 'Déplacement', '4 cases'], ['viseur', 'Précision', '30'], ['esquive', 'Esquive', '10 %'], ['s_affut', 'Initiative', '7']].forEach(([id, l, v], k) => {
+          const y = 10 + k * 8.5;
+          drawItem(ctx, id, x0 + 4, y + 2.5, 8, art ? { art: true } : {});
+          txt(ctx, l, x0 + 10, y - 0.5, col, 'left', 8, '');
+          txt(ctx, v, x0 + 110, y - 0.5, col, 'right', 8, '');
+        });
+      });
+    });
+  }
+  title('ARMES ET ARMURES À LEUR TAILLE DU MAGASIN (30, 26, 24)');
+  const shop = [['revolver', 30], ['winchester', 30], ['fusil', 30], ['sharps', 30], ['arc', 30], ['cuir', 26], ['duster', 26], ['plastron', 26], ['couteau', 24], ['dynamite', 24], ['trousse', 24], ['whisky', 24]];
+  for (const bg of bgs) {
+    sheet(shop.length * 34 + 4, 40, bg === 'dark' ? '#33241a' : bg, (ctx, label) => shop.forEach(([id, s], k) => {
+      ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(4 + k * 34, 4, 32, 32);
+      drawItem(ctx, id, 20 + k * 34, 20, s);
+    }));
+  }
+}
+
+// ---------------------------------------------------------------- les dessins détaillés
+if (secs.includes('items')) {
+  title(`DESSINS DÉTAILLÉS (${ids.length}) : tailles ${sizes.join(', ')}${withVar ? ' · à 16 : de choix, de légende, grisé, silhouette, teinté' : ''}`);
+  const cellW = sizes.reduce((a, s) => a + s + GAP, GAP) + (withVar ? VARS.length * (16 + GAP) + 4 : 0);
+  const cellH = Math.max(...sizes, 16) + LABEL + GAP * 2;
+  for (const bg of bgs) {
+    const rows = Math.ceil(ids.length / cols);
+    sheet(cellW * cols, cellH * rows, bg, (ctx, label) => ids.forEach((id, n) => {
+      const ox = (n % cols) * cellW, oy = Math.floor(n / cols) * cellH;
+      label(id, ox + GAP, oy + LABEL - 1);
+      ctx.fillStyle = bg === 'dark' ? 'rgba(255,240,200,0.04)' : 'rgba(90,58,34,0.07)';
+      ctx.fillRect(ox + 1, oy + 1, cellW - 2, cellH - 2);
+      let x = ox + GAP;
+      const base = oy + LABEL + GAP + Math.max(...sizes, 16) / 2;
+      for (const s of sizes) { drawItem(ctx, id, x + s / 2, base, s); x += s + GAP; }
+      if (withVar) {
+        x += 4;
+        for (const o of VARS) { drawItem(ctx, id, x + 8, base, 16, o); x += 16 + GAP; }
+      }
+    }));
+  }
+}
+
+// ---------------------------------------------------------------- en situation (pisteart.js)
+if (secs.includes('ui')) {
+  title('EN SITUATION : drawIcon, statIcons, medal (pisteart.js)');
+  for (const bg of bgs) {
+    sheet(384, 118, bg, (ctx, label) => {
+      const col = bg === 'dark' ? '#fdf6e0' : '#3a1a0c', sh = bg === 'dark' ? '#1a0f0a' : '';
+      // la barre des ressources, et les caractéristiques
+      label('ressources, caractéristiques (statIcons)', 4, 7);
+      let x = 6;
+      for (const [id, n] of [['vivres', 4], ['balles', 40], ['fourn', 3], ['dollars', 380], ['n_combat', 2], ['xp', 20]]) {
+        drawIcon(ctx, id, x + iconW(id) / 2, 15.5); x += iconW(id) + 3;
+        txt(ctx, String(n), x, 12, col, 'left', 8, sh); x += 22;
+      }
+      statIcons(ctx, 200, 12, [['coeur', 50], ['botte', 6], ['viseur', 18], ['esquive', 12], ['armure', 8], ['cran', 3]], col, sh);
+      // les flammes de cran en rang serré, les états au-dessus d'une tête, l'œil rouge d'une menace
+      label('cran_s en rang (allumées, éteintes) · états au-dessus des têtes · menace', 4, 30);
+      for (let k = 0; k < 6; k++) { ctx.globalAlpha = k < 4 ? 1 : 0.22; drawIcon(ctx, 'cran_s', 8 + k * 5, 38.5); }
+      ctx.globalAlpha = 1;
+      const st = ['s_bleed', 's_mark', 's_affut', 's_shield', 's_pin', 's_ghost'];
+      st.forEach((id, k) => drawIcon(ctx, id, 60 + k * 5, 38));
+      st.forEach((id, k) => drawIcon(ctx, id, 110 + k * 11, 38));
+      drawIcon(ctx, 's_affut', 186, 38, { w: '#f0705a', u: '#1a0f0a' });
+      drawIcon(ctx, 'cran_s', 200, 38.5); txt(ctx, 'Talent (1 cran)', 205, 35, col, 'left', 8, sh);
+      // les médaillons de récit, r = 5 et 6
+      label('medal() r = 5 et r = 6 : lieux, et le viseur du bandeau de tour', 4, 54);
+      const places = ['n_combat', 'n_event', 'n_comptoir', 'n_camp', 'n_recrue', 'n_cache', 'n_prisonnier', 'n_repaire', 'n_depart', 'n_unknown', 'viseur'];
+      places.forEach((id, k) => { medal(ctx, 10 + k * 15, 64, id, 5); medal(ctx, 10 + k * 15, 79, id, 6); });
+      // les agrandissements (arbre de compétences : k = 1,5 ; cases d'équipement : k = 1 ou 2)
+      label('drawIcon k = 1, 1,5, 2 (arbre, équipement), et le grand filigrane (k = 6)', 4, 96);
+      ['revolver', 'cuir', 'longuevue', 'coeur', 'n_cache', 'double'].forEach((id, k) => {
+        [1, 1.5, 2].forEach((kk, j) => drawIcon(ctx, id, 10 + k * 46 + j * 14, 108, null, kk));
+      });
+      ctx.globalAlpha = bg === 'dark' ? 0.25 : 0.3; drawIcon(ctx, 'n_repaire', 360, 96, null, 6); ctx.globalAlpha = 1;
+    });
+  }
+  const missing = GRID_IDS.filter((id) => !hasItemArt(id));
+  const p = out.appendChild(document.createElement('div'));
+  p.id = 'missing';
+  p.textContent = missing.length ? `SANS DESSIN DÉTAILLÉ : ${missing.join(', ')}` : `Toutes les anciennes grilles (${GRID_IDS.length}) ont leur dessin détaillé.`;
+  p.style.color = missing.length ? '#f66' : '#b8e070';
+}
+
+// ---------------------------------------------------------------- la carte (pistepawn.js)
+if (secs.includes('carte')) {
+  title('CARTE : médaillons des lieux (repos, ouvert, visité), halo, pion de la bande');
+  const types = ['depart', 'combat', 'event', 'comptoir', 'camp', 'recrue', 'cache', 'prisonnier', 'repaire', 'unknown'];
+  for (const bg of ['#c49a5c', '#3e5a26', ...bgs]) {
+    sheet(384, 104, bg, (ctx, label) => {
+      ['idle', 'open', 'seen'].forEach((stt, j) => {
+        label(stt, 2, 13 + j * 26);
+        types.forEach((t, k) => {
+          const x = 46 + k * 34, y = 14 + j * 26;
+          if (stt === 'open') drawFine(ctx, halo(t, 0.5), x, y);
+          drawFine(ctx, placeMedal(t, stt), x, y);
+        });
+      });
+      const look = { skin: 2, hat: 'cowboy', hatColor: 7, hair: 'short', hairColor: 0, outfit: 'vest', outfitColor: 0 };
+      [-1, 0, 1, 2, 3].forEach((f, k) => drawFine(ctx, pawn(look, f), 30 + k * 30, 101));
+      drawFine(ctx, pawn({ skin: 0, hat: 'none', hairColor: 3, outfitColor: 5 }, -1), 190, 101);
+    });
+  }
 }
 document.title += ` (${Math.round(performance.now() - t0)} ms)`;
 window.READY = true;

@@ -26,6 +26,12 @@ export const PISTE = {
   dress: 30, // panser une blessure hors combat (1 fourniture) : +30 PV, +50 % avec un médecin dans la bande
   cran: 3, // cran maximal de base ; on commence chaque combat à 1
   bleed: 8, // saignement : PV perdus au début de chaque tour
+  burn: 6, // brûlure : PV perdus au début de son tour (2 tours), et en entrant dans les flammes
+  fireHit: 10, // dégâts en entrant (ou en restant) dans une case en feu
+  ap: 2, // points d'action par tour : se déplacer (1 dans la zone blanche, 2 jusqu'à la jaune), tirer, recharger, un objet…
+  guetMalus: 20, // tir de guet (réaction) : -20 % de chances de toucher
+  flankCrit: 30, // pris de flanc : +30 % de critiques
+  panic: 45, // chance de paniquer en voyant un coup brutal tout près (moins le sang-froid)
   levels: [0, 60, 140, 240, 360, 500, 660, 840], // XP cumulée pour chaque niveau (8 au plus : un point d'arbre par niveau)
   upHp: 5, // PV max en plus à chaque niveau
   koRise: 10, // à terre en fin de combat gagné : on se relève avec 10 PV
@@ -51,13 +57,14 @@ const QMUL = [1, 1.15, 1.3];
 const QPRICE = [1, 2.2, 4];
 
 // kit : le dessin de l'arme (brawlart.js) ; acc : précision en plus contre une cible à couvert ; clip : coups avant de
-// recharger (null : pas de munitions) ; sp : coup spécial (cran)
+// recharger (null : pas de munitions) ; sp : coup spécial (cran) ; quick : tirer ne coûte qu'1 PA et ne finit pas le tour
+// (on peut tirer puis courir à couvert) ; heavy : tirer coûte les 2 PA (pas de déplacement le même tour)
 export const WEAPONS = {
-  revolver: { name: 'COLT', kit: 'colts', dmg: [20, 25], range: 6, clip: 6, acc: 0, crit: 10, sfx: 'colt', price: 60, sp: 'double' },
+  revolver: { name: 'COLT', kit: 'colts', dmg: [20, 25], range: 6, clip: 6, acc: 0, crit: 10, sfx: 'colt', price: 60, sp: 'double', quick: true },
   winchester: { name: 'WINCHESTER', kit: 'sniper', dmg: [24, 32], range: 8, clip: 4, acc: -5, crit: 5, sfx: 'winchester', price: 90, sp: 'feu' },
   fusil: { name: 'FUSIL DE CHASSE', short: 'FUSIL', kit: 'pompe', dmg: [30, 38], range: 3, clip: 2, acc: 15, crit: 5, sfx: 'shotgun', price: 80, sp: 'volee' },
-  sharps: { name: 'SHARPS', kit: 'sniper', dmg: [26, 32], range: 11, clip: 3, acc: 10, crit: 15, sfx: 'sharps', price: 110, sp: 'affut' },
-  arc: { name: 'ARC', kit: 'arc', dmg: [18, 24], range: 7, clip: null, acc: 5, crit: 10, sfx: 'bow', price: 70, sp: 'barbelee' },
+  sharps: { name: 'SHARPS', kit: 'sniper', dmg: [26, 32], range: 11, clip: 3, acc: 10, crit: 15, sfx: 'sharps', price: 110, sp: 'affut', heavy: true },
+  arc: { name: 'ARC', kit: 'arc', dmg: [18, 24], range: 7, clip: null, acc: 5, crit: 10, sfx: 'bow', price: 70, sp: 'barbelee', quick: true },
 };
 export const ARMORS = {
   cuir: { name: 'VESTE DE CUIR', short: 'VESTE', cls: 0, arm: 8, mv: 0, price: 40, sp: 'sprint' },
@@ -95,15 +102,15 @@ export const SPECIALS = {
   double: { name: 'COUP DOUBLE', short: 'DOUBLE', cost: 2, aim: 'enemy', text: 'Deux balles, sur une ou deux cibles' },
   feu: { name: 'FEU ROULANT', short: 'RAFALE', cost: 2, aim: 'enemy', text: 'Touche chaque ennemi sur la ligne de tir, jusqu\'à portée (1 balle chacun)' },
   volee: { name: 'VOLÉE', short: 'VOLÉE', cost: 1, aim: 'enemy', text: 'Deux canons en éventail : tous les ennemis du cône, -20 % de dégâts' },
-  affut: { name: 'À L\'AFFÛT', short: 'AFFÛT', cost: 2, aim: 'tile', text: 'Guette un cône : tire sur le premier ennemi qui y bouge ou y tire' },
+  affut: { name: 'À L\'AFFÛT', short: 'AFFÛT', cost: 2, aim: 'tile', text: 'Guette un cône, sans malus : tire sur le premier ennemi qui y bouge ou y tire (finit le tour)' },
   barbelee: { name: 'FLÈCHE BARBELÉE', short: 'BARBELÉE', cost: 1, aim: 'enemy', text: 'La cible touchée saigne 3 tours' },
   // armures
   sprint: { name: 'SPRINT', short: 'SPRINT', cost: 1, aim: 'self', free: true, text: '+3 cases de déplacement ce tour' },
-  profil: { name: 'PROFIL BAS', short: 'PROFIL BAS', cost: 1, aim: 'self', text: '+40 % d\'esquive jusqu\'à ton prochain tour' },
-  retranche: { name: 'RETRANCHÉ', short: 'RETRANCHÉ', cost: 2, aim: 'self', text: '-75 % de dégâts jusqu\'à ton prochain tour' },
+  profil: { name: 'PROFIL BAS', short: 'PROFIL BAS', cost: 1, aim: 'self', text: '+40 % d\'esquive jusqu\'à ton prochain tour (finit le tour)' },
+  retranche: { name: 'RETRANCHÉ', short: 'RETRANCHÉ', cost: 2, aim: 'self', text: '-75 % de dégâts jusqu\'à ton prochain tour (finit le tour)' },
   // personnages
-  ralliement: { name: 'RALLIEMENT', short: 'RALLIEMENT', cost: 2, aim: 'ally', text: 'Un allié retrouve son déplacement, avec +2 cases' },
-  roulade: { name: 'ROULÉ-BOULÉ', short: 'ROULADE', cost: 1, aim: 'tile', free: true, text: 'Bond de 2 cases en ligne, sans prendre le déplacement' },
+  ralliement: { name: 'RALLIEMENT', short: 'RALLIEMENT', cost: 2, aim: 'ally', text: 'Un allié aura 3 PA (et +2 cases) à son prochain tour' },
+  roulade: { name: 'ROULÉ-BOULÉ', short: 'ROULADE', cost: 1, aim: 'tile', free: true, text: 'Bond de 2 cases en ligne, sans dépenser de PA' },
   soins: { name: 'PREMIERS SOINS', short: 'SOINS', cost: 1, aim: 'ally', text: 'Au contact : +25 % de PV, arrête le saignement, relève (sans fourniture)' },
   epaule: { name: 'COUP D\'ÉPAULE', short: 'ÉPAULE', cost: 1, aim: 'enemy', text: 'Au contact : repousse de 2 cases, +12 dégâts contre un obstacle' },
   jugement: { name: 'JUGEMENT DERNIER', short: 'JUGEMENT', cost: 2, aim: 'enemy', text: 'Si la balle laisse la cible sous 35 % de PV, elle tombe' },
@@ -117,56 +124,56 @@ export const SPECIALS = {
 // look : l'allure (même format que le personnage des joueurs, data.js) ; arm : classe d'armure la plus lourde portée
 // (0 cuir, 1 cache-poussière, 2 plastron) ; weapons : armes qu'il sait manier ; endu : tours à terre avant de mourir
 export const LEADER = {
-  id: 'chef', name: 'TOI', role: 'Chef de bande', hp: 50, mv: 5, prec: 20, esq: 10, endu: 3, arm: 1,
+  id: 'chef', name: 'TOI', role: 'Chef de bande', hp: 50, mv: 5, prec: 20, esq: 10, endu: 3, arm: 1, init: 10, nerve: 15,
   weapons: ['revolver', 'winchester', 'fusil'], perks: ['filou'], talent: 'ralliement',
   gear: { w: 'revolver', a: 'cuir', it: 'bandages' },
   bio: 'C\'est ta bande, et ta tête qui est mise à prix.',
 };
 export const ROSTER = {
   gamin: {
-    name: 'JESSE COLE', short: 'JESSE', nick: 'LE GAMIN', role: 'Pistolero', hp: 40, mv: 6, prec: 30, esq: 20, endu: 2, arm: 0,
+    name: 'JESSE COLE', short: 'JESSE', nick: 'LE GAMIN', role: 'Pistolero', init: 14, nerve: 5, hp: 40, mv: 6, prec: 30, esq: 20, endu: 2, arm: 0,
     weapons: ['revolver'], perks: ['cassecou'], talent: 'roulade', gear: { w: 'revolver', a: 'cuir', it: 'whisky' },
     look: { skin: 0, hat: 'cowboy', hatColor: 7, hair: 'messy', hairColor: 3, eyes: 'squint', nose: 'small', mouth: 'toothpick', beard: 'none', outfit: 'vest', outfitColor: 0, extra: 'scarf' },
     bio: 'Dix-neuf ans, la gâchette la plus rapide du comté.',
   },
   doc: {
-    name: 'DOC HOLLOWAY', short: 'DOC', nick: 'LE TOUBIB', role: 'Médecin', hp: 40, mv: 5, prec: 15, esq: 10, endu: 3, arm: 0,
+    name: 'DOC HOLLOWAY', short: 'DOC', nick: 'LE TOUBIB', role: 'Médecin', init: 8, nerve: 5, hp: 40, mv: 5, prec: 15, esq: 10, endu: 3, arm: 0,
     weapons: ['revolver', 'fusil'], perks: ['medecin', 'polyglotte'], talent: 'soins', gear: { w: 'revolver', a: 'cuir', it: 'trousse' },
     look: { skin: 6, hat: 'bowler', hatColor: 7, hair: 'slick', hairColor: 6, eyes: 'glasses', nose: 'long', mouth: 'neutral', beard: 'pencil', outfit: 'suit', outfitColor: 7, extra: 'bolo' },
     bio: 'Il recoud mieux qu\'il ne vise. Parle latin, espagnol et comanche.',
   },
   martha: {
-    f: true, name: 'BIG MARTHA', short: 'MARTHA', nick: 'LA MONTAGNE', role: 'Costaude', hp: 60, mv: 4, prec: 10, esq: 0, endu: 4, arm: 2, tough: 0.15,
+    f: true, name: 'BIG MARTHA', short: 'MARTHA', nick: 'LA MONTAGNE', role: 'Costaude', init: 5, nerve: 20, hp: 60, mv: 4, prec: 10, esq: 0, endu: 4, arm: 2, tough: 0.15,
     weapons: ['fusil', 'winchester'], perks: ['costaud'], talent: 'epaule', gear: { w: 'fusil', a: 'plastron', it: 'couteau' },
     look: { skin: 2, hat: 'straw', hatColor: 0, hair: 'braids', hairColor: 5, eyes: 'angry', nose: 'broken', mouth: 'grin', beard: 'none', outfit: 'overalls', outfitColor: 3, extra: 'freckles' },
     bio: 'Coriace : 15 % de dégâts en moins. A tenu un ranch seule.',
   },
   reverend: {
-    name: 'RÉVÉREND CAIN', short: 'CAIN', nick: 'LE PRÊCHEUR', role: 'Tireur d\'élite', hp: 45, mv: 4, prec: 30, esq: 10, endu: 3, arm: 0,
+    name: 'RÉVÉREND CAIN', short: 'CAIN', nick: 'LE PRÊCHEUR', role: 'Tireur d\'élite', init: 7, nerve: 25, hp: 45, mv: 4, prec: 30, esq: 10, endu: 3, arm: 0,
     weapons: ['sharps', 'winchester'], perks: ['intimidation', 'esprits'], talent: 'jugement', gear: { w: 'sharps', a: 'cuir', it: 'longuevue' },
     look: { skin: 1, hat: 'tophat', hatColor: 7, hair: 'long', hairColor: 7, eyes: 'tired', nose: 'hooked', mouth: 'frown', beard: 'imperial', outfit: 'duster', outfitColor: 7, extra: 'none' },
     bio: 'Il prêche le dimanche et règle les comptes la semaine.',
   },
   tala: {
-    f: true, name: 'TALA', short: 'TALA', nick: 'L\'ÉCLAIREUSE', role: 'Pisteuse', hp: 45, mv: 6, prec: 25, esq: 20, endu: 3, arm: 0,
+    f: true, name: 'TALA', short: 'TALA', nick: 'L\'ÉCLAIREUSE', role: 'Pisteuse', init: 12, nerve: 10, hp: 45, mv: 6, prec: 25, esq: 20, endu: 3, arm: 0,
     weapons: ['arc', 'winchester'], perks: ['pisteur', 'polyglotte'], talent: 'traque', gear: { w: 'arc', a: 'cuir', it: 'couteau' },
     look: { skin: 3, hat: 'none', hatColor: 2, hair: 'braids', hairColor: 8, eyes: 'normal', nose: 'small', mouth: 'neutral', beard: 'none', outfit: 'fringe', outfitColor: 2, extra: 'earring' },
     bio: 'Lit une piste vieille de trois jours. Son arc ne coûte pas de balles.',
   },
   rosita: {
-    f: true, name: 'ROSITA VARGAS', short: 'ROSITA', nick: 'LA MÈCHE', role: 'Artificière', hp: 50, mv: 5, prec: 15, esq: 10, endu: 3, arm: 1,
+    f: true, name: 'ROSITA VARGAS', short: 'ROSITA', nick: 'LA MÈCHE', role: 'Artificière', init: 9, nerve: 5, hp: 50, mv: 5, prec: 15, esq: 10, endu: 3, arm: 1,
     weapons: ['winchester', 'fusil'], perks: ['mecano', 'cassecou'], talent: 'meche', gear: { w: 'winchester', a: 'duster', it: 'dynamite' },
     look: { skin: 2, hat: 'sombrero', hatColor: 10, hair: 'ponytail', hairColor: 0, eyes: 'lashes', nose: 'small', mouth: 'smile', beard: 'none', outfit: 'bandolier', outfitColor: 4, extra: 'none' },
     bio: 'A dynamité trois coffres et un pont. Répare tout ce qui roule.',
   },
   silas: {
-    name: 'SILAS CROW', short: 'SILAS', nick: 'LE FANTÔME', role: 'Assassin', hp: 40, mv: 6, prec: 20, esq: 30, endu: 2, arm: 0,
+    name: 'SILAS CROW', short: 'SILAS', nick: 'LE FANTÔME', role: 'Assassin', init: 13, nerve: 15, hp: 40, mv: 6, prec: 20, esq: 30, endu: 2, arm: 0,
     weapons: ['revolver'], perks: ['ombre', 'sixieme'], talent: 'fondu', gear: { w: 'revolver', a: 'cuir', it: 'couteau' },
     look: { skin: 6, hat: 'gambler', hatColor: 7, hair: 'long', hairColor: 8, eyes: 'shades', nose: 'hooked', mouth: 'smirk', beard: 'stubble', outfit: 'duster', outfitColor: 7, extra: 'scar' },
     bio: 'Personne ne l\'entend venir. 30 % d\'esquive.',
   },
   omalley: {
-    name: 'SERGENT O\'MALLEY', short: 'O\'MALLEY', nick: 'LE VÉTÉRAN', role: 'Soldat', hp: 55, mv: 5, prec: 20, esq: 5, endu: 4, arm: 1,
+    name: 'SERGENT O\'MALLEY', short: 'O\'MALLEY', nick: 'LE VÉTÉRAN', role: 'Soldat', init: 9, nerve: 25, hp: 55, mv: 5, prec: 20, esq: 5, endu: 4, arm: 1,
     weapons: ['winchester', 'revolver', 'fusil'], perks: ['intimidation', 'pisteur'], talent: 'semonce', gear: { w: 'winchester', a: 'duster', it: 'bandages' },
     look: { skin: 0, hat: 'cavalry', hatColor: 3, hair: 'short', hairColor: 5, eyes: 'squint', nose: 'red', mouth: 'pipe', beard: 'walrus', outfit: 'sheriff', outfitColor: 3, extra: 'medal' },
     bio: 'Vingt ans de cavalerie. Il gueule, et on se baisse.',
@@ -213,7 +220,8 @@ export function statsOf(m) {
     dmgUp: (u.dmg || 0) * 3 + tf.dmg,
     cranMax: PISTE.cran + (u.cran || 0) + (it?.cran || 0) + tf.cran,
     range: w ? w.range + (wq >= 2 ? 1 : 0) + (it?.range || 0) + tf.range : 1,
-    endu: d.endu, tough: d.tough || 0, perks, talent: d.talent, skills: tf.skills, cranStart: 1 + (u.cran || 0) + tf.cran,
+    endu: d.endu, tough: (d.tough || 0) + (tf.tough || 0), perks, uses: tf.uses || 0, talent: d.talent, skills: tf.skills, cranStart: 1 + (u.cran || 0) + tf.cran,
+    init: (d.init || 8) + (tf.init || 0), nerve: (d.nerve || 0) + (tf.nerve || 0),
   };
 }
 export const levelOf = (xp) => { let l = 1; while (l < PISTE.levels.length && xp >= PISTE.levels[l]) l++; return l; };
@@ -225,14 +233,14 @@ export const partyPerks = (party) => new Set(party.filter((m) => m.alive).flatMa
 // ai : shooter (cherche le couvert et le meilleur tir), rusher (fonce au contact), beast (bête : au contact, sans couvert),
 // sniper (de loin, guette s'il ne voit rien), grenadier (dynamite sur les groupes), boss (El Diablo)
 export const ENEMIES = {
-  bandit: { name: 'HORS-LA-LOI', hp: 30, arm: 0, mv: 5, prec: 10, esq: 5, w: 'revolver', ai: 'shooter', xp: 20 },
-  carabinier: { name: 'CARABINIER', hp: 34, arm: 6, mv: 4, prec: 10, esq: 5, w: 'winchester', ai: 'shooter', xp: 25 },
-  brute: { name: 'BRUTE', hp: 46, arm: 10, mv: 5, prec: 5, esq: 0, w: 'fusil', ai: 'rusher', xp: 30 },
-  coyote: { name: 'COYOTE', hp: 20, arm: 0, mv: 7, prec: 0, esq: 15, bite: [10, 14], ai: 'beast', xp: 12 },
-  embusque: { name: 'TIREUR EMBUSQUÉ', hp: 28, arm: 0, mv: 3, prec: 20, esq: 5, w: 'sharps', ai: 'sniper', xp: 30 },
-  dynamiteur: { name: 'DYNAMITEUR', hp: 30, arm: 6, mv: 4, prec: 5, esq: 5, w: 'revolver', ai: 'grenadier', boom: [16, 22], xp: 30 },
-  lieutenant: { name: 'LIEUTENANT', hp: 50, arm: 12, mv: 4, prec: 15, esq: 5, w: 'revolver', ai: 'shooter', aura: 10, xp: 45 },
-  diablo: { name: 'EL DIABLO', hp: 120, arm: 15, mv: 5, prec: 20, esq: 10, w: 'revolver', ai: 'boss', dmg: [20, 26], xp: 250, boss: true },
+  bandit: { init: 9, name: 'HORS-LA-LOI', hp: 30, arm: 0, mv: 5, prec: 10, esq: 5, w: 'revolver', ai: 'shooter', xp: 20 },
+  carabinier: { init: 8, name: 'CARABINIER', hp: 34, arm: 6, mv: 4, prec: 10, esq: 5, w: 'winchester', ai: 'shooter', xp: 25 },
+  brute: { init: 6, name: 'BRUTE', hp: 46, arm: 10, mv: 5, prec: 5, esq: 0, w: 'fusil', ai: 'rusher', xp: 30 },
+  coyote: { init: 13, name: 'COYOTE', hp: 20, arm: 0, mv: 7, prec: 0, esq: 15, bite: [10, 14], ai: 'beast', xp: 12 },
+  embusque: { init: 10, name: 'TIREUR EMBUSQUÉ', hp: 28, arm: 0, mv: 3, prec: 20, esq: 5, w: 'sharps', ai: 'sniper', xp: 30 },
+  dynamiteur: { init: 7, name: 'DYNAMITEUR', hp: 30, arm: 6, mv: 4, prec: 5, esq: 5, w: 'revolver', ai: 'grenadier', boom: [16, 22], xp: 30 },
+  lieutenant: { init: 9, name: 'LIEUTENANT', hp: 50, arm: 12, mv: 4, prec: 15, esq: 5, w: 'revolver', ai: 'shooter', aura: 10, xp: 45 },
+  diablo: { init: 12, name: 'EL DIABLO', hp: 110, arm: 12, mv: 5, prec: 20, esq: 10, w: 'revolver', ai: 'boss', dmg: [16, 21], xp: 250, boss: true },
 };
 // allures (format des personnages) : les bandits d'El Diablo et El Diablo lui-même (celui de la fusillade)
 export const ENEMY_LOOKS = [
@@ -397,8 +405,9 @@ export function memberUnit(m, uid) {
     x: 0, y: 0, hp: Math.min(m.hp, s.maxHp), max: s.maxHp, arm: Math.min(m.arm, s.armMax), armMax: s.armMax,
     mv: s.mv, prec: s.prec, esq: s.esq, crit: s.crit, dmgUp: s.dmgUp, range: s.range, tough: s.tough,
     w: w ? { id: m.gear.w.id, q: m.gear.w.q || 0 } : null, ammo: w?.clip ?? 0,
-    a: m.gear.a ? m.gear.a.id : null, it: m.gear.it ? m.gear.it.id : null, itUses: m.gear.it && ITEMS[m.gear.it.id]?.uses || 0,
+    a: m.gear.a ? m.gear.a.id : null, it: m.gear.it ? m.gear.it.id : null, itUses: m.gear.it && ITEMS[m.gear.it.id]?.uses ? ITEMS[m.gear.it.id].uses + s.uses : 0,
     talent: s.talent, cran: Math.min(s.cranStart, s.cranMax), cranMax: s.cranMax, endu: s.endu, skills: new Set(s.skills),
+    init: s.init, nerve: s.nerve, ap: 0, attacked: false,
     moved: false, acted: false, mvBonus: 0, st: {}, ko: null, dead: false, kills: 0, xpGain: 0,
   };
 }
@@ -410,10 +419,20 @@ export function enemyUnit(type, uid, col) {
     x: 0, y: 0, hp, max: hp, arm: Math.round(e.arm * k), armMax: Math.round(e.arm * k),
     mv: e.mv, prec: e.prec, esq: e.esq, crit: e.w ? WEAPONS[e.w].crit : 5, dmgUp: 0, range: e.w ? WEAPONS[e.w].range : 1, tough: 0,
     w: e.w ? { id: e.w, q: 0 } : null, ammo: 99, dmgMul: k, it: null, itUses: 0, cran: 0, cranMax: 0,
+    init: e.init || 8, nerve: e.boss ? 100 : type === 'lieutenant' ? 25 : type === 'brute' ? 15 : 0, ap: 0, attacked: false,
     moved: false, acted: false, mvBonus: 0, st: {}, ko: null, dead: false, boomCd: 0, calls: 0,
   };
 }
 export const alive = (u) => !u.dead && u.ko == null;
+// points d'action : un tir coûte 1 PA (2 avec une arme lourde) ; il finit le tour sauf avec une arme rapide (Colt, arc)
+export const shotCost = (u) => (weaponOf(u)?.heavy ? 2 : 1);
+export const shotEnds = (u) => !weaponOf(u)?.quick;
+// une case atteignable coûte 1 PA dans la zone de déplacement, 2 au-delà (jusqu'au double)
+export const stepCost = (u, d) => (d <= u.mv + (u.mvBonus || 0) ? 1 : 2);
+// l'ordre de la file des tours : initiative (plus un peu de hasard à chaque manche), les plus vifs d'abord
+export function turnOrder(B, R = Math.random) {
+  return B.units.filter((u) => !u.dead).map((u) => ({ u, k: u.init + R() * 4 + (u.st.slow ? -6 : 0) })).sort((a, b) => b.k - a.k).map((o) => o.u.uid);
+}
 export const unitAt = (B, x, y) => B.units.find((u) => !u.dead && u.x === x && u.y === y) || null;
 export const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 export const adjacent = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) === 1;
@@ -477,6 +496,21 @@ export function coverOf(m, tx, ty, fx, fy) {
 }
 // les quatre côtés d'une case : le couvert qu'elle offre (pour l'aperçu en se déplaçant)
 export const coverSides = (m, x, y) => DIRS4.map(([dx, dy]) => coverValue(cellOf(m, x + dx, y + dy)));
+// la case qui couvre la cible face au tireur (celle que les balles ratées abîment), ou -1
+export function coverCell(m, tx, ty, fx, fy) {
+  const dx = Math.sign(fx - tx), dy = Math.sign(fy - ty);
+  let best = -1, bv = 0;
+  for (const [X, Y, ok] of [[tx + dx, ty, dx && Math.abs(fx - tx) >= 1], [tx, ty + dy, dy && Math.abs(fy - ty) >= 1]]) {
+    if (!ok || !inMap(m, X, Y)) continue;
+    const v = coverValue(m.cells[Y * m.w + X]);
+    if (v > bv) { bv = v; best = Y * m.w + X; }
+  }
+  return best;
+}
+// un coup brutal (critique, au contact, explosion, ou bien plus fort qu'il ne fallait) : il fait paniquer ceux qui le voient
+export const brutal = (res, o = {}, hpBefore = 0) => !!(res.crit || o.melee || o.boom || (res.dmg || 0) - hpBefore >= 12);
+// chance qu'un témoin panique (El Diablo, jamais)
+export const panicChance = (u) => (u.boss || u.skills?.has('sangfroid') ? 0 : clamp(PISTE.panic - (u.nerve || 0), 5, 85));
 
 const COVER_BASE = [100, 50, 25]; // chances de toucher à découvert, à demi-couvert, à plein couvert (avant précision)
 export const COVER_NAMES = ['À DÉCOUVERT', 'DEMI-COUVERT', 'PLEIN COUVERT'];
@@ -509,13 +543,16 @@ export function hitInfo(B, a, t, opts = {}) {
   if (!sees(m, ax, ay, t.x, t.y)) return { ok: false, why: 'PAS EN VUE' };
   let cover = t.st.mark ? 0 : coverOf(m, t.x, t.y, ax, ay);
   if (cover === 1 && a.skills?.has('oeil')) cover = 0; // œil de lynx : le demi-couvert ne protège plus
+  // pris de flanc : la cible est collée à un couvert, mais pas du côté d'où vient le tir
+  const flank = !cover && !t.st.mark && coverSides(m, t.x, t.y).some((v) => v > 0);
   const bush = cellOf(m, t.x, t.y) === C.BUSH && d > 1.5;
   const w = weaponOf(a);
   let hit = COVER_BASE[cover];
   if (cover) hit += a.prec + (w?.acc || 0) + (opts.aura || 0);
   if (bush) hit -= 15;
   hit = cover || bush ? clamp(hit, 5, 95) : 100;
-  return { ok: true, hit, esq, cover, bush, d };
+  if (opts.reaction && !a.skills?.has('vigie')) hit = clamp(hit - PISTE.guetMalus, 5, 95);
+  return { ok: true, hit, esq, cover, bush, d, flank };
 }
 
 // Lance un coup : renvoie { hit, evade, crit, dmg (aux PV), armDmg, killed, ko } sans rien appliquer
@@ -524,7 +561,7 @@ export function rollAttack(a, t, info, { range = null, pierce = false, R = Math.
   if (R() * 100 < info.esq) return { hit: false, evade: true };
   const [lo, hi] = range || dmgRange(a);
   let dmg = randInt(lo, hi, R);
-  const crit = R() * 100 < a.crit;
+  const crit = R() * 100 < a.crit + (info.flank ? PISTE.flankCrit : 0);
   if (crit) dmg = Math.round(dmg * 1.5);
   return { hit: true, crit, ...damage(t, dmg, { pierce }) };
 }
@@ -583,44 +620,65 @@ export const blastCells = (m, x, y) => {
 };
 
 // ------------------------------------------------------------ l'IA des ennemis
-// Choisit où aller et quoi faire. Renvoie { path, act } où act = { kind: 'shoot' | 'melee' | 'boom' | 'affut' | 'call', ... }
-// (écrit pour les ennemis, mais marche pour les deux camps : le banc d'essai fait jouer la bande par la même IA)
+// Choisit où aller et quoi faire avec ses 2 points d'action. Renvoie { path, act } où act = { kind: 'shoot' | 'melee' |
+// 'boom' | 'affut' | 'guet' | 'call', ... } ; path ne dépasse pas la zone de déplacement (1 PA) quand il y a une action
+// derrière, sinon il peut aller jusqu'au double (course : 2 PA, sans action). Écrit pour les ennemis, mais marche pour
+// les deux camps (le banc d'essai fait jouer la bande par la même IA).
 export function planEnemy(B, u) {
-  const m = B.map;
+  const m = B.map, ap = u.ap ?? PISTE.ap;
   const foes = B.units.filter((o) => o.side !== u.side && alive(o) && !o.st.fondu);
   const allFoes = B.units.filter((o) => o.side !== u.side && alive(o));
-  const R0 = u.st.pinned ? new Map([[u.y * m.w + u.x, { x: u.x, y: u.y, d: 0, prev: -1 }]]) : reach(B, u);
-  if (!allFoes.length) return { path: [], act: null };
+  if (!allFoes.length || ap <= 0) return { path: [], act: null };
+  const mv1 = u.mv + (u.mvBonus || 0);
+  const pinned = u.st.pinned || u.st.stun;
+  const R0 = pinned ? new Map([[u.y * m.w + u.x, { x: u.x, y: u.y, d: 0, prev: -1 }]]) : reach(B, u, ap >= 2 ? mv1 * 2 : mv1);
   const aura = auraOf(B, u);
   const wDmg = u.w || u.boss ? dmgRange(u) : meleeRange(u);
   const avg = (wDmg[0] + wDmg[1]) / 2;
+  const fire = m.fire;
+  const hot = (c) => (fire && fire.has(c.y * m.w + c.x) ? 30 : 0);
+  // ce qu'il reste après le déplacement jusqu'à la case c
+  const left = (c) => ap - (c.d === 0 ? 0 : c.d <= mv1 ? 1 : 2);
 
+  // panique : il fuit vers la case la plus loin et la mieux couverte, sans tirer
+  if (u.st.panic) {
+    let best = null;
+    for (const [k, c] of R0) {
+      if (c.occ) continue;
+      const near = Math.min(...allFoes.map((f) => Math.hypot(f.x - c.x, f.y - c.y)));
+      const sc = near * 2 + coverAt(B, c, allFoes) * 6 - hot(c);
+      if (!best || sc > best.sc) best = { sc, k };
+    }
+    return { path: best ? pathTo(R0, best.k) : [], act: null, panic: true };
+  }
   // El Diablo siffle ses hommes une fois, au troisième tour
   if (u.ai === 'boss' && B.turn % 3 === 0 && u.calls < 1 && B.units.filter((o) => o.side === u.side && !o.dead).length < 7) {
     return { path: [], act: { kind: 'call' }, then: true };
   }
-  // les bêtes et les brutes : au plus près, au contact (ou à portée de fusil)
+  // les bêtes et les brutes : au plus près, au contact (ou à portée de fusil) ; elles courent si elles ne peuvent rien faire
   if (u.ai === 'beast' || u.ai === 'rusher') {
     let best = null;
     for (const [k, c] of R0) {
       if (c.occ) continue;
-      const from = { x: c.x, y: c.y };
+      const from = { x: c.x, y: c.y }, can = left(c) >= 1;
       for (const t of foes) {
         let score;
         if (u.ai === 'beast') {
-          if (!adjacent(from, t)) { score = -dist(from, t) * 3 - c.d * 0.1; } else score = 100 - t.hp * 0.3 - c.d * 0.1;
+          score = can && adjacent(from, t) ? 100 - t.hp * 0.3 - c.d * 0.1 : -dist(from, t) * 3 - c.d * 0.1;
         } else {
-          const hi = hitInfo(B, u, t, { from });
+          const hi = can ? hitInfo(B, u, t, { from }) : { ok: false };
           score = hi.ok ? 60 + hi.hit * 0.4 - t.hp * 0.2 + (hi.cover ? 0 : 10) : -dist(from, t) * 3;
           score += coverAt(B, from, allFoes) * 4;
         }
+        score -= hot(c);
         if (!best || score > best.score) best = { score, k, t };
       }
     }
     if (!best) return { path: [], act: null };
     const path = pathTo(R0, best.k);
-    const end = path[path.length - 1] || u;
+    const end = path[path.length - 1] || u, c = R0.get(best.k);
     const t = best.t;
+    if (left(c) < 1) return { path, act: null };
     if (u.ai === 'beast') return { path, act: adjacent(end, t) ? { kind: 'melee', t } : null };
     const hi = hitInfo(B, u, t, { from: end });
     return { path, act: hi.ok ? { kind: 'shoot', t } : null };
@@ -629,7 +687,7 @@ export function planEnemy(B, u) {
   if (u.ai === 'grenadier' && u.boomCd <= 0) {
     let best = null;
     for (const [k, c] of R0) {
-      if (c.occ) continue;
+      if (c.occ || left(c) < 1) continue;
       for (const t of allFoes) {
         if (Math.hypot(t.x - c.x, t.y - c.y) > ITEMS.dynamite.range + 0.5) continue;
         for (let Y = t.y - 1; Y <= t.y + 1; Y++) for (let X = t.x - 1; X <= t.x + 1; X++) {
@@ -637,23 +695,24 @@ export function planEnemy(B, u) {
           const hits = allFoes.filter((o) => Math.abs(o.x - X) <= 1 && Math.abs(o.y - Y) <= 1).length;
           const mates = B.units.filter((o) => o.side === u.side && !o.dead && o !== u && Math.abs(o.x - X) <= 1 && Math.abs(o.y - Y) <= 1).length;
           if (Math.abs(c.x - X) <= 1 && Math.abs(c.y - Y) <= 1) continue;
-          const sc = hits * 10 - mates * 12 + coverAt(B, c, allFoes) * 2 - c.d * 0.2;
+          const sc = hits * 10 - mates * 12 + coverAt(B, c, allFoes) * 2 - c.d * 0.2 - hot(c);
           if (hits && (!best || sc > best.sc)) best = { sc, k, X, Y, hits };
         }
       }
     }
     if (best && (best.hits >= 2 || Math.random() < 0.5)) return { path: pathTo(R0, best.k), act: { kind: 'boom', x: best.X, y: best.Y } };
   }
-  // les tireurs : la meilleure case entre le tir espéré et le danger encouru
+  // les tireurs : la meilleure case entre le tir espéré et le danger encouru (une arme lourde ne tire que sans bouger)
+  const need = shotCost(u);
   let best = null;
   for (const [k, c] of R0) {
     if (c.occ) continue;
     const from = { x: c.x, y: c.y };
     let atk = 0, tgt = null;
-    for (const t of foes) {
+    if (left(c) >= need) for (const t of foes) {
       const hi = hitInfo(B, u, t, { from, aura });
       if (!hi.ok) continue;
-      const ev = (hi.hit / 100) * (1 - hi.esq / 100) * avg * (t.hp <= avg ? 1.6 : 1) * (t.st.affut ? 1.2 : 1);
+      const ev = (hi.hit / 100) * (1 - hi.esq / 100) * avg * (t.hp <= avg ? 1.6 : 1) * (t.st.affut || t.st.guet ? 1.2 : 1) * (hi.flank ? 1.25 : 1);
       if (ev > atk) { atk = ev; tgt = t; }
     }
     let danger = 0;
@@ -669,18 +728,24 @@ export function planEnemy(B, u) {
     const nearest = Math.min(...allFoes.map((f) => Math.hypot(f.x - c.x, f.y - c.y)));
     const want = u.ai === 'sniper' ? 8 : u.range * 0.7;
     const hurt = u.hp < u.max * 0.35 ? 1.6 : 1;
-    let score = atk * 1.4 - danger * 0.35 * hurt - Math.abs(nearest - want) * 0.8 - c.d * 0.05;
+    // plus le combat dure, plus on va au contact (pas de face-à-face éternel derrière les murs)
+    const push = Math.min(2, Math.max(0, (B.turn || 1) - 3) * 0.3);
+    let score = atk * 1.4 - danger * 0.35 * hurt / (1 + push) - Math.abs(nearest - want) * 0.8 - nearest * push - c.d * 0.05 - hot(c);
     if (!tgt) score -= 8 + nearest * 0.6; // rien à tirer d'ici : on se rapproche
+    if (c.d > mv1) score -= 3; // la course : plus de tir ni de guet ce tour
     if (!best || score > best.score) best = { score, k, tgt };
   }
   const path = best ? pathTo(R0, best.k) : [];
+  const endC = best ? R0.get(best.k) : { d: 0 };
   // El Diablo tire deux fois un tour sur deux (coup double)
   if (best?.tgt) return { path, act: { kind: 'shoot', t: best.tgt, double: u.ai === 'boss' && B.turn % 2 === 1 } };
-  // le tireur embusqué qui ne voit personne guette la direction de la bande
-  if (u.ai === 'sniper' || u.ai === 'shooter') {
+  // personne en vue : le tireur embusqué guette un cône (affût), les autres se mettent au guet s'il leur reste un point
+  if ((u.ai === 'sniper' || u.ai === 'shooter' || u.ai === 'boss') && left(endC) >= 1) {
     const end = path[path.length - 1] || u;
     const t = allFoes.reduce((p, f) => (Math.hypot(f.x - end.x, f.y - end.y) < Math.hypot(p.x - end.x, p.y - end.y) ? f : p));
-    if (u.ai === 'sniper' || Math.random() < 0.25) return { path, act: { kind: 'affut', x: t.x, y: t.y } };
+    if (u.ai === 'sniper') return { path, act: { kind: 'affut', x: t.x, y: t.y } };
+    // le guet, pas deux tours de suite : il faut bien finir par avancer
+    if (u.guetAt !== B.turn - 1 && Math.hypot(t.x - end.x, t.y - end.y) <= u.range + 4 && Math.random() < 0.45) return { path, act: { kind: 'guet' } };
   }
   return { path, act: null };
 }
@@ -692,17 +757,21 @@ function coverAt(B, c, foes) {
 }
 // un lieutenant à 4 cases ou moins : +10 de précision pour ses hommes
 export function auraOf(B, u) {
-  if (u.side !== 'e') return 0;
+  if (u.side === 'p') return B.units.some((o) => o !== u && o.side === 'p' && alive(o) && o.skills?.has('meneur') && Math.hypot(o.x - u.x, o.y - u.y) <= 4) ? 10 : 0;
   return B.units.some((o) => o !== u && o.side === 'e' && !o.dead && ENEMIES[o.kind].aura && Math.hypot(o.x - u.x, o.y - u.y) <= 4) ? 10 : 0;
 }
-// L'affût : la première case d'un chemin (ou la case d'où il tire) qu'un guetteur surveille. Renvoie { k, by } ou null.
+// Le guet et l'affût : la première case d'un chemin (ou la case d'où il tire) qu'un guetteur surveille. Guet : tout ce qui
+// bouge à portée et en vue ; affût (Sharps) : son cône. Renvoie { k, by } ou null.
 export function ambushOn(B, mover, path) {
-  const watchers = B.units.filter((o) => o.side !== mover.side && alive(o) && o.st.affut);
-  if (!watchers.length) return null;
+  const watchers = B.units.filter((o) => o.side !== mover.side && alive(o) && (o.st.affut || o.st.guet));
+  if (!watchers.length || mover.st.fondu) return null;
   const steps = path.length ? path : [{ x: mover.x, y: mover.y }];
   for (let k = 0; k < steps.length; k++) {
     const s = steps[k];
-    for (const w of watchers) if (w.st.affut.cells.some((c) => c.x === s.x && c.y === s.y)) return { k, by: w };
+    for (const w of watchers) {
+      if (w.st.affut && w.st.affut.cells.some((c) => c.x === s.x && c.y === s.y)) return { k, by: w };
+      if (w.st.guet && Math.hypot(s.x - w.x, s.y - w.y) <= w.range + 0.5 && sees(B.map, w.x, w.y, s.x, s.y)) return { k, by: w, guet: true };
+    }
   }
   return null;
 }

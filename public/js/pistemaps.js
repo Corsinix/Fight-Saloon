@@ -13,6 +13,21 @@
 //           gelé est de la GLACE FINE (WATER déco GLACE : elle cède sous un homme) et le passage de glace épaisse est
 //           du sol (FLOOR déco GLACE) : on y marche
 //   FLOOR / PATH / RAIL : sols (PATH : piste, plancher usé, pavés ; RAIL : rails de mine)
+//
+// Décor interactif et lumière (contrat v2), posés à la fin sur la carte retenue (voir dress) :
+//   time    'aube' | 'midi' | 'crepuscule' | 'nuit' (la nuit quand le ciel est 'nuit')
+//   lights  [{ x, y, r, kind, h, col, off, prop, dx, dy }] — lustre (au-dessus d'une case de sol libre), lampe (sur une
+//           table ou le comptoir), reverbere (sur son poteau), feu (feu de camp au sol, déco FEU, ou brasero), et les
+//           accrochées sur leur support : lanterne (étai, paroi, colonne, chariot), torche (mur), fenetre (fenêtre
+//           éclairée) ; (dx, dy) : le côté où elles pendent, vers la case de sol qu'elles éclairent
+//   props   [{ id, kind, x, y, hp, light }] — lustre, lanterne (sur la case où elle tombe), lampe, whisky (CRATE déco
+//           TONNEAU_WHISKY), wagonnet (CRATE déco WAGONNET sur les rails) ; light : l'index de sa lumière (ou null)
+//   chp     points de vie des couverts (coverHp), dmg (usure, 0), fire et puddle (Map vides), rail (1 : rails, wagonnets
+//           compris), lightsVer et fxVer (0)
+// Cohérence : chaque thème a son vocabulaire (tools/pistemaps-check.mjs le vérifie), les bâtisses ont des portes et des
+// fenêtres régulières et leurs meubles contre les murs, la ville a ses trottoirs et ses réverbères alignés, la mine des
+// galeries d'une seule largeur, des rails continus et des étais réguliers, la hacienda une cour fermée (portail,
+// galeries à colonnes, braseros) où ne pousse ni cactus ni broussaille.
 import { rng } from './worlds.js';
 
 export const CELL = { FLOOR: 0, PATH: 1, WALL: 2, CRATE: 3, BUSH: 4, WATER: 5, CHEST: 6, SAND: 7, VOID: 8, TABLE: 9, COUNTER: 10, RAIL: 11, FENCE: 12, PILLAR: 13 };
@@ -46,9 +61,33 @@ const DECO_NAMES = [
   'PISTE', 'PLANCHER', 'ESTRADE', 'TAPIS', 'GUE', 'PONT', 'PORTE', 'PORTAIL', 'BRECHE', 'PAVE', 'FEU', 'USURE',
   // buissons
   'BLE', 'BROUSSAILLE', 'ROSEAUX', 'FOUGERE',
+  // ajoutés ensuite (à la fin : les numéros d'avant ne bougent pas) — débris laissés au sol par un couvert détruit
+  // (la case redevient du sol), tonneau de whisky (CRATE, objet interactif), brasero (PILLAR : un feu sur pied)
+  'DEBRIS_BOIS', 'DEBRIS_SAC', 'DEBRIS_PIERRE', 'DEBRIS_LUSTRE', 'TONNEAU_WHISKY', 'BRASERO',
 ];
 export const DECO = Object.freeze(Object.fromEntries(DECO_NAMES.map((n, i) => [n, i])));
 const D = DECO;
+
+// Points de vie d'un couvert destructible (map.chp, le maximum) : 0 indestructible ou rien. Les murs et les poteaux
+// tiennent, sauf les décors légers (paravent, épouvantail, arbre mort) ; la pierre tient mieux que le bois.
+const HP_CELL = [0, 0, 0, 2, 1, 0, 1, 3, 0, 2, 4, 0, 1, 0];
+const HP_DECO = {
+  [D.PARAVENT]: 2, [D.EPOUVANTAIL]: 1, [D.ARBRE_MORT]: 3, [D.ROCHE]: 3, [D.TOMBE]: 3, [D.CHARIOT]: 3, [D.WAGONNET]: 3,
+  [D.TONNEAU_WHISKY]: 1, [D.BRASERO]: 0, [D.CONGERE]: 2,
+};
+export function coverHp(cell, deco = 0) {
+  const base = HP_CELL[cell] || 0, d = HP_DECO[deco];
+  if (cell === WALL || cell === PILLAR) return d && (deco === D.PARAVENT || deco === D.EPOUVANTAIL || deco === D.ARBRE_MORT) ? d : 0;
+  return base && d !== undefined ? d : base;
+}
+// Le débris qui reste au sol quand le couvert (cell, deco) est détruit (la case devient FLOOR) : 0 pour rien
+export function debrisFor(cell, deco = 0) {
+  if (!coverHp(cell, deco)) return 0;
+  if (cell === SAND) return deco === D.CONGERE ? 0 : D.DEBRIS_SAC;
+  if (cell === BUSH) return 0;
+  if (deco === D.ROCHE || deco === D.TOMBE) return D.DEBRIS_PIERRE;
+  return D.DEBRIS_BOIS;
+}
 
 // Les thèmes de combat (noms affichés)
 export const THEMES = {
@@ -105,7 +144,10 @@ function newGrid(R, theme, region, col, kind) {
   return {
     w, h, n, R, theme, region, col, kind,
     c: new Uint8Array(n), d: new Uint8Array(n), res: new Uint8Array(n), // res : 1 départ, 2 piste, 3 à garder libre
+    indoor: new Uint8Array(n), // 1 : le dedans d'une bâtisse (ni champ, ni buisson, ni arbre)
     lights: [], pA: null, eA: null, boss: null, eZone: null, tpl: '', shape: 'plein', S: 1, floorDeco: 0,
+    // pour l'éclairage, posé à la fin (dress) : les bâtisses (fenêtres), les lanternes voulues (lamps), les feux (fires)
+    buildings: [], lamps: [], fires: [], kitP: null, kitE: null,
   };
 }
 // Taille : petite escarmouche (coyotes) à grande carte (fin de partie) ; le repaire est grand
@@ -182,11 +224,14 @@ function xf(fp, t) {
 // soft2 : 1 (ou true) permet la piste, 2 aussi la zone des départs (jamais les cases gardées)
 function fits(g, fp, ox, oy, m = 1, edge = false, soft2 = false) {
   const w = g.w;
-  for (const [x, y] of fp) {
+  for (const [x, y, v, d] of fp) {
     const X = ox + x, Y = oy + y;
     if (!IN(g, X, Y)) return false;
     const r = g.res[Y * w + X];
     if ((r && !((soft2 && r === 2) || (soft2 === 2 && r === 1))) || !isGround(g.c[Y * w + X])) return false;
+    // un wagonnet ne roule que sur des rails, et dans la mine on ne pose rien d'autre sur les rails (ils restent continus)
+    const rail = g.c[Y * w + X] === RAIL;
+    if (d === D.WAGONNET ? !rail : rail && g.theme === 'mine') return false;
   }
   if (!m) return true;
   for (const [x, y, v] of fp) {
@@ -228,7 +273,7 @@ function blob(g, cx, cy, rx, ry, v, d, jag = 0.25, on = soft) {
   for (let y = Math.floor(cy - ry - 1); y <= Math.ceil(cy + ry + 1); y++) for (let x = Math.floor(cx - rx - 1); x <= Math.ceil(cx + rx + 1); x++) {
     if (!IN(g, x, y)) continue;
     const k = y * g.w + x;
-    if (g.res[k] || !on(g.c[k])) continue;
+    if (g.res[k] || !on(g.c[k]) || g.indoor[k]) continue;
     const dx = (x - cx) / rx, dy = (y - cy) / ry, a = Math.atan2(dy, dx);
     const lim = 1 + jag * (0.6 * Math.sin(a * 3 + p1) + 0.4 * Math.sin(a * 5 + p2));
     if (dx * dx + dy * dy > lim * lim) continue;
@@ -276,12 +321,13 @@ const B = {
 const BLOCK = {
   desert: [T(['##', '##'], { '#': D.ROCHER }), T(['##'], { '#': D.ROCHER }), T(['##', ' #'], { '#': D.MESA }), T(['i i'], { i: D.CACTUS })],
   canyon: [T(['##', '##'], { '#': D.ROCHER }), T(['##'], { '#': D.ROCHER }), T(['###'], { '#': D.ROCHER })],
-  prairie: [T(['##'], { '#': D.ARBRE }), T(['##', '#*'], { '#': D.ARBRE, '*': D.BROUSSAILLE }), T(['*#*'], { '#': D.ARBRE, '*': D.BROUSSAILLE }), T(['###'], { '#': D.CABANE })],
+  prairie: [T(['##'], { '#': D.ARBRE }), T(['##', '#*'], { '#': D.ARBRE, '*': D.BROUSSAILLE }), T(['*#*'], { '#': D.ARBRE, '*': D.BROUSSAILLE }), T(['#'], { '#': D.ARBRE })],
   foret: [T(['#'], { '#': D.ARBRE }), T(['##'], { '#': D.ARBRE }), T(['i'], { i: D.TRONC }), T(['#*'], { '#': D.ARBRE, '*': D.FOUGERE })],
   neige: [T(['i'], { i: D.SAPIN }), T(['#'], { '#': D.SAPIN }), T(['##'], { '#': D.ROCHER })],
   mine: [T(['#'], { '#': D.ROCHER }), T(['##'], { '#': D.ROCHER }), T(['i'], { i: D.ETAI })],
-  saloon: [T(['###'], { '#': D.PARAVENT }), T(['##'], { '#': D.ETAGERE }), T(['i'], { i: D.POTEAU })],
-  ville: [T(['##', '##'], { '#': D.CABANE }), T(['#'], { '#': D.CABANE }), T(['##'], { '#': D.CABANE })],
+  saloon: [T(['###'], { '#': D.PARAVENT }), T(['##'], { '#': D.PARAVENT }), T(['i'], { i: D.POTEAU })],
+  // en ville, rien de bâti au milieu de la rue (voir blockSight) : un réverbère ou un poteau y coupe la vue
+  ville: [T(['##', '##'], { '#': D.CABANE }), T(['#'], { '#': D.CABANE }), T(['##'], { '#': D.CABANE }), T(['i'], { i: D.REVERBERE }), T(['i'], { i: D.POTEAU })],
   hacienda: [T(['###'], { '#': D.MUR_ADOBE }), T(['##'], { '#': D.MUR_ADOBE }), T(['i'], { i: D.COLONNE })],
 };
 // les couverts posés devant chaque camp au départ
@@ -294,7 +340,9 @@ const KIT = {
   mine: [...B.caisses, T(['x'], { x: D.WAGONNET }), ...B.sacs],
   saloon: [T(['T'], {}), T(['TT'], {}), ...B.caisses],
   ville: [...B.caisses, ...B.chariot, ...B.sacs, T(['ff'], { f: D.ATTACHE })],
-  hacienda: [...B.sacs, ...B.caisses, ...B.roche, B.cactus],
+  // la hacienda : dans la cour, des sacs et des caisses ; dehors (la bande), le désert
+  hacienda: [...B.sacs, ...B.caisses, T(['xx'], { x: D.CHARIOT })],
+  haciendaDehors: [...B.roche, B.cactus, ...B.chariot, ...B.sacs],
 };
 
 // ------------------------------------------------------------ formes (le vide autour)
@@ -592,9 +640,48 @@ function building(g, x0, y0, bw, bh, { d = D.MUR_BOIS, floor = D.PLANCHER, doors
       out.push({ x, y, ox, oy });
     }
   }
-  // un meuble dedans, s'il y a la place
-  if (!solid && bw >= 5 && bh >= 5) place(g, [T(['x'], { x: D.CAISSE }), T(['T'], {}), T(['x'], { x: D.TONNEAU })], { cands: interiorCells(g, x0, y0, x1, y1), tries: 6 });
+  if (solid) return out;
+  for (let y = y0 + 1; y < y1; y++) for (let x = x0 + 1; x < x1; x++) g.indoor[y * g.w + x] = 1;
+  // des fenêtres, régulières, jamais aux angles ni contre une porte (pour la lumière : le dedans est le rectangle)
+  if (d === D.MUR_BOIS || d === D.MUR_ADOBE) windows(g, x0, y0, x1, y1, d);
+  g.buildings.push({ x0, y0, x1, y1 });
+  // un meuble dedans, contre un mur, s'il y a la place
+  if (bw >= 5 && bh >= 5) againstWall(g, [T(['x'], { x: D.CAISSE }), T(['T'], {}), T(['x'], { x: D.TONNEAU })], 1, interiorCells(g, x0, y0, x1, y1));
   return out;
+}
+// Les fenêtres d'un mur d'enceinte rectangulaire : une case sur deux ou trois, de chaque côté, pas aux angles, pas à côté
+// d'une porte (case de sol)
+function windows(g, x0, y0, x1, y1, d) {
+  const R = g.R, step = R() < 0.5 ? 2 : 3;
+  const side = (cells) => {
+    const off = ri(R, 0, step - 1);
+    cells.forEach(([x, y], i) => {
+      if ((i + off) % step || !IN(g, x, y)) return;
+      const k = y * g.w + x;
+      if (g.c[k] !== WALL || g.d[k] !== d) return;
+      // pas à côté d'une porte ni d'un angle
+      const along = y === y0 || y === y1 ? [[1, 0], [-1, 0]] : [[0, 1], [0, -1]];
+      if (along.some(([dx, dy]) => AT(g, x + dx, y + dy) !== WALL || g.d[(y + dy) * g.w + x + dx] === D.FENETRE)) return;
+      g.d[k] = D.FENETRE;
+    });
+  };
+  const row = (y) => { const a = []; for (let x = x0 + 1; x < x1; x++) a.push([x, y]); return a; };
+  const colm = (x) => { const a = []; for (let y = y0 + 1; y < y1; y++) a.push([x, y]); return a; };
+  side(row(y0)); side(row(y1)); side(colm(x0)); side(colm(x1));
+}
+// Pose des meubles contre un mur (une seule face au mur, rien d'autre d'encombrant autour), parmi des cases candidates
+function againstWall(g, fps, n, cands, wallOk = (v) => v === WALL) {
+  const spots = cands.filter((k) => {
+    const x = k % g.w, y = (k - x) / g.w;
+    if (g.c[k] !== FLOOR || g.res[k]) return false;
+    return [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => wallOk(AT(g, x + dx, y + dy))).length === 1;
+  });
+  return scatter(g, fps, n, { cands: spots, m: 0, rot: false, tries: 12, ok: (x, y) => {
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const v = AT(g, x + dx, y + dy); if ((dx || dy) && obst(v) && !wallOk(v)) return false; }
+    // jamais devant une porte
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (IN(g, x + dx, y + dy) && g.d[(y + dy) * g.w + x + dx] === D.PORTE) return false;
+    return true;
+  } });
 }
 function interiorCells(g, x0, y0, x1, y1) {
   const out = [];
@@ -648,11 +735,28 @@ function staging(g, kit, n = 3, zoneE = null, kitP = null) {
     }
   }
 }
-function campfire(g, near, r = 4) {
-  for (let t = 0; t < 30; t++) {
-    const x = near.x + ri(g.R, -3, 3), y = near.y + ri(g.R, -3, 3);
-    if (AT(g, x, y) === FLOOR && Math.hypot(x - near.x, y - near.y) >= 1.5) { g.d[y * g.w + x] = D.FEU; g.lights.push({ x, y, r }); return; }
+// Une épave de convoi : un chariot renversé et sa cargaison tombée autour (caisses, tonneaux), plutôt que des caisses
+// semées au hasard dans la nature
+function wrecks(g, n, o = {}) {
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    const p = place(g, B.chariot, o);
+    if (!p) continue;
+    k++;
+    scatter(g, [T(['x'], { x: D.CAISSE }), T(['x'], { x: D.TONNEAU })], ri(g.R, 1, 2), { near: p, rad: 2.2, tries: 8, m: 0, ok: (x, y) => openAround(g, x, y) >= 5 });
   }
+  return k;
+}
+// Un feu de camp sur une case de sol libre près de near (hors des cases à éviter) ; sa lumière est posée par dress
+function campfire(g, near, avoid = null) {
+  for (let t = 0; t < 90; t++) {
+    const r = t < 40 ? 3 : 6, x = near.x + ri(g.R, -r, r), y = near.y + ri(g.R, -r, r), k = y * g.w + x;
+    if (AT(g, x, y) !== FLOOR || g.d[k] || (avoid && avoid.has(k)) || Math.hypot(x - near.x, y - near.y) < 1.5) continue;
+    if (openAround(g, x, y) < (t < 60 ? 7 : 5)) continue;
+    g.d[k] = D.FEU;
+    return { x, y };
+  }
+  return null;
 }
 
 // ------------------------------------------------------------ thèmes d'extérieur
@@ -698,8 +802,7 @@ function genDesert(g) {
   scatter(g, B.cactus, cnt(g, tpl === 'dunes' ? 20 : 13));
   scatter(g, B.roche, cnt(g, 9));
   scatter(g, B.rocher, cnt(g, tpl === 'dunes' ? 6 : 3), { ok: mid });
-  scatter(g, B.chariot, cnt(g, tpl === 'cimetiere' ? 4 : 2.5), { ok: mid });
-  scatter(g, B.caisses, cnt(g, 2.5), { ok: mid });
+  wrecks(g, cnt(g, tpl === 'cimetiere' ? 3.5 : 2.5), { ok: mid });
   bushes(g, D.BROUSSAILLE, cnt(g, 6));
   staging(g, KIT.desert);
 }
@@ -739,7 +842,7 @@ function field(g, x0, y0, fw, fh) {
   const rows = g.R() < 0.5;
   let n = 0;
   for (let y = y0; y < y0 + fh; y++) for (let x = x0; x < x0 + fw; x++) {
-    if (!IN(g, x, y) || g.res[y * g.w + x] || g.c[y * g.w + x] !== FLOOR) continue;
+    if (!IN(g, x, y) || g.res[y * g.w + x] || g.c[y * g.w + x] !== FLOOR || g.indoor[y * g.w + x]) continue;
     const i = rows ? y - y0 : x - x0;
     if (i % 3 !== 2) { set(g, x, y, BUSH, D.BLE); n++; }
   }
@@ -772,7 +875,7 @@ function genPrairie(g) {
     for (let y = c.y - r - 1; y <= c.y + r + 1; y++) for (let x = c.x - r - 1; x <= c.x + r + 1; x++) {
       if (IN(g, x, y) && ((x - c.x) / (r + 1.2)) ** 2 + ((y - c.y) / (ry + 1.2)) ** 2 <= 1 && !g.res[y * g.w + x] && g.c[y * g.w + x] === FLOOR) g.res[y * g.w + x] = 3;
     }
-    if (AT(g, c.x, c.y) === FLOOR) { g.d[c.y * g.w + c.x] = D.FEU; if (g.fog) g.lights.push({ x: c.x, y: c.y, r: 5 }); }
+    if (AT(g, c.x, c.y) === FLOOR) { g.d[c.y * g.w + c.x] = D.FEU; g.fires.push({ x: c.x, y: c.y }); }
     for (const [dx, dy] of [[2, 0], [-2, 1], [0, -2]]) if (R() < 0.7 && AT(g, c.x + dx, c.y + dy) === FLOOR) set(g, c.x + dx, c.y + dy, CRATE, pick(R, [D.CAISSE, D.TONNEAU]));
   }
   // des champs et des barrières
@@ -802,10 +905,14 @@ function genPrairie(g) {
   }
   trail(g);
   scatter(g, B.meule, cnt(g, 7), { ok: mid });
-  scatter(g, B.chariot, cnt(g, tpl === 'convoi' ? 1 : 2.5), { ok: mid });
-  scatter(g, B.barriere, cnt(g, tpl === 'champs' ? 6 : 5), { ok: mid });
+  wrecks(g, cnt(g, tpl === 'convoi' ? 1 : 2.2), { ok: mid });
+  // un corral (un enclos fermé, une ou deux ouvertures) plutôt que des bouts de barrière semés au hasard
+  for (let t = 0, n = tpl === 'convoi' ? 0 : R() < 0.75 ? 1 : 0; t < 25 && n > 0; t++) {
+    const fw = ri(R, 5, 7), fh = ri(R, 4, 5), x0 = ri(R, 1, g.w - fw - 1), y0 = ri(R, 1, g.h - fh - 1);
+    if (mid(x0 + fw / 2, y0 + fh / 2) && fenceRect(g, x0, y0, fw, fh, D.ENCLOS, ri(R, 1, 2))) n--;
+  }
+  scatter(g, B.barriere, cnt(g, tpl === 'champs' ? 3 : 2), { ok: mid });
   scatter(g, B.arbre, cnt(g, 6), { ok: mid });
-  scatter(g, B.caisses, cnt(g, 2), { ok: mid });
   bushes(g, D.BROUSSAILLE, cnt(g, 4));
   staging(g, KIT.prairie);
 }
@@ -838,7 +945,7 @@ function genForet(g) {
     clear = (x, y) => Math.hypot(x - c.x, y - c.y) < r;
     const cab = placeBuilding(g, 5, 4, { d: D.MUR_BOIS, doors: ['s', 'w'] }, (x, y) => Math.hypot(x - c.x, y - c.y) < r * 0.8 && Math.abs(qOf(g, x, y)) > 1.5, 30);
     scatter(g, B.buches, 2, { near: cab ? { x: cab.x1 + 2, y: cab.y0 + 1 } : c, rad: 2 });
-    if (g.fog) campfire(g, c, 4);
+    g.fires.push(c); // le campement du trappeur : le feu y est allumé de nuit (voir dress)
   }
   trail(g, D.PISTE);
   const dens = { futaie: 0.13, riviere: 0.1, clairiere: 0.12, clairseme: 0.08 }[tpl];
@@ -935,8 +1042,10 @@ function genMine(g) {
   extra.sort((p, q) => p[2] - q[2]);
   edges.push(...extra.slice(0, ri(R, 3, 4)));
   const rails = [], lamps = [];
+  // toutes les galeries ont la même largeur (boisées pareil, d'un bout à l'autre)
+  const wd = R() < 0.3 ? 2 : 3, o = (wd - 1) >> 1;
   for (const [a, b] of edges) {
-    const A = rooms[a], Bq = rooms[b], wd = pick(R, [2, 3, 3, 4]), o = (wd - 1) >> 1;
+    const A = rooms[a], Bq = rooms[b];
     const hx = R() < 0.5, mx = hx ? Bq.x : A.x, my = hx ? A.y : Bq.y;
     const pts = [];
     const seg = (x0, y0, x1, y1) => {
@@ -960,15 +1069,17 @@ function genMine(g) {
   }
   for (const p of rails) if (AT(g, p.x, p.y) === FLOOR) put(g, p.x, p.y, RAIL, 0);
   reserve(g, g.pA, 1.6); reserve(g, g.eA, 1.6);
-  // le mobilier : wagonnets sur les rails, caisses, tonneaux de poudre, étais, éboulis
+  // le mobilier : wagonnets sur les rails, caisses et tonneaux rangés contre les parois, tonneaux de poudre, étais
+  // (dans les salles), éboulis ; rien d'autre sur les rails
   const floors = [], railCells = [];
   for (let k = 0; k < g.n; k++) { if (g.c[k] === FLOOR) floors.push(k); else if (g.c[k] === RAIL) railCells.push(k); }
-  const all = floors.concat(railCells);
-  scatter(g, T(['x'], { x: D.WAGONNET }), cnt(g, 5), { cands: railCells, tries: 15 });
-  scatter(g, B.caisses, cnt(g, 16), { cands: all });
-  scatter(g, B.poudre, cnt(g, 2.5), { cands: floors });
-  scatter(g, T(['i'], { i: D.ETAI }), cnt(g, 9), { cands: floors });
-  scatter(g, B.rocher, cnt(g, 6), { cands: floors });
+  scatter(g, T(['x'], { x: D.WAGONNET }), cnt(g, 4), { cands: railCells, tries: 15 });
+  const rock = (v) => v === WALL || v === PILLAR;
+  againstWall(g, [T(['x'], { x: D.CAISSE }), T(['x'], { x: D.TONNEAU }), T(['x'], { x: D.CAISSE })], cnt(g, 12), floors, rock);
+  scatter(g, B.caisses, cnt(g, 5), { cands: floors });
+  againstWall(g, T(['P'], { P: D.POUDRE }), cnt(g, 2.5), floors, rock);
+  scatter(g, T(['i'], { i: D.ETAI }), cnt(g, 5), { cands: floors });
+  scatter(g, B.rocher, cnt(g, 5), { cands: floors });
   scatter(g, [T(['T'], {})], R() < 0.5 ? 1 : 0, { cands: floors });
   if (tpl === 'caverne') scatter(g, T(['i'], { i: D.STALAGMITE }), cnt(g, 4), { cands: floors });
   staging(g, KIT.mine);
@@ -979,7 +1090,7 @@ function genMine(g) {
     if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isGround(AT(g, x + dx, y + dy)))) { g.c[k] = PILLAR; g.d[k] = D.ETAI; }
   }
   roofVoid(g);
-  // les lanternes : au milieu des salles et le long des galeries
+  // les lanternes (posées à la fin, accrochées aux étais) : au milieu des salles et le long des galeries
   for (const r of rooms) lampAt(g, r.x, r.y, 4);
   for (const p of lamps) lampAt(g, p.x, p.y, 3);
 }
@@ -993,13 +1104,9 @@ function roofVoid(g) {
   }
   for (let k = 0; k < g.n; k++) if (!keepIt[k] && (g.c[k] === WALL || g.c[k] === PILLAR) && (g.d[k] === D.MUR_ROC || g.d[k] === D.ETAI)) { g.c[k] = VOID; g.d[k] = 0; }
 }
-function lampAt(g, x, y, r) {
-  if (g.lights.some((l) => Math.hypot(l.x - x, l.y - y) < 4.5) || g.lights.length >= 18) return;
-  for (let k = 0; k < 9; k++) {
-    const X = x + (k % 3) - 1, Y = y + Math.floor(k / 3) - 1;
-    if (IN(g, X, Y) && !MOVE[g.c[Y * g.w + X]]) { g.lights.push({ x: X, y: Y, r }); return; }
-  }
-}
+// une lanterne voulue près de (x, y) : la vraie place (une case de sol au pied d'un étai ou d'une paroi, hors des
+// départs) est choisie à la fin, sur la carte finie (voir dress)
+function lampAt(g, x, y, r) { g.lamps.push({ x, y, r }); }
 
 // ------------------------------------------------------------ le saloon
 function genSaloon(g) {
@@ -1026,7 +1133,6 @@ function genSaloon(g) {
     door(bx0, dy); door(bx0, dy + 1);
     const sy = top ? ri(R, Math.min(dy + 5, iy1 - 1), iy1 - 1) : ri(R, iy0 + 1, Math.max(iy0 + 1, dy - 4));
     door(bx0, sy);
-    for (let y = iy0; y <= iy1; y++) if (g.c[y * w + bx0] === WALL && R() < 0.3) g.d[y * w + bx0] = D.FENETRE;
     g.pA = { x: 1, y: h - 3 };
   } else {
     put(g, bx0, my, WALL, D.PORTE_CLOSE);
@@ -1070,9 +1176,24 @@ function genSaloon(g) {
   // l'escalier de la galerie, le piano (sur l'estrade), le poêle
   const sx = tpl === 'grand' ? ix0 + Math.round(iw * 0.35) : ix0 + 2, sy = tpl === 'grand' ? iy1 : iy0;
   for (let i = 0; i < 4; i++) if (!g.res[sy * w + sx + i]) put(g, sx + i, sy, WALL, D.ESCALIER);
-  const py = tpl === 'grand' ? iy0 : iy1;
-  if (tpl === 'grand' && R() < 0.6) for (let y = iy0; y <= iy0 + 2; y++) for (let x = ix0; x <= ix0 + 4; x++) if (g.c[y * w + x] === FLOOR) g.d[y * w + x] = D.ESTRADE;
+  // la scène : l'estrade (grande au « grand », petite au tripot) et le piano contre le mur, au fond de l'estrade
+  const py = tpl === 'grand' ? iy0 : iy1, ey = tpl === 'grand' ? [iy0, iy0 + 2] : [iy1 - 1, iy1];
+  if (tpl === 'grand' || R() < 0.6) for (let y = ey[0]; y <= ey[1]; y++) for (let x = ix0; x <= ix0 + (tpl === 'grand' ? 4 : 3); x++) if (g.c[y * w + x] === FLOOR) g.d[y * w + x] = D.ESTRADE;
   for (let x = ix0 + 2; x <= ix0 + 3; x++) if (!g.res[py * w + x] && g.c[py * w + x] === FLOOR) put(g, x, py, WALL, D.PIANO);
+  // les fenêtres des murs d'enceinte (une sur trois, jamais derrière l'escalier, le piano ou les étagères)
+  {
+    const off = ri(R, 0, 2);
+    const win = (x, y, ix, iy, i) => {
+      const k = y * w + x;
+      if ((i + off) % 3 || g.c[k] !== WALL || g.d[k] !== D.MUR_BOIS) return;
+      if (AT(g, x + ix, y + iy) === WALL || AT(g, x + ix, y + iy) === VOID) return;
+      const along = ix ? [[0, 1], [0, -1]] : [[1, 0], [-1, 0]];
+      if (along.some(([dx, dy]) => AT(g, x + dx, y + dy) !== WALL)) return;
+      g.d[k] = D.FENETRE;
+    };
+    for (let x = ix0 + 1; x < ix1; x++) { win(x, by0, 0, 1, x); win(x, by1, 0, -1, x); }
+    if (street) for (let y = iy0; y <= iy1; y++) win(bx0, y, 1, 0, y);
+  }
   // les poteaux de la galerie
   const rowsY = tpl === 'grand' ? [iy0 + 3, iy1 - 3] : [my];
   const px1 = tpl === 'grand' ? barX - 3 : ix1 - 8;
@@ -1104,15 +1225,18 @@ function genSaloon(g) {
     scatter(g, T(['~', '~'], { '~': D.ABREUVOIR }), 1, { ok: (x) => x === S - 2, rot: false, edge: true });
     scatter(g, [T(['x', 'x', 'x'], { x: D.CHARIOT }), T(['x', 'x'], { x: D.CHARIOT })], R() < 0.6 ? 1 : 0, { ok: inStreet, rot: false, edge: true });
     scatter(g, B.caisses, cnt(g, 2), { ok: inStreet, edge: true });
-    const lp = place(g, T(['i'], { i: D.REVERBERE }), { ok: (x) => x === S - 2 || x === 0, edge: true });
-    if (lp && g.fog) g.lights.push({ x: Math.min(lp.x + 1, S - 1), y: lp.y, r: 4 });
+    // un réverbère au bord du trottoir (allumé du crépuscule à l'aube, voir dress)
+    place(g, T(['i'], { i: D.REVERBERE }), { ok: (x) => x === S - 2, edge: true });
   }
   // l'usure du plancher, de la porte au comptoir
   const path = dijkstra(g, [g.pA.y * w + g.pA.x], (k) => k === g.eA.y * w + g.eA.x, (k) => (MOVE[g.c[k]] ? -1 : 1));
   if (path) for (const k of path) if (g.c[k] === FLOOR && g.d[k] === D.PLANCHER) { g.c[k] = PATH; g.d[k] = D.USURE; }
-  // les lustres
-  for (const fx of [0.3, 0.7]) lampAt(g, Math.round(ix0 + iw * fx), my, 5);
+  // les lustres (posés à la fin au-dessus du plancher libre de la grande salle, voir dress) : un à trois selon la taille
+  const hallX1 = tpl === 'grand' ? barX - 1 : ix1;
+  const nl = clamp(Math.round(((hallX1 - ix0 + 1) * (iy1 - iy0 + 1)) / 90), 1, 3);
+  for (let i = 0; i < nl; i++) lampAt(g, Math.round(ix0 + (hallX1 - ix0) * ((i + 0.5) / nl)), tpl === 'grand' ? my : Math.round((iy0 + 3 + my) / 2) + (i & 1), 5);
   g.inside = (x, y) => x > bx0 && x < bx1 && y > by0 && y < by1;
+  g.street = street ? { x1: S - 1, door: bx0 } : null;
   staging(g, KIT.saloon, 2, null, street ? [...B.caisses, T(['ff'], { f: D.ATTACHE }), B.abreuvoir] : null);
 }
 
@@ -1180,6 +1304,19 @@ function genVille(g) {
   }
   // dans la rue : chariots, abreuvoirs, barres d'attache, tonneaux, sacs de sable
   const inStreet = (x, y) => (x >= sx0 && x <= sx1) || (y >= sy0 && y <= sy1);
+  g.inStreet = inStreet;
+  // les réverbères, réguliers, au bord de la rue (en quinconce d'un trottoir à l'autre), jamais devant une porte
+  {
+    const lamp = (x, y) => {
+      if (AT(g, x, y) !== PATH || g.res[y * w + x] === 1 || g.res[y * w + x] === 3) return;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (IN(g, x + dx, y + dy) && g.d[(y + dy) * w + x + dx] === D.PORTE) return;
+      put(g, x, y, PILLAR, D.REVERBERE);
+    };
+    const st = ri(R, 2, 4), gap = ri(R, 6, 7);
+    const cross = (y) => sy0 >= 0 && y >= sy0 - 1 && y <= sy1 + 1; // rien au milieu du carrefour
+    for (let y = st; y < h - 1; y += gap) { if (!cross(y)) lamp(sx0, y); if (!cross(y + (gap >> 1))) lamp(sx1, y + (gap >> 1)); }
+    if (sy0 >= 0) for (let x = st; x < w - 1; x += gap) if (x < sx0 - 1 || x > sx1 + 1) { lamp(x, sy0); lamp(x + (gap >> 1), sy1); }
+  }
   const o = { ok: inStreet, soft2: true };
   scatter(g, [T(['x', 'x', 'x'], { x: D.CHARIOT }), T(['x', 'x'], { x: D.CHARIOT })], cnt(g, 1.5), o);
   scatter(g, [B.abreuvoir, T(['ff'], { f: D.ATTACHE }), T(['fff'], { f: D.ATTACHE })], cnt(g, 3), o);
@@ -1188,12 +1325,14 @@ function genVille(g) {
   // derrière les façades : barrières, cabanes, bûches, caisses, un château d'eau
   const back = (x, y) => !inStreet(x, y) && !blocks.some((b) => x >= b.x0 - 1 && x <= b.x1 + 1 && y >= b.y0 - 1 && y <= b.y1 + 1);
   if (R() < 0.6) place(g, T(['i i', '   ', 'i i'], { i: D.POTEAU }), { ok: back, rot: false, tries: 30 });
-  scatter(g, B.barriere, cnt(g, 4), { ok: back });
+  for (let i = 0, n = R() < 0.7 ? ri(R, 1, 2) : 0, t = 0; i < n && t < 30; t++) {
+    const fw = ri(R, 4, 6), fh = ri(R, 4, 5), x0 = ri(R, 1, w - fw - 1), y0 = ri(R, 1, h - fh - 1);
+    if (back(x0, y0) && back(x0 + fw - 1, y0 + fh - 1) && back(x0 + fw - 1, y0) && back(x0, y0 + fh - 1) && fenceRect(g, x0, y0, fw, fh, D.ENCLOS, 1)) i++;
+  }
+  scatter(g, B.barriere, cnt(g, 1.5), { ok: back });
   scatter(g, T(['#'], { '#': D.CABANE }), cnt(g, 2), { ok: back });
   scatter(g, [...B.caisses, ...B.buches], cnt(g, 4), { ok: back });
   scatter(g, B.chariot, cnt(g, 1), { ok: back });
-  // des réverbères devant les façades, allumés la nuit
-  if (g.fog) for (let y = 2; y < h; y += 6) { lampAt(g, sx0 - 1, y, 4); lampAt(g, sx1 + 1, y + 3, 4); }
   staging(g, KIT.ville);
 }
 
@@ -1227,6 +1366,8 @@ function genHacienda(g) {
   g.boss = { x: cx1 - 7, y: my };
   for (let y = my - 1; y <= my + 1; y++) put(g, cx1 - 8, y, SAND, D.SACS);
   for (let y = my - 1; y <= my + 1; y++) for (let x = cx1 - 7; x <= cx1 - 5; x++) keep(g, x, y);
+  // deux braseros devant la maison, aux angles
+  for (const y of [my - 3, my + 3]) { put(g, cx1 - 6, y, PILLAR, D.BRASERO); keep(g, cx1 - 6, y + Math.sign(y - my)); }
   // la fontaine au milieu de la cour (une statue au centre), et ses pavés
   const fx = Math.round((cx0 + cx1 - 4) / 2) - 1;
   for (let y = my - 2; y <= my + 2; y++) for (let x = fx - 2; x <= fx + 2; x++) if (g.c[y * w + x] === FLOOR) put(g, x, y, PATH, D.PAVE);
@@ -1254,10 +1395,16 @@ function genHacienda(g) {
   scatter(g, B.rocher, cnt(g, 2), { ok: outside });
   scatter(g, B.chariot, cnt(g, 1.2), { ok: outside });
   scatter(g, B.arbreMort, 1, { ok: outside });
-  bushes(g, D.BROUSSAILLE, cnt(g, 3));
-  staging(g, KIT.hacienda, 4, court);
-  // des torches au portail et devant la maison
-  g.lights.push({ x: cx0 - 1, y: my - 2, r: 4 }, { x: cx0 - 1, y: my + 2, r: 4 }, { x: cx1 - 5, y: my, r: 4 });
+  // la broussaille, dehors seulement (la cour est balayée)
+  for (let i = 0, n = cnt(g, 3); i < n; i++) {
+    const p = spotWhere(g, (x, y) => outside(x) && g.c[y * g.w + x] === FLOOR, 12);
+    if (p) blob(g, p.x, p.y, 0.6 + R() * 1.6, 0.6 + R() * 1.3, BUSH, D.BROUSSAILLE, 0.35, (v) => v === FLOOR);
+  }
+  g.kitP = KIT.haciendaDehors; g.kitE = KIT.hacienda;
+  g.outside = (x, y) => outside(x);
+  staging(g, KIT.hacienda, 4, court, KIT.haciendaDehors);
+  // l'éclairage (voir dress) : torches au portail (dehors et dedans), à la porte de la maison, lanternes aux colonnes
+  g.hacienda = { cx0, cx1, cy0, cy1, my };
 }
 
 const GEN = { desert: genDesert, canyon: genCanyon, prairie: genPrairie, foret: genForet, neige: genNeige, mine: genMine, saloon: genSaloon, ville: genVille, hacienda: genHacienda };
@@ -1284,7 +1431,7 @@ const CARVE_COST = [1, 1, 6, 3, 1, 5, 9, 3, -1, 3, 12, 1, 3, 7];
 function carve(g, k) {
   const v = g.c[k], d = g.d[k];
   if (!MOVE[v] || v === VOID) return;
-  if (v === WATER) { g.c[k] = FLOOR; g.d[k] = d === D.GLACE ? D.GLACE : D.GUE; } else if (v === WALL && (d === D.MUR_BOIS || d === D.MUR_ADOBE)) { g.c[k] = FLOOR; g.d[k] = D.BRECHE; } else { g.c[k] = FLOOR; g.d[k] = g.floorDeco; }
+  if (v === WATER) { g.c[k] = FLOOR; g.d[k] = d === D.GLACE ? D.GLACE : D.GUE; } else if (v === WALL && (d === D.MUR_BOIS || d === D.MUR_ADOBE || d === D.FENETRE)) { g.c[k] = FLOOR; g.d[k] = D.BRECHE; } else if (d === D.WAGONNET) { g.c[k] = RAIL; g.d[k] = 0; } else { g.c[k] = FLOOR; g.d[k] = g.floorDeco; }
 }
 // Tout le sol doit se tenir : les petits recoins sont comblés, les autres reliés en perçant le moins possible
 function connect(g) {
@@ -1398,11 +1545,12 @@ function losPairs(g, p, e) {
 }
 // s'ils se voient trop au départ : un décor qui coupe la vue, quelque part sur une des lignes de tir
 function blockSight(g, pairs) {
-  const R = g.R, kit = BLOCK[g.theme];
+  const R = g.R;
   for (let t = 0; t < 12; t++) {
     const [a, b] = pick(R, pairs), f = 0.3 + R() * 0.4;
     const x = Math.round(a.x + (b.x - a.x) * f), y = Math.round(a.y + (b.y - a.y) * f);
     if (g.eZone && !g.eZone(x, y) && g.theme === 'hacienda' && x > g.w * 0.36) continue;
+    const kit = g.inStreet && g.inStreet(x, y) ? BLOCK.ville.filter((fp) => fp[0][2] === PILLAR) : BLOCK[g.theme];
     if (place(g, kit, { near: { x, y }, rad: 1.5, tries: 6, soft2: true, m: g.theme === 'saloon' && t > 5 ? 0 : 1 })) return true;
   }
   return false;
@@ -1518,7 +1666,7 @@ const FILL = {
   mine: [0.18, [...B.caisses, T(['i'], { i: D.ETAI }), ...B.rocher, T(['x'], { x: D.WAGONNET })]],
   saloon: [0.17, [T(['T'], {}), T(['TT'], {}), T(['x'], { x: D.TONNEAU })]],
   ville: [0.18, [...B.caisses, ...B.barriere, ...B.sacs]],
-  hacienda: [0.17, [...B.sacs, ...B.caisses, B.cactus, ...B.roche]],
+  hacienda: [0.17, [...B.sacs, ...B.caisses]],
 };
 // cases praticables autour d'une case (ses huit voisines)
 function openAround(g, x, y) {
@@ -1535,8 +1683,12 @@ function densify(g) {
   const ok = (x, y) => { const t = tOf(g, x, y); return t > 0.12 && t < 0.88 && (!g.inside || g.inside(x, y)) && (!g.eZone || g.theme !== 'hacienda' || x < g.w * 0.34 || g.eZone(x, y)); };
   const cands = [];
   for (let k = 0; k < g.n; k++) if (isGround(g.c[k]) && !g.res[k]) cands.push(k);
+  // la hacienda : le désert dehors, des sacs et des caisses dans la cour
+  const out = g.theme === 'hacienda' ? [B.cactus, ...B.roche, ...B.rocher, ...B.chariot] : null;
   for (let t = 0; t < 120 && need > 0; t++) {
-    const p = place(g, kit, { ok: g.theme === 'mine' ? (x, y) => ok(x, y) && openAround(g, x, y) >= 6 : ok, tries: 4, cands, m: g.theme === 'mine' && t % 2 ? 0 : 1, rot: true });
+    const dehors = out && t % 2 === 0;
+    const okT = g.theme === 'mine' ? (x, y) => ok(x, y) && openAround(g, x, y) >= 6 : dehors ? (x, y) => ok(x, y) && g.outside(x, y) : out ? (x, y) => ok(x, y) && !g.outside(x, y) : ok;
+    const p = place(g, dehors ? out : kit, { ok: okT, tries: 4, cands, m: g.theme === 'mine' && t % 2 ? 0 : 1, rot: true });
     if (p) need -= 1.5;
   }
 }
@@ -1577,7 +1729,7 @@ function coverTopUp(g, dep) {
   const w = g.w;
   let added = false;
   for (const [side, zone] of [[dep.p, null], [dep.e, g.eZone]]) {
-    const kit = g.theme === 'saloon' ? [...B.caisses] : KIT[g.theme];
+    const kit = g.theme === 'saloon' ? [...B.caisses] : (side === dep.p ? g.kitP : g.kitE) || KIT[g.theme];
     for (const s of side) g.res[s.y * w + s.x] = 3;
     const bare = side.filter((s) => {
       for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) if (COVER[AT(g, s.x + dx, s.y + dy)] && AT(g, s.x + dx, s.y + dy) !== VOID) return false;
@@ -1619,6 +1771,220 @@ function mineBypass(g, a, b) {
     for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) { const v = AT(g, x + dx, y + dy); if (v !== VOID && v !== WALL && v !== PILLAR && IN(g, x + dx, y + dy)) { near = true; break; } }
     if (near) put(g, x, y, WALL, D.MUR_ROC);
   }
+}
+
+// ------------------------------------------------------------ la lumière et les objets interactifs (sur la carte finie)
+// Une source : [rayon en cases, hauteur au-dessus du sol en pixels du jeu, couleur]
+const LIGHT = {
+  lustre: [5, 26, '#ffd890'], lampe: [2.6, 11, '#ffc46a'], lanterne: [3.6, 14, '#ffb050'], reverbere: [4.6, 24, '#ffd27a'],
+  feu: [4.6, 4, '#ff9a3c'], fenetre: [2.6, 10, '#ffcf7a'], torche: [3.6, 15, '#ff8a2c'],
+};
+const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+// Pose les lumières (m.lights) et les objets interactifs (m.props) selon le thème et l'heure, sans rien bloquer de plus :
+// les cases ne changent pas (sauf la déco : feu de camp au sol, tonneau de whisky), jamais d'objet sur un départ.
+// Les lumières accrochées (lanterne, torche, fenêtre) sont sur la case de leur support (étai, paroi, mur, fenêtre,
+// colonne, chariot) ; (dx, dy) dit de quel côté elles pendent, vers la case de sol qu'elles éclairent d'abord : la
+// lanterne (l'objet) est sur cette case (x + dx, y + dy), c'est là qu'elle tombe. Le réverbère est sur son poteau, le
+// feu sur son feu de camp ou son brasero, la lampe sur sa table ou son comptoir, le lustre au-dessus de sa case de sol
+// (dx = dy = 0 pour ceux-là).
+function dress(g, time) {
+  const { w, R } = g, c = g.c, d = g.d;
+  const dep = g.dep, taken = new Set();
+  for (const s of [...dep.p, ...dep.e, ...dep.amb, ...(dep.boss ? [dep.boss] : [])]) taken.add(s.y * w + s.x);
+  const lights = [], props = [], onProp = new Set();
+  const night = time === 'nuit', dusk = time === 'crepuscule', dawn = time === 'aube';
+  // une fenêtre dont le mur a été percé à côté (brèche, passage) redevient du mur
+  for (let k = 0; k < g.n; k++) {
+    if (d[k] !== D.FENETRE || c[k] !== WALL) continue;
+    const x = k % w, y = (k - x) / w;
+    const hz = AT(g, x - 1, y) === WALL && AT(g, x + 1, y) === WALL, vt = AT(g, x, y - 1) === WALL && AT(g, x, y + 1) === WALL;
+    if (hz || vt) continue;
+    let wd = D.MUR_BOIS;
+    for (const [dx, dy] of N4) { const q = AT(g, x + dx, y + dy) === WALL ? d[(y + dy) * w + x + dx] : 0; if (q === D.MUR_ADOBE || q === D.MUR_BOIS) wd = q; }
+    d[k] = wd;
+  }
+  const light = (kind, x, y, o = {}) => {
+    const [r, h, col] = LIGHT[kind], dx = o.dx || 0, dy = o.dy || 0;
+    // (x, y) : la case éclairée, ramenée sur le support pour les lumières accrochées
+    const l = { x: x - dx, y: y - dy, r: o.r || r, kind, h: o.h || h, col: o.col || col, off: false, prop: null, dx, dy };
+    if (kind === 'lampe' && c[y * w + x] === COUNTER) l.h = 13;
+    lights.push(l);
+    return l;
+  };
+  const prop = (kind, x, y, hp, l = null) => {
+    const p = { id: props.length + 1, kind, x, y, hp, light: l ? lights.indexOf(l) : null };
+    if (l) l.prop = p.id;
+    props.push(p); onProp.add(y * w + x);
+    return p;
+  };
+  const walk = (x, y) => IN(g, x, y) && !MOVE[c[y * w + x]];
+  const free = (x, y) => walk(x, y) && !taken.has(y * w + x) && !onProp.has(y * w + x) && d[y * w + x] !== D.FEU;
+  const far = (x, y, r, kinds = null) => lights.every((l) => (kinds && !kinds.includes(l.kind)) || Math.hypot(l.x - x, l.y - y) >= r);
+  // le support voisin d'une case de sol (le premier qui convient), et la direction support → sol
+  const mount = (x, y, ok) => {
+    for (const [dx, dy] of N4) { const X = x - dx, Y = y - dy; if (IN(g, X, Y) && ok(c[Y * w + X], d[Y * w + X], X, Y)) return { dx, dy }; }
+    return null;
+  };
+  // les cases autour de (x, y), de la plus proche à la plus lointaine (rayon rad)
+  const around = (x, y, rad) => {
+    const out = [];
+    for (let Y = Math.floor(y - rad); Y <= y + rad; Y++) for (let X = Math.floor(x - rad); X <= x + rad; X++) {
+      if (IN(g, X, Y) && Math.hypot(X - x, Y - y) <= rad) out.push([Math.hypot(X - x, Y - y) + R() * 0.3, X, Y]);
+    }
+    return out.sort((a, b) => a[0] - b[0]);
+  };
+  const cellsWhere = (ok) => { const out = []; for (let k = 0; k < g.n; k++) if (ok(c[k], d[k], k % w, (k - (k % w)) / w)) out.push(k); return out; };
+  // une lanterne accrochée près de (x, y)
+  const hang = (x, y, rad, r, mountOk, space = 4.5) => {
+    for (const [, X, Y] of around(x, y, rad)) {
+      if (!free(X, Y) || c[Y * w + X] === RAIL || !far(X, Y, space)) continue;
+      const m = mount(X, Y, mountOk);
+      if (!m) continue;
+      return prop('lanterne', X, Y, 1, light('lanterne', X, Y, { r, dx: m.dx, dy: m.dy }));
+    }
+    return null;
+  };
+  // les fenêtres éclairées d'une bâtisse (vers le dehors), part des fenêtres allumées : share
+  const litWindows = (b, share) => {
+    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) {
+      if (c[y * w + x] !== WALL || d[y * w + x] !== D.FENETRE || R() >= share) continue;
+      const dx = x === b.x0 ? -1 : x === b.x1 ? 1 : 0, dy = dx ? 0 : y === b.y0 ? -1 : y === b.y1 ? 1 : 0;
+      if ((dx || dy) && walk(x + dx, y + dy)) light('fenetre', x + dx, y + dy, { dx, dy });
+    }
+  };
+  const t = g.theme;
+  if (t === 'mine') {
+    // des lanternes accrochées aux étais (ou à la paroi), au milieu des salles puis le long des galeries
+    const etai = (v, dd) => v === PILLAR && dd === D.ETAI, roc = (v) => v === WALL || v === PILLAR;
+    for (const p of g.lamps) if (lights.length < 18) hang(p.x, p.y, 2.5, p.r, etai) || hang(p.x, p.y, 2.5, p.r, roc);
+    if (lights.length < 4) for (const k of cellsWhere((v) => v === FLOOR)) { if (lights.length >= 6) break; hang(k % w, Math.floor(k / w), 0, 3.5, roc, 5); }
+    for (const k of cellsWhere((v) => v === TABLE)) prop('lampe', k % w, Math.floor(k / w), 1, light('lampe', k % w, Math.floor(k / w)));
+  } else if (t === 'saloon') {
+    const hall = (x, y) => g.inside(x, y) && (c[y * w + x] === FLOOR || c[y * w + x] === PATH);
+    // les lustres, au-dessus du plancher libre de la grande salle (pas contre un mur, ni le comptoir)
+    for (const strict of [8, 6, 5]) for (const p of g.lamps) {
+      if (lights.filter((l) => l.kind === 'lustre').length >= g.lamps.length) break;
+      if (!far(p.x, p.y, 4.5, ['lustre'])) continue;
+      for (const [, X, Y] of around(p.x, p.y, strict === 8 ? 3.5 : 4.5)) {
+        if (!hall(X, Y) || !free(X, Y) || !far(X, Y, 5, ['lustre'])) continue;
+        let open = 0, bad = false;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const v = AT(g, X + dx, Y + dy);
+          if (!MOVE[v]) open++; else if (v === WALL || v === COUNTER || v === VOID) bad = true;
+        }
+        if (bad || open < strict) continue;
+        prop('lustre', X, Y, 1, light('lustre', X, Y));
+        break;
+      }
+    }
+    // les lampes à pétrole : sur le comptoir, puis sur quelques tables (loin des lustres)
+    const counter = cellsWhere((v) => v === COUNTER);
+    const nc = counter.length >= 7 ? 2 : 1;
+    for (let i = 0, k = 0; i < counter.length * 2 && k < nc; i++) {
+      const q = counter[Math.floor(R() * counter.length)], x = q % w, y = (q - x) / w;
+      if (onProp.has(q) || !far(x, y, 4, ['lampe'])) continue;
+      prop('lampe', x, y, 1, light('lampe', x, y)); k++;
+    }
+    const tables = cellsWhere((v) => v === TABLE);
+    for (let i = 0, k = 0, nt = ri(R, 2, 3); i < tables.length * 2 && k < nt; i++) {
+      const q = tables[Math.floor(R() * tables.length)], x = q % w, y = (q - x) / w;
+      if (onProp.has(q) || !far(x, y, 3, ['lampe']) || !far(x, y, 2.5, ['lustre'])) continue;
+      prop('lampe', x, y, 1, light('lampe', x, y)); k++;
+    }
+    // les tonneaux de whisky : ceux du saloon les plus proches du comptoir (sinon des caisses)
+    const bar = counter.length ? { x: counter[0] % w, y: Math.floor(counter[0] / w) } : g.eA;
+    const casks = cellsWhere((v, dd, x, y) => v === CRATE && (dd === D.TONNEAU || dd === D.CAISSE) && g.inside(x, y))
+      .sort((a, b) => (d[a] === D.TONNEAU ? 0 : 8) - (d[b] === D.TONNEAU ? 0 : 8) + Math.hypot((a % w) - bar.x, Math.floor(a / w) - bar.y) - Math.hypot((b % w) - bar.x, Math.floor(b / w) - bar.y));
+    casks.slice(0, ri(R, 1, 3)).forEach((k) => { d[k] = D.TONNEAU_WHISKY; });
+    // la rue : le réverbère, et les fenêtres de la façade éclairées de dedans
+    if (night || dusk) {
+      for (const k of cellsWhere((v, dd) => v === PILLAR && dd === D.REVERBERE)) light('reverbere', k % w, Math.floor(k / w));
+      if (g.street) for (let y = 0; y < g.h; y++) {
+        const x = g.street.door;
+        if (c[y * w + x] === WALL && d[y * w + x] === D.FENETRE && walk(x - 1, y)) light('fenetre', x - 1, y, { dx: -1, dy: 0 });
+      }
+    }
+  } else if (t === 'ville') {
+    if (night || dusk) {
+      for (const k of cellsWhere((v, dd) => v === PILLAR && dd === D.REVERBERE)) light('reverbere', k % w, Math.floor(k / w));
+      for (const b of g.buildings) litWindows(b, night ? 0.65 : 0.45);
+      if (night) for (const k of cellsWhere((v, dd, x, y) => v === TABLE && g.buildings.some((b) => x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1))) if (R() < 0.6) prop('lampe', k % w, Math.floor(k / w), 1, light('lampe', k % w, Math.floor(k / w)));
+    }
+    // un tonneau de whisky devant le magasin, parfois
+    if (R() < 0.45) { const ks = cellsWhere((v, dd, x, y) => v === CRATE && dd === D.TONNEAU && g.inStreet(x, y)); if (ks.length) d[ks[Math.floor(R() * ks.length)]] = D.TONNEAU_WHISKY; }
+  } else if (t === 'hacienda') {
+    const { cx0, cx1, cy0, cy1, my } = g.hacienda;
+    const torch = (mx, my2, dx) => {
+      if (AT(g, mx, my2) === WALL && walk(mx + dx, my2)) light('torche', mx + dx, my2, { dx, dy: 0 });
+    };
+    // au portail (dehors et dedans), à la porte de la maison, et le long de l'enceinte dans la cour
+    for (const s of [-1, 1]) { torch(cx0, my + 2 * s, -1); torch(cx0, my + 3 * s, 1); }
+    torch(cx1 - 4, my, -1);
+    for (const y of [cy0, cy1]) for (let x = cx0 + 6; x < cx1 - 6; x += 7) {
+      const dy = y === cy0 ? 1 : -1;
+      if (AT(g, x, y) === WALL && walk(x, y + dy) && far(x, y + dy, 4)) light('torche', x, y + dy, { dx: 0, dy });
+    }
+    // les braseros
+    for (const k of cellsWhere((v, dd) => v === PILLAR && dd === D.BRASERO)) light('feu', k % w, Math.floor(k / w), { h: 16 });
+    // des lanternes aux colonnes de la galerie (côté cour)
+    const cols = cellsWhere((v, dd) => v === PILLAR && dd === D.COLONNE);
+    for (const k of cols) {
+      const x = k % w, y = (k - x) / w, dy = y < my ? 1 : -1;
+      if ((x - cx0) % 4 !== 3 || !free(x, y + dy) || !far(x, y + dy, 4)) continue;
+      prop('lanterne', x, y + dy, 1, light('lanterne', x, y + dy, { dx: 0, dy }));
+    }
+  } else {
+    // dehors : les feux de camp (de nuit, à l'aube, parfois au crépuscule), près du campement prévu ou des ennemis
+    const want = night ? 1 : dawn ? (R() < 0.7 ? 1 : 0) : dusk ? (R() < 0.5 ? 1 : 0) : 0;
+    const hints = [...g.fires];
+    for (let i = 0; i < want + (night && hints.length ? 1 : 0); i++) {
+      const at = hints.shift() || { x: Math.round(g.eA.x - g.ax * 2), y: Math.round(g.eA.y - g.ay * 2) };
+      if (lights.some((l) => l.kind === 'feu' && Math.hypot(l.x - at.x, l.y - at.y) < 6)) continue;
+      const f = campfire(g, at, taken);
+      if (f) light('feu', f.x, f.y);
+    }
+    // les lanternes des chariots, le soir et la nuit
+    if (night || dusk) {
+      const carts = cellsWhere((v, dd) => v === CRATE && dd === D.CHARIOT);
+      for (let i = 0, k = 0, n = night ? 2 : 1; i < carts.length && k < n; i++) {
+        const q = carts[Math.floor(R() * carts.length)], x = q % w, y = (q - x) / w;
+        for (const [dx, dy] of N4) {
+          const X = x + dx, Y = y + dy;
+          if (!free(X, Y) || c[Y * w + X] === RAIL || !far(X, Y, 5)) continue;
+          prop('lanterne', X, Y, 1, light('lanterne', X, Y, { dx, dy })); k++;
+          break;
+        }
+      }
+      // les fenêtres des fermes et des cabanes (pas celles des ruines)
+      if (g.tpl !== 'ranch' && g.tpl !== 'cimetiere') for (const b of g.buildings) litWindows(b, night ? 0.7 : 0.4);
+    }
+    // dans le brouillard, au moins un feu
+    if (g.fog && !lights.length) { const f = campfire(g, g.eA, taken); if (f) light('feu', f.x, f.y); }
+  }
+  // tous les feux au sol ont leur lumière (le feu du cercle de chariots…), sauf sur un départ (on l'éteint)
+  for (let k = 0; k < g.n; k++) {
+    if (d[k] !== D.FEU || c[k] !== FLOOR) continue;
+    const x = k % w, y = (k - x) / w;
+    if (taken.has(k)) { d[k] = 0; const i = lights.findIndex((l) => l.kind === 'feu' && l.x === x && l.y === y); if (i >= 0) lights.splice(i, 1); continue; }
+    if (!lights.some((l) => l.kind === 'feu' && l.x === x && l.y === y)) light('feu', x, y);
+  }
+  // les objets qui ne portent pas de lumière : wagonnets et tonneaux de whisky
+  for (let k = 0; k < g.n; k++) {
+    if (c[k] !== CRATE) continue;
+    if (d[k] === D.WAGONNET) prop('wagonnet', k % w, Math.floor(k / w), 3);
+    else if (d[k] === D.TONNEAU_WHISKY) prop('whisky', k % w, Math.floor(k / w), 1);
+  }
+  // l'index des lumières a pu bouger (feu éteint sur un départ) : on le recalcule
+  for (const p of props) p.light = null;
+  lights.forEach((l, i) => { if (l.prop) props[l.prop - 1].light = i; });
+  return { lights, props };
+}
+function timeOf(R, sky) {
+  if (sky === 'nuit') return 'nuit';
+  const r = R();
+  if (sky === 'mine') return r < 0.2 ? 'aube' : r < 0.55 ? 'midi' : r < 0.8 ? 'crepuscule' : 'nuit';
+  return r < 0.22 ? 'aube' : r < 0.68 ? 'midi' : 'crepuscule';
 }
 
 // ------------------------------------------------------------ noms, ciel, et la carte finale
@@ -1663,11 +2029,23 @@ export function makeBattle(seed, { region = 'desert', col = 1, kind = 'combat', 
     if (g.pen === 0) break;
   }
   const g = best, R = rng((base ^ 0x4a3e) >>> 0);
-  if (g.fog && !g.lights.length && theme !== 'saloon') campfire(g, g.eA, 4);
   const names = NAMES[theme][g.tpl] || [THEMES[theme]];
+  const name = pick(R, names);
+  // l'heure, puis l'éclairage et les objets interactifs, sur la carte retenue
+  const time = timeOf(rng((base ^ 0x7153) >>> 0), sky.sky);
+  g.R = rng((base ^ 0x11a7) >>> 0);
+  const { lights, props } = dress(g, time);
+  const n = g.w * g.h, chp = new Uint8Array(n), rail = new Uint8Array(n);
+  for (let k = 0; k < n; k++) {
+    chp[k] = coverHp(g.c[k], g.d[k]);
+    rail[k] = g.c[k] === RAIL || (g.c[k] === CRATE && g.d[k] === D.WAGONNET) ? 1 : 0;
+  }
   return {
-    theme, env: ENV[theme] || (theme === 'hacienda' ? 'desert' : ENV[region] || 'desert'), name: pick(R, names), region, kind, col,
+    theme, env: ENV[theme] || (theme === 'hacienda' ? 'desert' : ENV[region] || 'desert'), name, region, kind, col,
     w: g.w, h: g.h, cells: g.c, base: g.c.slice(), deco: g.d, fog: g.fog, dark: g.dark, sky: g.sky,
-    deploy: g.dep, lights: g.lights, seed, lair: theme === 'hacienda', layout: g.tpl, shape: g.shape,
+    deploy: g.dep, lights, seed, lair: theme === 'hacienda', layout: g.tpl, shape: g.shape,
+    // décor interactif et lumière (voir le contrat v2) : heure, objets, points de vie des couverts, usure, feux, flaques,
+    // rails (1 sous les rails, wagonnets compris : là où un wagonnet peut rouler), compteurs pour les caches du rendu
+    time, props, chp, dmg: new Uint8Array(n), fire: new Map(), puddle: new Map(), rail, lightsVer: 0, fxVer: 0,
   };
 }

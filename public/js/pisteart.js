@@ -469,6 +469,10 @@ const HD = {
   s_ghost: ['.kkkkk.', 'kwwwwwk', 'kwkwkwk', 'kwwwwwk', 'kwwwwwk', 'kwkwkwk', 'k.k.k.k'],
 };
 
+// les ids des anciennes grilles (elles servent encore de gabarit de place : iconW, artSize ; la planche d'essai
+// vérifie qu'elles ont toutes leur dessin détaillé)
+export const GRID_IDS = [...new Set([...Object.keys(GRIDS), ...Object.keys(HD)])];
+
 const cache = {};
 // Une icône (canevas) : id d'une grille ci-dessus ; pal : couleurs à remplacer. c.hd : grille en pixels fins.
 export function icon(id, pal = null) {
@@ -487,20 +491,28 @@ export function icon(id, pal = null) {
   c.hd = !!HD[id];
   return (cache[key] = c);
 }
-// largeur d'une icône en pixels du jeu
-export function iconW(id) { const c = icon(id); return c ? c.width / (c.hd ? 2 : 1) : 0; }
+// largeur d'une icône en pixels du jeu (sa place dans une ligne de texte : celle de l'ancienne grille, qui sert de
+// gabarit ; 7 pour un dessin détaillé sans grille)
+export function iconW(id) { const c = icon(id); return c ? c.width / (c.hd ? 2 : 1) : hasItemArt(id) ? 7 : 0; }
 // dessine une icône centrée en (x, y) ; k : agrandissement (2 : une icône fine en pixels pleins)
-// (les objets, ressources, coups et états ont des sprites détaillés, pisteicons.js : on les prend à la taille la plus
-// proche, un peu plus grands que les anciennes icônes pour rester lisibles)
-const ART_SIZES = [8, 10, 12, 16, 24, 32];
+// Toutes les icônes de la piste ont un dessin détaillé (pisteicons.js) : on le prend à la taille la plus proche de
+// la place qu'occupait l'ancienne grille, un peu plus grand pour rester lisible, sans dépasser 16 pixels du jeu (sauf
+// grand agrandissement, k >= 3). Les petits signes posés en rang serré ont leur taille à eux (NOM, à k = 1).
+// pal : l'icône teintée d'une couleur (pal.w, ou la première couleur donnée), comme l'œil rouge d'une menace.
+const ART_SIZES = [6, 8, 10, 12, 16, 24, 32, 48];
+const NOM = { cran_s: 6, s_bleed: 8, s_mark: 8, s_affut: 8, s_shield: 8, s_pin: 8, s_ghost: 8 };
+export function artSize(id, k = 1) {
+  const c = icon(id);
+  let want = NOM[id] ? NOM[id] * k : Math.max(c ? Math.max(c.width, c.height) / (c.hd ? 2 : 1) : 8, 8) * k * 1.25;
+  if (k < 3) want = Math.min(want, 16);
+  return ART_SIZES.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
+}
 export function drawIcon(ctx, id, x, y, pal = null, k = 1) {
-  const c = icon(id, pal);
-  if (!pal && hasItemArt(id)) {
-    const want = Math.max(c ? Math.max(c.width, c.height) / (c.hd ? 2 : 1) : 8, 8) * k * 1.25;
-    const size = ART_SIZES.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
-    drawItem(ctx, id, x, y, size);
+  if (hasItemArt(id)) {
+    drawItem(ctx, id, x, y, artSize(id, k), pal ? { tint: pal.w || Object.values(pal)[0] } : undefined);
     return;
   }
+  const c = icon(id, pal);
   if (!c) return;
   const s = k / (c.hd ? 2 : 1), w = c.width * s, h = c.height * s;
   ctx.drawImage(c, Math.round((x - w / 2) * 2) / 2, Math.round((y - h / 2) * 2) / 2, w, h);
@@ -641,23 +653,46 @@ function tipFrame(ctx, x, y, w, h) {
   ctx.fillStyle = '#c8a040'; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
   ctx.fillStyle = 'rgba(18,10,6,0.94)'; ctx.fillRect(x, y, w, h);
 }
-// médaillon des lieux (carte, écrans de récit) : un disque de parchemin cerclé, l'icône au milieu
-// (le disque est tracé au demi-pixel une fois pour toutes, en cache : un arc lissé à chaque image serait flou)
+// médaillon des lieux (écrans de récit, bandeaux du combat) : un disque de parchemin bombé dans un cerclage de bois
+// biseauté, l'icône au milieu. Le disque est calculé une fois par (rayon, couleurs) au pixel fin (MF par pixel du
+// jeu, comme les icônes), éclairé d'en haut à gauche et tramé, puis gardé en cache.
+const MF = 4;
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
 const discs = {};
 function medalDisc(r, fill, ring) {
   const key = `${r}|${fill}|${ring}`;
   if (discs[key]) return discs[key];
-  const R = (r + 1) * 2, c = S.makeCanvas(R * 2, R * 2), g = c.getContext('2d');
-  for (const [rr, col] of [[R, ring], [r * 2, fill]]) {
-    g.fillStyle = col;
-    for (let y = 0; y < R * 2; y++) for (let x = 0; x < R * 2; x++) if (Math.hypot(x + 0.5 - R, y + 0.5 - R) <= rr) g.fillRect(x, y, 1, 1);
+  const R = r * MF, N = (r + 1) * MF * 2, cx = N / 2, cy = N / 2, rw = Math.max(3, Math.round(MF * 0.9));
+  const c = S.makeCanvas(N, N), g = c.getContext('2d'), img = g.createImageData(N, N), d = img.data;
+  // deux palettes de cinq teintes, du plus sombre au plus clair
+  const rampOf = (base, lo, hi) => Array.from({ length: 5 }, (_, i) => S.shade(base, lo + ((hi - lo) * i) / 4));
+  const rim = rampOf(ring, -0.45, 0.75), face = rampOf(fill, -0.32, 0.1);
+  const put = (x, y, col, a = 255) => { const n = parseInt(col.slice(1), 16), i = (y * N + x) * 4; d[i] = n >> 16; d[i + 1] = (n >> 8) & 255; d[i + 2] = n & 255; d[i + 3] = a; };
+  const pick = (R5, l, x, y) => R5[Math.max(0, Math.min(4, Math.floor(l + BAYER[((y & 3) << 2) | (x & 3)] - 0.5)))];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = x + 0.5 - cx, dy = y + 0.5 - cy, dd = Math.hypot(dx, dy);
+    // l'ombre portée en bas à droite, tramée
+    if (dd > R + 1) { if (Math.hypot(dx - 2, dy - 3) <= R + 1 && BAYER[((y & 3) << 2) | (x & 3)] > 0.4) put(x, y, '#0a0604', 120); continue; }
+    if (dd > R) { put(x, y, '#1a0f0a'); continue; }
+    const nx = dx / R, ny = dy / R, l = -0.55 * nx - 0.65 * ny;
+    if (dd > R - rw) {
+      // le cerclage : clair en haut à gauche, un filet sombre du côté du fond
+      put(x, y, pick(rim, 2.2 + l * 2.2 - (dd < R - rw + 1 ? 1.4 : 0), x, y));
+    } else {
+      // le fond bombé, plus sombre au bord (l'ombre du cerclage)
+      const k = dd / (R - rw);
+      put(x, y, pick(face, 2.6 + l * 1.3 * k - (k > 0.84 ? 1.1 : 0) + 0.6 * (1 - k * k), x, y));
+    }
   }
+  g.putImageData(img, 0, 0);
   return (discs[key] = c);
 }
 export function medal(ctx, x, y, id, r = 6, { fill = '#f0e2b8', ring = '#3a2414', pal = null } = {}) {
-  const c = medalDisc(r, fill, ring);
-  ctx.drawImage(c, Math.round((x - r - 1) * 2) / 2, Math.round((y - r - 1) * 2) / 2, c.width / 2, c.height / 2);
-  drawIcon(ctx, id, x, y, pal);
+  const c = medalDisc(r, fill, ring), q = (v) => Math.round(v * MF) / MF;
+  ctx.drawImage(c, q(x - r - 1), q(y - r - 1), c.width / MF, c.height / MF);
+  // l'icône tient dans le fond, sans mordre sur le cerclage
+  if (hasItemArt(id)) drawItem(ctx, id, x, y, Math.round(r * 1.4), pal ? { tint: pal.w || Object.values(pal)[0] } : undefined);
+  else drawIcon(ctx, id, x, y, pal);
 }
 // caractéristiques en icônes : list = [[icône, valeur], …], le texte en haut à y ; renvoie le x de fin
 export function statIcons(ctx, x, y, list, col = CREAM, shadow = '#1a0f0a', gap = 4) {

@@ -7,7 +7,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { Game, personalize } from './game.js';
 import { Bot, botPlayer } from './bot.js';
 import { variantOk } from './variants.js';
-import { MODES, MAX_PLAYERS } from './worlds.js';
+import { MODES, MAX_PLAYERS, START_GATE } from './worlds.js';
 import { CHAR_PARTS, CHAR_COLORS } from './data.js';
 import { placesOf } from './places.js';
 
@@ -683,7 +683,7 @@ export class Net {
     this.runGame(l, l, mode, players, variantOk(mode, variant) ? variant : null);
     l.game.story = meta;
     this.broadcastLobby(l);
-    this.sendEvents(l, l.game.start());
+    this.sendEvents(l, this.kickoff(l.game));
     return true;
   }
 
@@ -834,7 +834,7 @@ export class Net {
     // de retour en pleine partie : l'état complet de sa partie (ou de son match du tournoi)
     const s = l.game?.tourney ? this.matchOf(l.game, key) : l;
     const j = s ? this.gameIdx(s, key) : -1;
-    if (j >= 0) this.deliver(key, { t: 'sync', state: s.game.syncView ? s.game.syncView(j) : s.game.view(j), ...(s === l ? {} : { match: s.id }) });
+    if (j >= 0) this.deliver(key, { t: 'sync', state: this.syncOf(s.game, j), ...(s === l ? {} : { match: s.id }) });
     else if (l.story) this.deliver(key, { t: 'story', s: l.story.view() }); // arrivé en pleine aventure : où on en est
   }
 
@@ -979,6 +979,7 @@ export class Net {
         if (!s?.game) return;
         const gi = this.gameIdx(s, from);
         if (gi < 0) return;
+        if (s.game.kind && m.action?.kind === 'ready') return this.gateReady(l, s, gi);
         if (!s.game.kind && Date.now() < s.lockUntil - 400) return err('Patience, cowboy…');
         const r = s.game.act(gi, m.action);
         if (r.error) return err(r.error);
@@ -1178,7 +1179,7 @@ export class Net {
     this.runGame(l, l, l.mode, players, l.format === 'single' ? l.variants[l.mode] ?? null : null);
     l.game.champ = l.format === 'champ' && !!l.champ && !l.champ.done;
     this.broadcastLobby(l);
-    this.sendEvents(l, l.game.start());
+    this.sendEvents(l, this.kickoff(l.game));
   }
 
   // Crée la partie et ses minuteries. s : la table elle-même, ou un match du tournoi (ses joueurs, sa partie,
@@ -1196,6 +1197,8 @@ export class Net {
     // Mini-jeu en temps réel : l'hôte fait avancer l'horloge (tirs des bandits, bots, fin de partie).
     const g = makeGame(mode, players, variant);
     s.game = g;
+    const gate = g.gateCfg || START_GATE;
+    g.startGate = { at: gate.at, go: gate.go, ready: new Set() };
     let last = Date.now();
     s.miniTimer = setInterval(() => {
       if (this.hosting !== l || s.game !== g) return clearInterval(s.miniTimer);
@@ -1204,6 +1207,7 @@ export class Net {
       // du pas), pour que la partie ne tourne pas au ralenti pour toute la table.
       const now = Date.now(), late = now - last;
       last = now;
+      this.holdGate(l, s);
       const steps = late > MINI_TICK * 2 && Number.isFinite(g.startAt) ? Math.min(MAX_CATCHUP, Math.round(late / MINI_TICK)) : 1;
       const events = [];
       for (let k = steps - 1; k >= 0; k--) {
@@ -1218,6 +1222,49 @@ export class Net {
         if (s === l) this.broadcastLobby(l);
       }
     }, MINI_TICK);
+  }
+
+  // ---------------------------------------------------------- départ d'un mini-jeu (START_GATE)
+  // Plus de compte à rebours sous les règles : la partie part quand chaque joueur a cliqué (prêt). En attendant,
+  // l'horloge de l'arbitre reste figée à startGate.at ; les bots, les partants et les déconnectés ne retiennent personne.
+  kickoff(g) {
+    const events = g.start();
+    const sg = g.startGate;
+    if (sg) for (const e of events) if (e.type === 'mgStart') e.gate = { at: sg.at, ready: [] };
+    return events;
+  }
+
+  // état complet pour qui arrive en cours de partie : avec qui est prêt, si elle n'est pas encore partie
+  syncOf(g, j) {
+    const st = g.syncView ? g.syncView(j) : g.view(j);
+    return g.startGate ? { ...st, gate: { at: g.startGate.at, ready: [...g.startGate.ready] } } : st;
+  }
+
+  gateReady(l, s, gi) {
+    const g = s.game, sg = g.startGate;
+    if (!sg || sg.ready.has(gi)) return;
+    sg.ready.add(gi);
+    g.push({ type: 'mgReady', ready: [...sg.ready] });
+    this.sendEvents(l, g.flush(), s);
+    this.holdGate(l, s);
+  }
+
+  // à chaque pas d'horloge (et à chaque « prêt ») : on retient l'horloge, ou on donne le départ (mgGo)
+  holdGate(l, s) {
+    const g = s.game, sg = g?.startGate;
+    if (!sg || g.phase !== 'playing') return;
+    const here = (key) => key === l.host || l.players.some((p) => p.key === key && p.connected);
+    // la mêlée a son propre bouton « prêt » (choix du kit) : gateReady(i)
+    const waiting = g.p.some((p, i) => !p.bot && !p.left && !sg.ready.has(i) && !g.gateReady?.(i) && here(p.key));
+    if (waiting) {
+      if (g.t > sg.at) g.startAt = Date.now() - sg.at;
+      return;
+    }
+    const go = Math.max(0, Math.min(sg.go, -g.t));
+    g.startGate = null;
+    g.startAt = Date.now() + go;
+    g.push({ type: 'mgGo', go });
+    this.sendEvents(l, g.flush(), s);
   }
 
   // Événements d'une partie : à chacun de ses joueurs sa version ; s : la table, ou un match du tournoi
@@ -1344,7 +1391,7 @@ export class Net {
     }
     this.broadcastLobby(l); // le tableau d'abord, puis les parties
     for (const m of matches) {
-      if (m.game) this.sendEvents(l, m.game.start(), m);
+      if (m.game) this.sendEvents(l, this.kickoff(m.game), m);
       else m.botTimer = setTimeout(() => { if (this.hosting === l && l.game === t) this.matchDone(l, t, m, Math.random() < 0.5 ? 0 : 1, 'bots'); }, 2500 + Math.random() * 2500);
     }
   }
@@ -1374,7 +1421,7 @@ export class Net {
     if (!m?.game || this.matchOf(t, key)) return;
     t.watch.set(key, m.id);
     const g = m.game;
-    this.deliver(key, { t: 'sync', state: g.syncView ? g.syncView(0) : g.view(0), match: m.id, watch: true });
+    this.deliver(key, { t: 'sync', state: this.syncOf(g, 0), match: m.id, watch: true });
   }
 
   // Fin de partie d'un match (appelé par sendEvents) : résultats enregistrés, vainqueur qualifié.

@@ -19,6 +19,7 @@ import {
 } from './pisteart.js';
 import { eventArt, VIG_W, VIG_H } from './pistevignettes.js';
 import { IsoView } from './pisteiso.js';
+import * as PMAPS from './pistemaps.js';
 import * as PM from './pistemusic.js';
 
 // les musiques originales de la piste rejoignent celles du jeu (thème de la carte, un thème de combat par région)
@@ -189,6 +190,15 @@ export class PisteScene extends MiniScene {
   later(ms, fn) { this.q.push({ at: this.now + ms, fn }); }
   get busy() { return this.q.length > 0 || (this.B && this.B.units.some((u) => u.anim)); }
 
+  // Les écrans de menu (recrutement, magasin, carte, rencontres, arbre…) n'ont que de petites animations : 30 images/s
+  // leur suffisent et soulagent les machines modestes ; le combat, le voyage et les cinématiques restent à 60.
+  frame(now) {
+    const busy = this.ph === 'combat' || this.ph === 'travel' || this.t < 0 || this.cutEl() != null || this.press;
+    if (!busy && now - (this._lastFrame || 0) < 30) return;
+    this._lastFrame = now;
+    super.frame(now);
+  }
+
   update(dt) {
     if (this.t < 0 || !this.run) return;
     if (!this.run.done && this.t >= this.duration) { this.finishRun(false, 'temps'); return; }
@@ -264,8 +274,9 @@ export class PisteScene extends MiniScene {
       if (k === 'escape') B.mode = null;
       else if (k === ' ') this.endTurn();
       else if (k === 'tab') this.cycleUnit();
-      else if (k === 'r') { if (u) this.reload(u); }
-      else if (/^[1-4]$/.test(k)) { const o = B.units.filter((x) => x.side === 'p')[+k - 1]; if (o && K.alive(o)) { this.select(o); sfx('spur'); } }
+      else if (k === 'r') { if (u && !this.busy) this.reload(u); }
+      else if (k === 'g') { if (u && !this.busy) this.guet(u); }
+      else if (/^[1-4]$/.test(k)) { const o = B.units.filter((x) => x.side === 'p')[+k - 1]; if (o && !o.dead && this.view) this.view.centerOn(o.x, o.y); }
       // A, Z, E : les trois coups spéciaux ; F : l'objet (les lettres sont écrites sur les boutons)
       else if (u && 'aze'.includes(k) && k.length === 1 && !this.busy) {
         const s = this.specialsOf(u)[' aze'.indexOf(k) - 1];
@@ -311,7 +322,7 @@ export class PisteScene extends MiniScene {
       return;
     }
     const a = this.tipAt || { x: W / 2, y: H - 19, h: 0 };
-    tooltip(ctx, a.x, a.y, title, body, { maxW: 220, top: 16, ah: a.h || 12 });
+    tooltip(ctx, a.x, a.y, title, body, { maxW: 220, top: 16, ah: a.h || 12, prefer: a.prefer || 'up' });
   }
 
   // ---------------------------------------------------------- dessin
@@ -471,14 +482,14 @@ export class PisteScene extends MiniScene {
     hd(ctx, `« ${soft(d.nick)} »`, px + 59, fy + 83, '#8a2a14', 'center', '');
     hd(ctx, d.role, px + 59, fy + 91, '#5a3a1e', 'center', '');
     // le signalement : quatre barres (sur le meilleur de la bande)
-    const stats = [['coeur', 'Santé', d.hp, 60, `${d.hp} PV`], ['botte', 'Déplacement', d.mv, 6, `${d.mv} cases`], ['viseur', 'Précision', d.prec, 30, `${d.prec}`], ['esquive', 'Esquive', d.esq, 30, `${d.esq} %`]];
+    const stats = [['coeur', 'Santé', d.hp, 60, `${d.hp} PV`], ['botte', 'Déplacement', d.mv, 6, `${d.mv} cases`], ['viseur', 'Précision', d.prec, 30, `${d.prec}`], ['esquive', 'Esquive', d.esq, 30, `${d.esq} %`], ['s_affut', 'Initiative', d.init || 8, 15, `${d.init || 8}`]];
     stats.forEach(([ic, label, v, max, val], k) => {
-      const sy = fy + 102 + k * 8.5;
-      drawIcon(ctx, ic, px + 9, sy + 2.5);
+      const sy = fy + 98 + k * 9;
+      this.itemIcon(ctx, ic, px + 9, sy + 2.5, 8);
       hd(ctx, label, px + 15, sy, '#4a2a14', 'left', '');
-      ctx.fillStyle = '#3a2414'; ctx.fillRect(px + 60, sy + 1, 32, 4);
-      ctx.fillStyle = '#c8b080'; ctx.fillRect(px + 60.5, sy + 1.5, 31, 3);
-      ctx.fillStyle = '#8a2a14'; ctx.fillRect(px + 60.5, sy + 1.5, 31 * Math.min(1, v / max), 3);
+      ctx.fillStyle = '#3a2414'; ctx.fillRect(px + 60, sy + 1, 26, 4);
+      ctx.fillStyle = '#c8b080'; ctx.fillRect(px + 60.5, sy + 1.5, 25, 3);
+      ctx.fillStyle = '#8a2a14'; ctx.fillRect(px + 60.5, sy + 1.5, 25 * Math.min(1, v / max), 3);
       hd(ctx, val, px + 115, sy, '#3a1a0c', 'right', '');
     });
     // page de droite : talents de piste, coup spécial, équipement, histoire
@@ -489,7 +500,8 @@ export class PisteScene extends MiniScene {
     let tx = rx;
     for (const p of d.perks) tx += pill(ctx, tx, ry, K.PERKS[p], '#f2e6c8', '#4a3a6a') + 3;
     ry += 9;
-    hdPara(ctx, 'Ils ouvrent des choix pendant les rencontres.', rx, ry, rw, '#7a5a3a', { shadow: '' });
+    // son arbre de talents (propre à sa classe)
+    hdPara(ctx, `Arbre : ${SK.treeOf({ id }).branches.map((b) => soft(b.name)).join(', ')}`, rx, ry, rw, '#7a5a3a', { shadow: '', max: 1 });
     ry += 12;
     const sp = SPECIALS[d.talent];
     txt(ctx, 'COUP SPÉCIAL', rx, ry, '#8a5a34', 'left', 8, '');
@@ -535,6 +547,11 @@ export class PisteScene extends MiniScene {
   }
 
   // une icône d'objet, de ressource ou de coup spécial, à la taille voulue (pixels du jeu)
+  // la tête en entier (chapeau compris), cadrée comme dans le passeport, dans un carré de côté size
+  headShot(ctx, look, x, y, size, live = false) {
+    const spr = S.characterSprite(look, live ? { blink: this.now % 3300 < 120, t: this.now } : undefined);
+    ctx.drawImage(spr, 4, 0, 40, 40, x, y, size, size);
+  }
   itemIcon(ctx, id, cx, cy, size = 16) {
     if (hasItemArt(id)) return drawItem(ctx, id, cx, cy, size);
     const w = iconW(id) || 8;
@@ -592,12 +609,15 @@ export class PisteScene extends MiniScene {
         const can = run.res.dollars >= price && run.stash.length < PISTE.stash;
         const hov = this.hit(cx, cy, cw, chh - 3, can ? () => this.buy(g, i) : () => this.popup(cx + cw / 2, cy, run.stash.length >= PISTE.stash ? 'CHARIOT PLEIN' : 'TROP CHER', SALMON),
           `${K.gearName(g)} : ${this.gearInfo(g).replace(/^[^:]*: /, '')} - PRIX : ${price} $${can ? ' (CLIQUE POUR ACHETER)' : run.stash.length >= PISTE.stash ? ' - CHARIOT PLEIN' : ' - TROP CHER'}`);
+        if (hov) this.tipAt = { x: RX - 2, y: cy + chh / 2, h: 0, prefer: 'left' };
         // la carte : fond clair au survol, liseré de la couleur de sa qualité
         ctx.fillStyle = UI.edge; ctx.fillRect(cx - 0.5, cy - 0.5, cw + 1, chh - 2);
         ctx.fillStyle = hov ? '#4a3420' : '#33241a'; ctx.fillRect(cx, cy, cw, chh - 3);
         ctx.fillStyle = g.q ? K.QCOL[g.q] : hov ? UI.lineHi : UI.line; ctx.fillRect(cx, cy, cw, 0.5);
         ctx.globalAlpha = can ? 1 : 0.45;
-        this.itemIcon(ctx, g.id, cx + cw / 2, cy + 14, hov ? 24 : 22);
+        // les armes, longues et fines, prennent toute la largeur de la carte
+        const big = WEAPONS[g.id] ? 30 : ARMORS[g.id] ? 26 : 24;
+        this.itemIcon(ctx, g.id, cx + cw / 2, cy + 15, hov ? big + 2 : big);
         ctx.globalAlpha = 1;
         // l'étiquette de prix, ficelée à la carte
         const pl = `${price} $`, pw2 = hdW(pl) + 5;
@@ -655,7 +675,7 @@ export class PisteScene extends MiniScene {
     frame(ctx, x + 3, y + 3, h - 6, h - 6, { accent: UI.lineHi, fill: '#4a3424' });
     ctx.globalAlpha = m.alive ? 1 : 0.35;
     const ph = h - 8;
-    ctx.drawImage(S.characterSprite(look), 8, 2, 32, 32 * (ph / (h - 8)), x + 4, y + 4, ph, ph);
+    this.headShot(ctx, look, x + 4, y + 4, ph);
     ctx.globalAlpha = 1;
     // un clic sur le portrait ouvre son arbre de compétences ; un badge doré s'il a des points à placer
     if (m.alive) {
@@ -1132,7 +1152,7 @@ export class PisteScene extends MiniScene {
   // cran quand le précédent l'est), la maîtrise de son talent en bas. Un clic sur un cran disponible le débloque.
   drawTree(ctx, x, y, w, h, { shell, act, mark }) {
     const ui = this.ui, m = ui.m, pts = SK.pointsOf(m), own = SK.owned(m);
-    const cy = shell(ui.levelUp ? 'NOUVEAU NIVEAU !' : 'COMPÉTENCES', 'xp', ui.levelUp ? UI.gold : UI.lineHi);
+    const cy = shell(ui.levelUp ? 'NOUVEAU NIVEAU !' : `ARBRE : ${SK.treeOf(m).name}`, 'xp', ui.levelUp ? UI.gold : UI.lineHi);
     // la fiche : portrait, nom, niveau, points à dépenser
     frame(ctx, x + 8, cy + 1, 54, 60, { accent: UI.lineHi, fill: '#4a3424' });
     ctx.drawImage(S.characterSprite(m.id === 'chef' ? this.myChar : ROSTER[m.id].look), x + 11, cy + 3);
@@ -1145,8 +1165,8 @@ export class PisteScene extends MiniScene {
     hdPara(ctx, top ? 'Niveau maximum.' : `Prochain point à ${L[m.lvl]} XP (${m.xp} XP).`, x + 6, cy + 101, 58, UI.dim, { align: 'center' });
     // les trois branches
     const tx = x + 70, gap = 5, cw = Math.floor((x + w - 8 - tx - gap * 2) / 3), nh = 22, ny0 = cy + 12;
-    SK.BRANCH_IDS.forEach((b, bi) => {
-      const br = SK.BRANCHES[b], bx = tx + bi * (cw + gap);
+    SK.treeOf(m).branches.forEach((br, bi) => {
+      const bx = tx + bi * (cw + gap);
       txt(ctx, br.name, bx + cw / 2, cy + 1, br.col, 'center');
       br.nodes.forEach((n, ni) => {
         const ny = ny0 + ni * (nh + 5);
@@ -1315,6 +1335,7 @@ export class PisteScene extends MiniScene {
     const region = K.regionOf(this.terr, Math.min(col, PISTE.cols));
     // la carte : un thème par lieu (désert, canyon, mine, saloon, ville…), la hacienda d'El Diablo au repaire
     const map = K.battleMap((nd.seed ^ (opt.kind === 'coyotes' ? 0x99 : 0)) >>> 0, { runSeed: this.seed || 1, region, col, kind: opt.kind, i: this.run.node || 0 });
+    this.mapState(map);
     const R = rng(nd.seed ^ 0x51);
     const ambush = opt.kind === 'embuscade';
     const enc = K.encounter(R, col, ambush ? 'combat' : opt.kind);
@@ -1359,15 +1380,11 @@ export class PisteScene extends MiniScene {
     const B = this.B, opt = B.opt, lair = B.lair, ambush = opt.kind === 'embuscade';
     B.intro = null;
     sfx(lair ? 'diablo' : 'draw');
-    if (ambush) {
-      B.turn = 1; // les bandits ouvrent le feu : c'est leur premier tour
-      this.banner('EMBUSCADE !', SALMON);
-      this.later(900, () => this.startEnemyTurn());
-    } else {
-      this.startPlayerTurn();
-      if (opt.first) this.banner('ILS NE VOUS ONT PAS VUS !', GREEN);
-      if (lair) this.banner('LE REPAIRE D\'EL DIABLO', SALMON);
-    }
+    if (ambush) this.banner('EMBUSCADE !', SALMON, 'ILS JOUENT TOUS AVANT VOUS CETTE MANCHE');
+    else if (opt.first) this.banner('ILS NE VOUS ONT PAS VUS !', GREEN, 'ILS NE JOUENT PAS LA PREMIÈRE MANCHE');
+    else if (lair) this.banner('LE REPAIRE D\'EL DIABLO', SALMON, 'CHACUN JOUE À SON TOUR, SELON SON INITIATIVE');
+    else this.banner('MANCHE 1', GOLD, 'CHACUN JOUE À SON TOUR, SELON SON INITIATIVE (EN HAUT)', 'viseur');
+    this.startRound();
   }
 
   // ---------------------------------------------------------- la cinématique d'ouverture des combats
@@ -1623,50 +1640,127 @@ export class PisteScene extends MiniScene {
   get beasts() { return !!this.B && this.B.units.every((u) => u.side !== 'e' || u.kind === 'coyote'); }
   banner(text, col = GOLD, sub = '', icon = null) { if (this.B) this.B.banner = { text, col, sub, icon, t0: this.now }; }
   sel() { const B = this.B; const u = B?.units.find((x) => x.uid === B.sel); return u && K.alive(u) ? u : null; }
+  // ---------------------------------------------------------- la file des tours (initiative, façon Empire of Sin)
+  // Chaque manche, tout le monde joue une fois, les deux camps mêlés, dans l'ordre d'initiative (la file en haut de
+  // l'écran). Chacun a 2 points d'action : se déplacer (1 PA dans la zone blanche, 2 jusqu'à la jaune), tirer (1 PA, et
+  // le tour s'arrête sauf avec une arme rapide ; 2 PA avec une arme lourde), recharger, un objet, un coup spécial, le guet.
+  unit(uid) { return this.B.units.find((o) => o.uid === uid) || null; }
+  get active() { return this.B ? this.unit(this.B.active) : null; }
+  // la sélection suit toujours celui qui joue (on ne choisit plus l'ordre de ses personnages)
   select(u) {
     const B = this.B;
     B.sel = u ? u.uid : null;
     B.mode = null;
-    B.reach = u && !u.moved ? K.reach(B, u) : null;
+    const mv = u ? u.mv + (u.mvBonus || 0) : 0;
+    B.reach = u && u.ap >= 1 && !u.st.pinned ? K.reach(B, u, u.ap >= 2 ? mv * 2 : mv) : null;
     if (u && this.view) this.view.centerOn(u.x, u.y);
   }
-  spent(u) { return u.moved && u.acted; }
+  spent(u) { return u.ap <= 0; }
+  // les anciens drapeaux, tenus à jour à partir des PA (aperçus, infobulles)
+  syncAp(u) { u.moved = u.ap < 1 || !!u.st.pinned; u.acted = u.ap < 1; }
+  // dépense des points d'action ; end : le tour de u s'arrête là
+  spend(u, n, end = false) {
+    u.ap = end ? 0 : Math.max(0, u.ap - n);
+    this.syncAp(u);
+  }
+  // peut-il encore tirer (un seul tir ordinaire par tour, 2 PA pour une arme lourde)
+  canAttack(u) { return u.ap >= K.shotCost(u) && !u.attacked; }
+  attackWhy(u) { return u.attacked ? 'DÉJÀ TIRÉ CE TOUR' : u.ap < K.shotCost(u) ? (K.shotCost(u) > 1 ? 'ARME LOURDE : IL FAUT 2 PA' : 'PLUS DE PA') : null; }
+  // Tab : la caméra revient sur celui qui joue
   cycleUnit() {
-    const B = this.B, list = B.units.filter((u) => u.side === 'p' && K.alive(u));
-    if (!list.length) return;
-    const i = list.findIndex((u) => u.uid === B.sel);
-    for (let k = 1; k <= list.length; k++) {
-      const u = list[(i + k) % list.length];
-      if (!this.spent(u) || k === list.length) { sfx('spur'); return this.select(u); }
-    }
+    const u = this.active;
+    if (u && this.view) { this.view.centerOn(u.x, u.y); sfx('spur'); }
   }
 
-  startPlayerTurn() {
+  // une nouvelle manche : le feu avance, les blessés à terre comptent, puis la file des tours est tirée
+  startRound() {
     const B = this.B;
-    if (B.over) return;
-    B.side = 'p';
+    if (!B || B.over) return;
     B.turn++;
+    this.fireTick();
     for (const u of B.units) {
-      if (u.side === 'e') { u.st.mark = false; continue; }
       if (u.dead) continue;
-      u.st.profil = false; u.st.retranche = false; u.st.fondu = false; u.st.affut = null;
-      if (u.ko != null) {
+      if (u.side === 'e') u.st.mark = false;
+      if (u.side === 'p' && u.ko != null) {
         u.ko--;
         if (u.ko <= 0) { u.dead = true; u.ko = null; this.popupAt(u, 'MORT', SALMON); sfx('toll'); }
-        continue;
       }
-      u.moved = false; u.acted = false; u.mvBonus = 0;
-      this.bleed(u);
     }
     if (this.checkEnd()) return;
-    if (B.turn > 1 || !B.banner) {
-      const n = B.units.filter((o) => o.side === 'p' && K.alive(o)).length;
-      this.banner(`TOUR ${B.turn} : À TOI`, GOLD, `${n} PERSONNAGE${n > 1 ? 'S' : ''} PRÊT${n > 1 ? 'S' : ''}  -  ESPACE : FIN DU TOUR`, 'viseur');
+    let order = K.turnOrder(B);
+    const side = (uid) => this.unit(uid)?.side;
+    // embuscade : les bandits ouvrent le feu, tous avant la bande ; surprise : ils ne jouent pas la première manche
+    if (B.turn === 1 && B.opt.kind === 'embuscade') order = [...order.filter((id) => side(id) === 'e'), ...order.filter((id) => side(id) === 'p')];
+    if (B.turn === 1 && B.surprised) order = order.filter((id) => side(id) === 'p');
+    B.order = order;
+    B.cur = -1;
+    B.played = new Set();
+    if (B.turn > 1) {
+      const np = B.units.filter((o) => o.side === 'p' && K.alive(o)).length, ne = B.units.filter((o) => o.side === 'e' && !o.dead).length;
+      this.banner(`MANCHE ${B.turn}`, GOLD, `${np} DE LA BANDE CONTRE ${ne}  -  L'ORDRE DES TOURS EST EN HAUT`, 'viseur');
+      sfx('draw');
     }
-    if (B.turn > 1) sfx('draw');
-    const first = B.units.find((u) => u.side === 'p' && K.alive(u));
-    this.select(first);
+    this.later(B.turn > 1 ? 500 : 0, () => this.nextActor());
   }
+  // au suivant de la file
+  nextActor() {
+    const B = this.B;
+    if (!B || B.over) return;
+    for (;;) {
+      B.cur++;
+      if (B.cur >= B.order.length) return this.startRound();
+      const u = this.unit(B.order[B.cur]);
+      if (u && K.alive(u)) return this.beginUnitTurn(u);
+    }
+  }
+  // le tour d'une unité : ses états d'un tour tombent, saignement et brûlure, puis 2 PA (moins s'il panique)
+  beginUnitTurn(u) {
+    const B = this.B;
+    B.active = u.uid;
+    B.mode = null;
+    u.st.profil = false; u.st.retranche = false; u.st.affut = null; u.st.guet = null;
+    if (u.side === 'p') u.st.fondu = false;
+    u.attacked = false; u.mvBonus = 0; u.riposted = false;
+    u.ap = PISTE.ap;
+    if (u.st.rally) { u.ap++; u.mvBonus = 2; u.st.rally = false; this.popupAt(u, 'EN AVANT !', GOLD); }
+    if (u.st.stun) { u.ap = 0; u.st.stun = false; this.popupAt(u, 'ÉTOURDI', GREY); }
+    else if (u.st.panic) { u.ap = Math.max(0, u.ap - 1); this.popupAt(u, 'PANIQUE !', SALMON); sfx(u.side === 'p' ? 'oof' : 'yell'); }
+    this.syncAp(u);
+    this.bleed(u);
+    this.burn(u);
+    if (B.over) return;
+    if (!K.alive(u)) { this.later(400, () => this.endUnitTurn()); return; }
+    if (u.side === 'p') {
+      B.side = 'p';
+      this.select(u);
+      if (u.ap <= 0) this.later(700, () => this.endUnitTurn());
+    } else {
+      B.side = 'e';
+      B.sel = null;
+      B.reach = null;
+      B.focus = u.uid;
+      B.ePhase = 'plan';
+      if (this.view && this.seen(u)) this.view.centerOn(u.x, u.y);
+      this.later(this.seen(u) ? 350 : 60, () => {});
+    }
+  }
+  // fin du tour de celui qui joue
+  endUnitTurn() {
+    const B = this.B;
+    if (!B || B.over) return;
+    const u = this.active;
+    if (u) {
+      u.ap = 0;
+      this.syncAp(u);
+      u.st.panic = false;
+      if (u.side === 'e') u.st.pinned = false;
+      B.played?.add(u.uid);
+    }
+    B.mode = null; B.confirm = null; B.reach = null; B.ePhase = null;
+    this.nextActor();
+  }
+  // compatibilité : l'ancien « à toi de jouer » (le combat démarre par une manche)
+  startPlayerTurn() { this.startRound(); }
 
   bleed(u) {
     if (!u.st.bleed || !K.alive(u)) return;
@@ -1677,62 +1771,55 @@ export class PisteScene extends MiniScene {
     const out = K.applyHit(u, r);
     if (out) this.down(u, null, out);
   }
+  // brûlure : au début de son tour (et dans les flammes, de nouveau)
+  burn(u) {
+    if (!K.alive(u)) return;
+    const m = this.B.map, inFire = m.fire?.has(u.y * m.w + u.x);
+    if (!u.st.burn && !inFire) return;
+    if (inFire) u.st.burn = 2;
+    u.st.burn--;
+    const r = { dmg: Math.min(u.hp, inFire ? PISTE.fireHit : PISTE.burn), armDmg: 0 };
+    this.popupAt(u, `-${r.dmg}`, '#ffa040');
+    this.popupAt(u, 'BRÛLE', '#ffa040', -10);
+    sfx('ugh');
+    const out = K.applyHit(u, r);
+    if (out) this.down(u, null, out);
+  }
 
-  // force : sans demander, même s'il reste des déplacements ou des actions
+  // le bouton FIN DU TOUR / ESPACE : celui qui joue passe la main (on demande s'il n'a encore rien fait)
   endTurn(force = false) {
     const B = this.B;
     if (!B || B.intro || B.side !== 'p' || B.over || this.busy) return;
     B.mode = null;
-    if (!force && this.leftovers().length) { B.confirm = { t0: this.now }; return; }
+    const u = this.active;
+    if (!force && u && u.ap >= PISTE.ap) { B.confirm = { t0: this.now }; return; }
     B.confirm = null;
-    this.startEnemyTurn();
+    this.endUnitTurn();
   }
 
-  startEnemyTurn() {
-    const B = this.B;
-    if (B.over) return;
-    B.side = 'e';
-    B.sel = null;
-    B.reach = null;
-    for (const u of B.units) if (u.side === 'p') u.riposted = false;
-    for (const u of B.units) {
-      if (u.side !== 'e' || u.dead) continue;
-      u.st.affut = null;
-      u.done = false;
-      u.boomCd = Math.max(0, u.boomCd - 1);
-      this.bleed(u);
-    }
-    if (this.checkEnd()) return;
-    const nf = B.units.filter((o) => o.side === 'e' && !o.dead).length;
-    this.banner(B.surprised && B.turn <= 1 ? 'ILS SONT SURPRIS !' : this.beasts ? 'LA MEUTE ATTAQUE' : 'TOUR DES BANDITS', SALMON,
-      B.surprised && B.turn <= 1 ? 'ILS NE BOUGENT PAS CE TOUR' : `${nf} ENNEMI${nf > 1 ? 'S' : ''}`, 'n_combat');
-    B.confirm = null;
-    sfx(B.surprised && B.turn <= 1 ? 'laugh' : this.beasts ? 'bark' : 'yell');
-    this.later(700, () => {});
-  }
-
-  // le prochain ennemi joue (appelé quand plus rien ne bouge)
+  // le bandit qui joue (appelé quand plus rien ne bouge) : il prévoit, agit, puis passe la main
   enemyNext() {
+    const B = this.B, u = this.active;
+    if (!u || !K.alive(u) || u.side !== 'e') return this.endUnitTurn();
+    if (B.ePhase === 'plan') { B.ePhase = 'act'; this.enemyPlay(u); return; }
+    this.endUnitTurn();
+  }
+  enemyPlay(u) {
     const B = this.B;
-    const u = B.units.find((x) => x.side === 'e' && !x.dead && !x.done);
-    if (!u) {
-      for (const x of B.units) if (x.side === 'e') x.st.pinned = false;
-      return this.startPlayerTurn();
-    }
-    u.done = true;
-    if (B.surprised && B.turn <= 1) return;
     const plan = K.planEnemy(B, u);
-    B.focus = u.uid;
-    if (this.view && this.seen(u)) this.view.centerOn(u.x, u.y);
-    if (plan.act?.kind === 'call') return this.callGang(u);
+    if (plan.panic && this.seen(u)) this.popupAt(u, 'IL FUIT !', GOLD);
+    if (plan.act?.kind === 'call') { this.spend(u, 0, true); return this.callGang(u); }
     let steps = plan.path.slice(1);
+    // la course (au-delà de sa zone de déplacement) prend les 2 PA
+    if (steps.length) this.spend(u, K.stepCost(u, steps.length));
     const amb = steps.length || plan.act ? K.ambushOn(B, u, steps) : null;
-    let act = plan.act;
+    let act = u.ap >= 1 ? plan.act : null;
     if (amb) { steps = steps.slice(0, amb.k + 1); act = null; }
     const after = () => {
       if (B.over) return;
-      if (amb) return this.affutFire(amb.by, u);
-      if (!act) return this.later(150, () => {});
+      this.fireStep(u, steps);
+      if (amb) return this.affutFire(amb.by, u, amb.guet);
+      if (!act || !K.alive(u)) return this.later(150, () => {});
       this.enemyAct(u, act);
     };
     if (steps.length) this.walk(u, steps, after);
@@ -1744,21 +1831,28 @@ export class PisteScene extends MiniScene {
     if (act.kind === 'shoot' || act.kind === 'melee') {
       if (!K.alive(act.t)) return;
       this.attack(u, act.t, { melee: act.kind === 'melee' });
+      this.spend(u, act.kind === 'melee' ? 1 : K.shotCost(u), act.kind !== 'melee' && K.shotEnds(u) && !act.double);
       if (act.double) {
         this.later(420, () => {
           if (B.over || !K.alive(u)) return;
           const t = K.alive(act.t) ? act.t : B.units.find((o) => o.side === 'p' && K.alive(o) && K.hitInfo(B, u, o).ok);
           if (t) this.attack(u, t);
+          this.spend(u, 0, true);
         });
       }
     } else if (act.kind === 'boom') {
       u.boomCd = 3;
+      this.spend(u, 1);
       this.throwBoom(u, act.x, act.y, ENEMIES.dynamiteur.boom.map((v) => Math.round(v * (u.dmgMul || 1))));
     } else if (act.kind === 'affut') {
       u.st.affut = { cells: K.coneCells(B.map, u.x, u.y, act.x, act.y, u.range, 0.45) };
-      this.popupAt(u, 'À L\'AFFÛT', GOLD);
-      sfx('creak');
-      sfx('snap', 0.25);
+      this.spend(u, 0, true);
+      if (this.seen(u)) { this.popupAt(u, 'À L\'AFFÛT', GOLD); sfx('creak'); sfx('snap', 0.25); }
+    } else if (act.kind === 'guet') {
+      u.st.guet = { range: u.range };
+      u.guetAt = B.turn;
+      this.spend(u, 0, true);
+      if (this.seen(u)) { this.popupAt(u, 'AU GUET', GOLD); sfx('reload'); }
     }
     this.later(450, () => {});
   }
@@ -1813,32 +1907,36 @@ export class PisteScene extends MiniScene {
     if (!R.has(k) || R.get(k).occ) return;
     let steps = K.pathTo(R, k).slice(1);
     if (!steps.length) return;
+    this.spend(u, K.stepCost(u, R.get(k).d));
     const amb = K.ambushOn(B, u, steps);
     if (amb) steps = steps.slice(0, amb.k + 1);
-    u.moved = true;
     B.reach = null;
     B.mode = null;
     this.walk(u, steps, () => {
-      if (amb) this.affutFire(amb.by, u);
+      this.fireStep(u, steps);
+      if (amb) this.affutFire(amb.by, u, amb.guet);
       this.afterAction(u);
     });
   }
 
-  // un guetteur tire sur celui qui entre dans son cône (et ne guette plus)
-  affutFire(w, t) {
+  // un guetteur tire sur celui qui bouge à sa portée (guet : -20 %) ou dans son cône (affût), et ne guette plus
+  affutFire(w, t, guet = false) {
     if (!K.alive(w) || !K.alive(t)) return;
     w.st.affut = null;
-    this.popupAt(w, 'AFFÛT !', GOLD);
+    w.st.guet = null;
+    this.popupAt(w, guet ? 'GUET !' : 'AFFÛT !', GOLD);
     sfx('yell');
-    this.attack(w, t, { free: true });
+    this.attack(w, t, { free: true, reaction: guet });
   }
 
   // ---------------------------------------------------------- tirs et coups
   // attaque de a sur t ; o.melee : au contact ; o.range : dégâts imposés ; o.special ; o.bleed ; o.jugement ; o.free (sans munitions)
   attack(a, t, o = {}) {
     const B = this.B;
-    const info = K.hitInfo(B, a, t, { melee: o.melee, aura: K.auraOf(B, a) });
+    const info = K.hitInfo(B, a, t, { melee: o.melee, aura: K.auraOf(B, a), reaction: o.reaction });
     if (!info.ok) return false;
+    o.coverAt = info.cover && !o.melee ? K.coverCell(B.map, t.x, t.y, a.x, a.y) : -1;
+    o.flank = info.flank;
     const w = K.weaponOf(a);
     if (!o.melee && !o.free && a.side === 'p' && w?.clip != null) {
       if (a.ammo <= 0) return false;
@@ -1862,6 +1960,7 @@ export class PisteScene extends MiniScene {
       const tx = tp.x + (miss ? (Math.random() - 0.5) * 14 : 0), ty = tp.y + (miss ? (Math.random() - 0.5) * 10 : 0);
       this.fx.push({ k: 'tracer', x0: m.x, y0: m.y, x1: tx, y1: ty, t0: this.now, len: 160, arrow: a.w?.id === 'arc' });
       this.fx.push({ k: 'flash', x: m.x, y: m.y, t0: this.now, len: 80 });
+      this.view?.flash?.(a.px, a.py, { r: 2.2, col: '#ffd890', ms: 110, z: 12 });
     }
     this.later(o.melee ? 120 : 110, () => this.land(a, t, res, o));
     return true;
@@ -1884,11 +1983,16 @@ export class PisteScene extends MiniScene {
     const B = this.B;
     if (!B || !K.alive(t)) return;
     if (!res.hit) {
-      this.popupAt(t, res.evade ? 'ESQUIVE !' : 'RATÉ', res.evade ? BLUE : CREAM);
+      // la balle ratée frappe le couvert : il s'use, puis vole en éclats
+      if (!res.evade && o.coverAt >= 0 && Math.random() < 0.7) { this.hitCover(o.coverAt, 1, a); this.popupAt(t, 'DANS LE COUVERT', CREAM); }
+      else this.popupAt(t, res.evade ? 'ESQUIVE !' : 'RATÉ', res.evade ? BLUE : CREAM);
       sfx(res.evade ? 'dodge' : 'ricochet');
       if (res.evade) this.gainCran(t, 1);
       return;
     }
+    if (o.flank) this.popupAt(t, 'DE FLANC !', GOLD, -18);
+    const hpBefore = t.hp;
+    if (a.skills?.has('chasseur') && (t.st.mark || o.flank)) res.dmg = Math.round(res.dmg * 1.25);
     if (o.jugement && t.hp - res.dmg <= t.max * 0.35) {
       res.dmg = t.hp;
       this.popupAt(t, 'JUGEMENT !', GOLD, -10);
@@ -1905,7 +2009,15 @@ export class PisteScene extends MiniScene {
     this.gainCran(a, res.crit ? 2 : 1);
     if (!out && o.bleed) { t.st.bleed = 3; this.popupAt(t, 'SAIGNE', SALMON, -10); }
     if (!out && o.melee && a.it === 'couteau' && Math.random() < 0.3) { t.st.bleed = 2; this.popupAt(t, 'SAIGNE', SALMON, -10); }
-    if (out) this.down(t, a, out);
+    if (out) this.down(t, a, out, K.brutal(res, o, hpBefore));
+    // gâchette sensible : un allié tombe sous 25 % de ses PV, celui qui l'a touché essuie un tir (une fois par manche)
+    if (t.side === 'p' && K.alive(a) && (out || t.hp < t.max * 0.25)) {
+      const g = B.units.find((o2) => o2 !== t && o2.side === 'p' && K.alive(o2) && o2.skills?.has('gachette') && o2.gachetteAt !== B.turn && K.hitInfo(B, o2, a).ok);
+      if (g) {
+        g.gachetteAt = B.turn;
+        this.later(380, () => { if (this.B && K.alive(g) && K.alive(a)) { this.popupAt(g, 'GÂCHETTE SENSIBLE !', GOLD, -12); this.attack(g, a, { free: true }); } });
+      }
+    }
     // riposte : touché par un tir, il rend la pareille (une fois par tour des bandits)
     if (!out && !o.melee && !o.free && t.side === 'p' && t.skills?.has('riposte') && !t.riposted && K.alive(a) && K.hitInfo(B, t, a).ok) {
       t.riposted = true;
@@ -1926,9 +2038,27 @@ export class PisteScene extends MiniScene {
     sfx('power');
   }
 
-  // t tombe (mort, ou à terre pour la bande)
-  down(t, by, out) {
+  // t tombe (mort, ou à terre pour la bande) ; brutal : le coup fait paniquer les témoins de son camp
+  down(t, by, out, brutal = false) {
     const B = this.B;
+    if (by?.skills?.has('boucher')) brutal = true;
+    if (out === 'dead' && by && by.side !== t.side && K.alive(by)) {
+      // enchaînement : une victime rend 1 PA (une fois par tour) ; fantôme : il se fond dans le décor
+      if (by.skills?.has('enchaine') && B.active === by.uid && by.chainAt !== B.turn) {
+        by.chainAt = B.turn; by.ap += 1; this.syncAp(by);
+        this.later(300, () => { this.popupAt(by, '+1 PA', GOLD, -12); if (this.B?.active === by.uid) this.select(by); });
+      }
+      if (by.skills?.has('fantome')) { by.st.fondu = true; this.later(300, () => this.popupAt(by, 'FANTÔME', BLUE, -12)); }
+    }
+    if (brutal && out === 'dead') {
+      this.popupAt(t, 'COUP BRUTAL !', SALMON, -18);
+      sfx('smack');
+      for (const w of B.units) {
+        if (w === t || w.side !== t.side || !K.alive(w) || w.st.panic) continue;
+        if (Math.hypot(w.x - t.x, w.y - t.y) > 5 || !K.sees(B.map, w.x, w.y, t.x, t.y)) continue;
+        if (Math.random() * 100 < K.panicChance(w)) { w.st.panic = true; this.later(260, () => this.popupAt(w, 'PANIQUE !', GOLD, -10)); }
+      }
+    }
     if (out === 'dead') {
       t.deadAt = this.now;
       sfx('bodyfall');
@@ -1971,17 +2101,23 @@ export class PisteScene extends MiniScene {
   explode(x, y, range, by) {
     const B = this.B;
     if (!B) return;
+    if (by?.skills?.has('boom')) range = range.map((v) => v + 10);
     const m = B.map;
     let changed = false;
     const bp = this.wpt(x, y);
     this.fx.push({ k: 'boom', x: bp.x, y: bp.y, t0: this.now, len: 700 });
+    this.view?.flash?.(x, y, { r: 5, col: '#ffb060', ms: 420, z: 8 });
     sfx('kaboom');
     this.shake = 6;
     const chain = [], hit = [];
     for (const c of K.blastCells(m, x, y)) {
       const i = c.y * m.w + c.x, cell = m.cells[i];
-      if (cell === C.CRATE || cell === C.SAND || cell === C.BUSH || cell === K.CELL.TABLE || cell === K.CELL.FENCE) { m.cells[i] = C.FLOOR; if (m.deco) m.deco[i] = 0; changed = true; hit.push(i); }
-      else if (cell === C.CHEST) { m.cells[i] = C.FLOOR; if (m.deco) m.deco[i] = 0; changed = true; hit.push(i); if (c.x !== x || c.y !== y) chain.push(c); }
+      if (cell === C.CHEST) { m.cells[i] = C.FLOOR; m.chp[i] = 0; m.deco[i] = this.debris(cell); changed = true; hit.push(i); if (c.x !== x || c.y !== y) chain.push(c); }
+      else if (m.chp[i]) { this.hitCover(i, 3, by, true); changed = true; }
+      // les flaques d'alcool et de pétrole s'enflamment
+      if (m.puddle.get(i) === 'whisky' || m.puddle.get(i) === 'petrole') this.startFire(i, 3);
+      const pr = this.propAt(c.x, c.y);
+      if (pr) this.breakProp(pr, by);
       const t = K.unitAt(B, c.x, c.y);
       if (t && K.alive(t)) {
         const res = K.damage(t, K.randInt(range[0], range[1]));
@@ -1991,7 +2127,7 @@ export class PisteScene extends MiniScene {
         if (res.dmg) this.popupAt(t, `-${res.dmg}`, '#ff8a70');
         if (res.armDmg) this.popupAt(t, `-${res.armDmg}`, '#c9ced6', 9);
         if (by && by.side !== t.side) this.gainCran(by, 1);
-        if (out) this.down(t, by && by.side !== t.side ? by : null, out);
+        if (out) this.down(t, by && by.side !== t.side ? by : null, out, true);
       }
     }
     (m.scorch ||= []).push({ x, y });
@@ -2002,6 +2138,231 @@ export class PisteScene extends MiniScene {
       if (B.sel != null) { const u = this.sel(); B.reach = u && !u.moved ? K.reach(B, u) : null; }
     }
     chain.forEach((c, k) => this.later(160 + k * 120, () => this.explode(c.x, c.y, [25, 35], by)));
+  }
+
+  // ---------------------------------------------------------- le décor : couvert, objets, feu
+  // l'état du décor d'une carte (pistemaps.js le prépare ; à défaut, on le complète ici)
+  mapState(m) {
+    const n = m.w * m.h;
+    const HP = { [C.CRATE]: 2, [C.CHEST]: 1, [C.SAND]: 3, [C.BUSH]: 1, [K.CELL.TABLE]: 2, [K.CELL.FENCE]: 1, [K.CELL.COUNTER]: 4 };
+    if (!m.chp) { m.chp = new Uint8Array(n); for (let i = 0; i < n; i++) m.chp[i] = PMAPS.coverHp ? PMAPS.coverHp(m.cells[i], m.deco?.[i] || 0) : HP[m.cells[i]] || 0; }
+    m.dmg ||= new Uint8Array(n);
+    m.deco ||= new Uint8Array(n);
+    m.fire ||= new Map();
+    m.puddle ||= new Map();
+    m.props ||= [];
+    m.lights ||= [];
+    m.lightsVer ||= 0;
+    m.fxVer ||= 0;
+  }
+  // le débris qui reste d'un décor détruit
+  debris(cell, deco = 0) {
+    if (PMAPS.debrisFor) return PMAPS.debrisFor(cell, deco) || 0;
+    const D = PMAPS.DECO || {};
+    return (cell === C.SAND ? D.DEBRIS_SAC : cell === K.CELL.COUNTER ? D.DEBRIS_BOIS : cell === K.CELL.PILLAR || cell === C.WALL ? D.DEBRIS_PIERRE : D.DEBRIS_BOIS) || 0;
+  }
+  // le couvert de la case i prend n coups : il s'abîme, puis vole en éclats (un tonneau de poudre saute)
+  hitCover(i, n, by = null, quiet = false) {
+    const B = this.B, m = B.map;
+    if (!m.chp[i]) return false;
+    const cell = m.cells[i], x = i % m.w, y = Math.floor(i / m.w);
+    const max = (PMAPS.coverHp ? PMAPS.coverHp(cell, m.deco[i]) : 0) || Math.max(m.chp[i], 2);
+    m.chp[i] = Math.max(0, m.chp[i] - n);
+    m.fxVer++;
+    if (m.chp[i] > 0) {
+      m.dmg[i] = m.chp[i] <= max / 2 ? 2 : 1;
+      this.view?.changed([i]);
+      if (!quiet) sfx('clank', 0.05);
+      return false;
+    }
+    // détruit : la case devient du sol jonché de débris
+    m.cells[i] = C.FLOOR;
+    m.deco[i] = this.debris(cell, m.deco[i]);
+    m.dmg[i] = 0;
+    m.base = m.cells.slice();
+    B.ground = {};
+    this.view?.changed([i]);
+    const p = this.spt(x, y, 10);
+    if (!quiet) { this.popup(p.x, p.y, 'EN MIETTES !', CREAM); sfx('crate'); }
+    if (cell === C.CHEST) this.later(80, () => this.explode(x, y, [25, 35], by));
+    if (B.sel != null) { const u = this.sel(); if (u && u.side === 'p' && B.active === u.uid) this.select(u); }
+    return true;
+  }
+  // l'objet interactif d'une case (lustre, lanterne, lampe, tonneau de whisky), encore entier
+  propAt(x, y) { return (this.B.map.props || []).find((p) => !p.broken && p.x === x && p.y === y && ['lustre', 'lanterne', 'lampe', 'whisky'].includes(p.kind)) || null; }
+  // tirer sur un objet du décor : un tir ordinaire (même règle de PA), toujours touché s'il est à portée et en vue
+  shootProp(u, p) {
+    const B = this.B, w = K.weaponOf(u);
+    if (!w) { sfx('wrong'); return this.popupAt(u, 'IL FAUT UNE ARME', GREY); }
+    if (!this.canAttack(u)) { sfx('wrong'); return this.popupAt(u, this.attackWhy(u), GREY); }
+    if (w.clip != null && u.ammo <= 0) { sfx('dry'); return this.popupAt(u, 'À SEC : RECHARGE !', SALMON); }
+    if (Math.hypot(p.x - u.x, p.y - u.y) > u.range + 0.5 || !K.sees(B.map, u.x, u.y, p.x, p.y)) { sfx('wrong'); const q = this.spt(p.x, p.y, 16); return this.popup(q.x, q.y, 'PAS EN VUE', GREY); }
+    u.attacked = true;
+    this.spend(u, K.shotCost(u), K.shotEnds(u));
+    if (w.clip != null) u.ammo--;
+    u.atkAt = this.now;
+    u.aimA = this.aimAngle(u, p);
+    this.faceTo(u, p.x, p.y);
+    sfx(w.sfx);
+    const m0 = this.muzzle(u, p), bp = this.wpt(p.x, p.y, p.kind === 'lustre' ? 26 : 10);
+    this.fx.push({ k: 'tracer', x0: m0.x, y0: m0.y, x1: bp.x, y1: bp.y, t0: this.now, len: 160 });
+    this.view?.flash?.(u.px, u.py, { r: 2.2, col: '#ffd890', ms: 110, z: 12 });
+    this.later(130, () => this.breakProp(p, u));
+    this.afterAction(u, 800);
+  }
+  // l'objet cède : le lustre tombe, la lanterne et la lampe mettent le feu, le tonneau de whisky se répand
+  breakProp(p, by = null) {
+    const B = this.B, m = B.map;
+    if (p.broken) return;
+    p.broken = true;
+    const i = p.y * m.w + p.x;
+    const light = p.light != null ? m.lights[p.light] : m.lights.find((l) => l.prop === p.id);
+    if (light) { light.off = true; m.lightsVer++; }
+    const near = (fn) => { for (const [dx, dy] of K.DIRS4) { const X = p.x + dx, Y = p.y + dy; if (K.inMap(m, X, Y) && !K.blocksMove(m.cells[Y * m.w + X])) fn(Y * m.w + X); } };
+    if (p.kind === 'lustre') {
+      // il tombe sur la case : dégâts et étourdi ; reste un lustre brisé (demi-couvert)
+      sfx('crate'); sfx('clank', 0.08); this.shake = 5;
+      this.view?.flash?.(p.x, p.y, { r: 3, col: '#fff0c0', ms: 200, z: 4 });
+      const t = K.unitAt(B, p.x, p.y);
+      if (t && K.alive(t)) {
+        const res = K.damage(t, K.randInt(18, 26));
+        const out = K.applyHit(t, res);
+        t.hurtAt = this.now;
+        this.popupAt(t, `-${res.dmg}`, '#ff8a70');
+        if (!out) { t.st.stun = true; this.popupAt(t, 'ASSOMMÉ', GOLD, -10); }
+        else this.down(t, by && by.side !== t.side ? by : null, out, true);
+      } else {
+        m.cells[i] = C.CRATE;
+        m.chp[i] = 2;
+        m.deco[i] = (PMAPS.DECO || {}).DEBRIS_LUSTRE || m.deco[i];
+        m.base = m.cells.slice();
+        B.ground = {};
+      }
+      this.view?.changed([i]);
+    } else if (p.kind === 'lanterne') {
+      sfx('glass'); sfx('fuse', 0.1);
+      const fi = !K.blocksMove(m.cells[i]) || m.chp[i] ? i : (() => { let r = -1; near((k) => { if (r < 0) r = k; }); return r; })();
+      if (fi >= 0) this.startFire(fi, 3);
+    } else if (p.kind === 'lampe') {
+      sfx('glass'); sfx('fuse', 0.1);
+      this.startFire(i, 3);
+      near((k) => { m.puddle.set(k, 'petrole'); this.startFire(k, 2); });
+    } else if (p.kind === 'whisky') {
+      sfx('glass'); sfx('gulp', 0.05);
+      m.cells[i] = C.FLOOR; m.chp[i] = 0; m.deco[i] = this.debris(C.CRATE); m.base = m.cells.slice(); B.ground = {};
+      m.puddle.set(i, 'whisky');
+      near((k) => m.puddle.set(k, 'whisky'));
+      this.view?.changed([i]);
+      const q = this.spt(p.x, p.y, 10);
+      this.popup(q.x, q.y, 'WHISKY RÉPANDU', GOLD);
+      // une flamme voisine : tout s'embrase
+      if ([i, ...[[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => (p.y + dy) * m.w + p.x + dx)].some((k) => m.fire.has(k))) this.startFire(i, 3);
+    }
+    m.fxVer++;
+  }
+  // une case prend feu (t manches) : l'alcool et le pétrole brûlent plus fort ; ceux qui y sont brûlent
+  startFire(i, t = 3) {
+    const B = this.B, m = B.map, cell = m.cells[i];
+    if (cell === C.WALL || cell === C.WATER || cell === K.CELL.VOID || cell === K.CELL.PILLAR) return;
+    const pud = m.puddle.get(i);
+    if (pud === 'eau' || pud === 'sang') return;
+    if (pud === 'whisky' || pud === 'petrole') { t++; m.puddle.delete(i); }
+    const cur = m.fire.get(i);
+    m.fire.set(i, { t: Math.max(t, cur?.t || 0) });
+    m.fxVer++;
+    if (!cur) {
+      const x = i % m.w, y = Math.floor(i / m.w);
+      this.view?.flash?.(x, y, { r: 2.5, col: '#ff9040', ms: 260, z: 4 });
+      const u = K.unitAt(B, x, y);
+      if (u && K.alive(u)) this.burn(u);
+      // les flaques voisines s'enflamment aussitôt
+      for (const [dx, dy] of K.DIRS4) {
+        const X = x + dx, Y = y + dy, k = Y * m.w + X;
+        if (K.inMap(m, X, Y) && (m.puddle.get(k) === 'whisky' || m.puddle.get(k) === 'petrole')) this.later(120, () => this.startFire(k, 2));
+      }
+    }
+    this.view?.changed([i]);
+  }
+  // à chaque manche : le feu gagne le bois et les buissons voisins, puis s'éteint ; ce qu'il a dévoré tombe en cendres
+  fireTick() {
+    const B = this.B, m = B.map;
+    if (!m.fire?.size) return;
+    const FLAM = new Set([C.CRATE, C.BUSH, K.CELL.TABLE, K.CELL.FENCE, C.CHEST]);
+    const spread = [];
+    for (const [i, f] of m.fire) {
+      const x = i % m.w, y = Math.floor(i / m.w);
+      for (const [dx, dy] of K.DIRS4) {
+        const X = x + dx, Y = y + dy, k = Y * m.w + X;
+        if (!K.inMap(m, X, Y) || m.fire.has(k)) continue;
+        const pud = m.puddle.get(k);
+        if (pud === 'whisky' || pud === 'petrole' || (FLAM.has(m.cells[k]) && Math.random() < 0.35)) spread.push(k);
+      }
+      f.t--;
+      if (f.t <= 0) {
+        m.fire.delete(i);
+        (m.scorch ||= []).push({ x, y });
+        if (m.chp[i] && FLAM.has(m.cells[i])) this.hitCover(i, 9, null, true);
+        this.view?.changed([i]);
+      }
+    }
+    for (const k of spread) this.startFire(k, 2);
+    m.fxVer++;
+  }
+  // traverser ou finir dans les flammes : ça brûle (une fois par déplacement)
+  fireStep(u, steps) {
+    const m = this.B?.map;
+    if (!m?.fire?.size || !K.alive(u)) return;
+    if (steps.some((s) => m.fire.has(s.y * m.w + s.x)) || m.fire.has(u.y * m.w + u.x)) this.burn(u);
+  }
+
+  // le wagonnet : au contact (1 PA), on le pousse ; il roule sur les rails jusqu'à un obstacle et renverse qui est sur
+  // son chemin (18-24 dégâts, assommé)
+  wagonAt(x, y) { return (this.B.map.props || []).find((p) => !p.broken && p.kind === 'wagonnet' && p.x === x && p.y === y) || null; }
+  pushWagon(u, p) {
+    const B = this.B, m = B.map;
+    if (u.ap < 1) { sfx('wrong'); return this.popupAt(u, 'PLUS DE PA', GREY); }
+    const dx = Math.sign(p.x - u.x), dy = Math.sign(p.y - u.y);
+    if (Math.abs(p.x - u.x) + Math.abs(p.y - u.y) !== 1) { sfx('wrong'); return this.popupAt(u, 'AU CONTACT', GREY); }
+    const rail = (x, y) => K.inMap(m, x, y) && (m.rail ? m.rail[y * m.w + x] : m.cells[y * m.w + x] === K.CELL.RAIL);
+    if (!rail(p.x + dx, p.y + dy)) { sfx('wrong'); return this.popupAt(u, 'PAS DE RAIL DE CE CÔTÉ', GREY); }
+    this.spend(u, 1);
+    u.atkAt = this.now;
+    this.faceTo(u, p.x, p.y);
+    sfx('creak'); sfx('steam', 0.05);
+    this.popupAt(u, 'HO HISSE !', GOLD);
+    const roll = (n) => {
+      const nx = p.x + dx, ny = p.y + dy;
+      const free = rail(nx, ny) && !K.blocksMove(m.cells[ny * m.w + nx]) && n < 12;
+      const t = free ? K.unitAt(B, nx, ny) : null;
+      if (!free || t) {
+        // il s'arrête : contre un obstacle, ou sur quelqu'un qu'il renverse
+        if (t && K.alive(t)) {
+          const res = K.damage(t, K.randInt(18, 24));
+          const out = K.applyHit(t, res);
+          t.hurtAt = this.now;
+          this.popupAt(t, `-${res.dmg}`, '#ff8a70');
+          if (!out) { t.st.stun = true; this.popupAt(t, 'RENVERSÉ', GOLD, -10); }
+          else this.down(t, u.side !== t.side ? u : null, out, true);
+          if (u.side !== t.side) this.gainCran(u, 1);
+        }
+        sfx('thud'); sfx('clank', 0.06); this.shake = 4;
+        this.afterAction(u, 300);
+        return;
+      }
+      // une case de plus : l'ancienne redevient du rail, la nouvelle porte le wagonnet
+      const i0 = p.y * m.w + p.x, i1 = ny * m.w + nx;
+      const deco = m.deco[i0], hp = m.chp[i0];
+      m.cells[i0] = K.CELL.RAIL; m.deco[i0] = 0; m.chp[i0] = 0; m.dmg[i0] = 0;
+      m.cells[i1] = C.CRATE; m.deco[i1] = deco; m.chp[i1] = hp;
+      p.x = nx; p.y = ny;
+      m.base = m.cells.slice();
+      B.ground = {};
+      m.fxVer++;
+      this.view?.changed([i0, i1]);
+      if (n % 2 === 0) sfx('step');
+      this.later(85, () => roll(n + 1));
+    };
+    this.later(120, () => roll(0));
   }
 
   checkEnd() {
@@ -2074,27 +2435,32 @@ export class PisteScene extends MiniScene {
     const u = this.sel();
     if (B.mode) return this.modeClick(cx, cy);
     const o = K.unitAt(B, cx, cy);
-    if (o && o.side === 'p' && !o.dead) { if (K.alive(o)) { this.select(o); sfx('spur'); } return; }
+    if (o && o.side === 'p' && !o.dead) { if (o !== u && this.view) this.view.centerOn(o.x, o.y); return; }
     if (!u) return;
     if (o && o.side === 'e' && !o.dead && !this.seen(o)) { sfx('wrong'); return; }
     if (o && o.side === 'e' && !o.dead) return this.basicAttack(u, o);
-    if (K.cellOf(B.map, cx, cy) === C.CHEST && !u.acted) return this.shootBarrel(u, cx, cy);
-    if (!u.moved) {
-      const k = cy * B.map.w + cx;
-      if (B.reach?.has(k) && !B.reach.get(k).occ) return this.moveTo(u, k);
-    }
+    const k = cy * B.map.w + cx, canGo = B.reach?.has(k) && !B.reach.get(k).occ && B.reach.get(k).d > 0;
+    const prop = this.propAt(cx, cy);
+    // un objet du décor (lustre, lanterne, lampe, tonneau de whisky) : on tire dessus, sauf si on veut aller sur sa
+    // case (MAJ + clic tire quand même)
+    if (prop && (!canGo || this.keys.has('shift'))) return this.shootProp(u, prop);
+    const wagon = this.wagonAt(cx, cy);
+    if (wagon && Math.abs(wagon.x - u.x) + Math.abs(wagon.y - u.y) === 1) return this.pushWagon(u, wagon);
+    if (K.cellOf(B.map, cx, cy) === C.CHEST) return this.shootBarrel(u, cx, cy);
+    if (canGo) return this.moveTo(u, k);
   }
 
   // le coup ordinaire : au couteau (ou à mains nues, ou à sec) au contact, sinon l'arme
   basicAttack(u, t) {
-    if (u.acted) return this.popupAt(u, 'DÉJÀ AGI', GREY);
     const w = K.weaponOf(u);
     const dry = w?.clip != null && u.ammo <= 0;
     const melee = K.adjacent(u, t) && (u.it === 'couteau' || !w || dry);
+    if (melee ? u.ap < 1 || u.attacked : !this.canAttack(u)) { sfx('wrong'); return this.popupAt(u, melee ? (u.attacked ? 'DÉJÀ FRAPPÉ' : 'PLUS DE PA') : this.attackWhy(u), GREY); }
     if (!melee && dry) { sfx('dry'); return this.popupAt(u, 'À SEC : RECHARGE !', SALMON); }
     const info = K.hitInfo(this.B, u, t, { melee });
     if (!info.ok) { sfx('wrong'); return this.popupAt(t, info.why, GREY); }
-    u.acted = true;
+    u.attacked = true;
+    this.spend(u, melee ? 1 : K.shotCost(u), !melee && K.shotEnds(u));
     this.attack(u, t, { melee });
     this.afterAction(u, 500);
   }
@@ -2103,7 +2469,9 @@ export class PisteScene extends MiniScene {
     const B = this.B, w = K.weaponOf(u);
     if (!w || (w.clip != null && u.ammo <= 0)) return;
     if (Math.hypot(x - u.x, y - u.y) > u.range + 0.5 || !K.sees(B.map, u.x, u.y, x, y)) { sfx('wrong'); const p = this.spt(x, y, 16); return this.popup(p.x, p.y, 'PAS EN VUE', GREY); }
-    u.acted = true;
+    if (!this.canAttack(u)) { sfx('wrong'); return this.popupAt(u, this.attackWhy(u), GREY); }
+    u.attacked = true;
+    this.spend(u, K.shotCost(u), K.shotEnds(u));
     if (w.clip != null) u.ammo--;
     u.atkAt = this.now;
     this.faceTo(u, x, y);
@@ -2117,27 +2485,44 @@ export class PisteScene extends MiniScene {
 
   reload(u) {
     const w = K.weaponOf(u), r = this.run.res;
-    if (!w || w.clip == null || u.acted || u.ammo >= w.clip || r.balles <= 0) return;
+    if (!w || w.clip == null || u.ap < 1 || u.ammo >= w.clip || r.balles <= 0) return;
     const n = Math.min(w.clip - u.ammo, r.balles);
     r.balles -= n;
     u.ammo += n;
-    u.acted = true;
+    this.spend(u, 1);
     sfx(u.w.id === 'revolver' ? 'reload' : 'shells');
     sfx('snap', 0.35);
     this.popupAt(u, 'RECHARGÉ', CREAM);
     this.afterAction(u, 300);
   }
 
-  // après une action : on choisit le suivant, ou on finit le tour si toute la bande a tout joué
+  // après une action : il continue tant qu'il lui reste des PA, sinon la main passe au suivant de la file
   afterAction(u, wait = 200) {
     this.later(wait, () => {
       const B = this.B;
-      if (!B || B.over || B.side !== 'p') return;
-      if (B.sel === u.uid && K.alive(u) && !this.spent(u)) { this.select(u); return; }
-      const next = B.units.find((x) => x.side === 'p' && K.alive(x) && !this.spent(x));
-      if (next) this.select(next);
-      else this.later(300, () => this.endTurn());
+      if (!B || B.over || B.active !== u.uid) return;
+      if (K.alive(u) && u.ap > 0) { this.select(u); return; }
+      this.later(250, () => { if (this.B && !this.B.over && this.B.active === u.uid) this.endUnitTurn(); });
     });
+  }
+  // le guet : 1 PA, le tour s'arrête ; il tirera sur le premier ennemi qui bouge à sa portée et en vue (-20 %)
+  guet(u) {
+    const w = K.weaponOf(u);
+    if (!w || u.ap < 1 || u.attacked) { sfx('wrong'); return this.popupAt(u, u.attacked ? 'DÉJÀ TIRÉ CE TOUR' : 'PLUS DE PA', GREY); }
+    if (w.clip != null && u.ammo <= 0) { sfx('dry'); return this.popupAt(u, 'À SEC : RECHARGE !', SALMON); }
+    u.st.guet = { range: u.range };
+    this.spend(u, 1, true);
+    this.popupAt(u, 'AU GUET', GOLD);
+    sfx('reload');
+    this.afterAction(u, 350);
+  }
+  guetWhy(u) {
+    const w = K.weaponOf(u);
+    if (!w) return 'IL FAUT UNE ARME';
+    if (u.attacked) return 'DÉJÀ TIRÉ CE TOUR';
+    if (u.ap < 1) return 'PLUS DE PA';
+    if (w.clip != null && u.ammo <= 0) return 'À SEC';
+    return null;
   }
 
   // les coups spéciaux de u : arme, talent, armure
@@ -2152,9 +2537,10 @@ export class PisteScene extends MiniScene {
   canSpecial(u, id) {
     const sp = SPECIALS[id], w = K.weaponOf(u);
     if (u.cran < this.costOf(u, id)) return 'PAS ASSEZ DE CRAN';
-    if (!sp.free && u.acted) return 'DÉJÀ AGI';
+    if (SHOT_SP.has(id) && !this.canAttack(u)) return this.attackWhy(u);
+    if (!sp.free && u.ap < 1) return 'PLUS DE PA';
     if (['double', 'feu', 'volee', 'affut', 'barbelee', 'jugement', 'semonce'].includes(id) && w?.clip != null && u.ammo <= 0) return 'À SEC';
-    if (id === 'sprint' && u.moved) return 'DÉJÀ DÉPLACÉ';
+    if (id === 'sprint' && u.ap < 1) return 'PLUS DE PA';
     if (id === 'fondu' && u.st.fondu) return 'DÉJÀ CACHÉ';
     return null;
   }
@@ -2194,7 +2580,7 @@ export class PisteScene extends MiniScene {
   canItem(u) {
     const it = ITEMS[u.it];
     if (!it?.use) return 'RIEN À UTILISER';
-    if (u.acted) return 'DÉJÀ AGI';
+    if (u.ap < 1) return 'PLUS DE PA';
     if (u.itUses <= 0) return 'PLUS D\'USAGES';
     if (it.fourn && this.run.res.fourn <= 0) return 'PLUS DE FOURNITURES';
     return null;
@@ -2246,7 +2632,12 @@ export class PisteScene extends MiniScene {
 
   doSpecial(u, id, tg) {
     const B = this.B, sp = SPECIALS[id];
-    const pay = () => { u.cran -= this.costOf(u, id); if (!sp.free) u.acted = true; };
+    const pay = () => {
+      u.cran -= this.costOf(u, id);
+      if (sp.free) return;
+      if (SHOT_SP.has(id)) { u.attacked = true; this.spend(u, K.shotCost(u), K.shotEnds(u)); }
+      else this.spend(u, 1, STANCE_SP.has(id));
+    };
     const w = K.weaponOf(u);
     let wait = 500;
     this.popupAt(u, sp.name, GOLD, -12);
@@ -2304,11 +2695,12 @@ export class PisteScene extends MiniScene {
       case 'retranche': pay(); u.st.retranche = true; sfx('armor'); break;
       case 'fondu': pay(); u.st.fondu = true; sfx('swish'); break;
       case 'traque': pay(); tg.st.mark = true; this.popupAt(tg, 'MARQUÉ', SALMON); sfx('nock'); break;
-      case 'ralliement': pay(); tg.moved = false; tg.mvBonus += 2; this.popupAt(tg, 'EN AVANT !', GOLD); sfx('yell'); break;
+      case 'ralliement': pay(); tg.st.rally = true; this.popupAt(tg, '+1 PA AU PROCHAIN TOUR', GOLD); sfx('yell'); break;
       case 'soins': {
         pay();
-        if (tg.ko != null) { tg.ko = null; tg.hp = Math.max(15, Math.round(tg.max * 0.25)); tg.moved = true; tg.acted = true; this.popupAt(tg, 'DEBOUT !', GREEN); }
-        else { const h = Math.min(tg.max - tg.hp, Math.round(tg.max * 0.25)); tg.hp += h; this.popupAt(tg, `+${h}`, GREEN); }
+        const care = u.skills?.has('medic') ? 0.375 : 0.25;
+        if (tg.ko != null) { tg.ko = null; tg.hp = Math.max(15, Math.round(tg.max * care)); this.popupAt(tg, 'DEBOUT !', GREEN); }
+        else { const h = Math.min(tg.max - tg.hp, Math.round(tg.max * care)); tg.hp += h; this.popupAt(tg, `+${h}`, GREEN); }
         tg.st.bleed = 0;
         this.gainCran(u, 1);
         this.fx.push({ k: 'heal', ...this.wpt(tg.px, tg.py, 6), t0: this.now, len: 800 });
@@ -2349,12 +2741,12 @@ export class PisteScene extends MiniScene {
   useItem(u, tg) {
     const B = this.B, it = ITEMS[u.it];
     u.itUses--;
-    u.acted = true;
+    this.spend(u, 1);
     if (it.fourn) this.run.res.fourn--;
     B.mode = null;
     let wait = 400;
     if (it.use === 'heal') {
-      const k = u.mid && K.statsOf(u.mid).perks.includes('medecin') ? 1.5 : 1;
+      const k = (u.mid && K.statsOf(u.mid).perks.includes('medecin') ? 1.5 : 1) * (u.skills?.has('medic') ? 1.5 : 1);
       const amount = Math.round(it.heal * k);
       if (tg.ko != null) { tg.ko = null; tg.hp = Math.min(tg.max, amount); tg.moved = true; tg.acted = true; this.popupAt(tg, 'DEBOUT !', GREEN); }
       else { const h = Math.min(tg.max - tg.hp, amount); tg.hp += h; this.popupAt(tg, `+${h}`, GREEN); }
@@ -2460,6 +2852,7 @@ export class PisteScene extends MiniScene {
     }
     // dans le noir, ce qu'éclairent les lanternes se voit de loin (si on a la vue dessus)
     if (m.dark) for (const l of m.lights || []) {
+      if (l.off) continue;
       const r = l.r || 4;
       for (let Y = Math.max(0, Math.floor(l.y - r)); Y <= Math.min(m.h - 1, Math.ceil(l.y + r)); Y++) {
         for (let X = Math.max(0, Math.floor(l.x - r)); X <= Math.min(m.w - 1, Math.ceil(l.x + r)); X++) {
@@ -2510,14 +2903,17 @@ export class PisteScene extends MiniScene {
     if (myTurn && u && !B.mode) {
       const k = mc ? mc.y * m.w + mc.x : -1;
       const dest = B.reach && mc && !hovRaw && B.reach.has(k) && !B.reach.get(k).occ && B.reach.get(k).d ? B.reach.get(k) : null;
-      const sprint = hsp?.id === 'sprint' && !u.moved && !this.canSpecial(u, 'sprint');
+      const sprint = hsp?.id === 'sprint' && u.ap >= 1 && !this.canSpecial(u, 'sprint');
       const reach = sprint ? this.sprintReach(u) : B.reach;
       if (reach) {
+        const mv1 = u.mv + (u.mvBonus || 0) + (sprint ? 3 : 0);
         const cells = [...reach.values()].filter((c) => c.d && !c.occ);
-        v.drawTiles(ctx, cells, sprint ? 'rgb(248,208,112)' : 'rgb(122,176,240)', 0.34);
-        v.drawOutline(ctx, cells, sprint ? 'rgb(248,208,112)' : 'rgb(150,196,250)');
+        const near = cells.filter((c) => c.d <= mv1), far = cells.filter((c) => c.d > mv1);
+        if (far.length) { v.drawTiles(ctx, far, 'rgb(248,200,96)', 0.3); v.drawOutline(ctx, cells, 'rgb(248,200,96)'); }
+        v.drawTiles(ctx, near, 'rgb(122,176,240)', 0.36);
+        v.drawOutline(ctx, near, 'rgb(170,206,255)');
       }
-      if (!u.acted && u.w && !hsp) {
+      if (this.canAttack(u) && u.w && !hsp) {
         const from = dest || u;
         v.drawOutline(ctx, this.rangeSet(from.x, from.y, u.range), dest ? 'rgb(255,242,176)' : 'rgb(222,206,150)');
       }
@@ -2535,7 +2931,7 @@ export class PisteScene extends MiniScene {
         if (amb) { const p = path[amb.k + 1], sp = this.spt(p.x, p.y, 12); txt(ctx, '!', sp.x, sp.y, SALMON, 'center'); }
         // les cibles qu'on aurait depuis là (traits pointillés, % sur leurs barres) et les tireurs qui nous y verraient (œil)
         const fc = this.forecast(u, dest.x, dest.y);
-        if (!u.acted) {
+        if (this.canAttack(u) && u.ap - K.stepCost(u, dest.d) >= K.shotCost(u)) {
           this._pred = new Map(fc.shots.map((s) => [s.e.uid, s.info]));
           for (const s of fc.shots) this.dashLine(ctx, dest.x, dest.y, s.e.x, s.e.y, 'rgba(248,208,112,0.85)');
         }
@@ -2556,7 +2952,8 @@ export class PisteScene extends MiniScene {
     const see = shown.filter((o) => o.side === 'p' && !o.dead || o === hovU).map((o) => ({ x: Math.round(o.px), y: Math.round(o.py) }));
     v.drawScene(ctx, this.now, actors, { seeThrough: see, hover: mc });
     // le noir de la mine, puis le brouillard de guerre
-    if (m.dark) v.drawDark(ctx, m.lights, B.units.filter((o) => o.side === 'p' && !o.dead).map((o) => ({ x: o.px, y: o.py, r: 2.4 })));
+    if (v.drawLight) v.drawLight(ctx, this.now);
+    else if (m.dark) v.drawDark(ctx, (m.lights || []).filter((l) => !l.off), B.units.filter((o) => o.side === 'p' && !o.dead).map((o) => ({ x: o.px, y: o.py, r: 2.4 })));
     if (B.fogOn) v.drawFog(ctx, this.visible(), B.explored);
     // les cibles possibles du coup visé ou survolé : des crochets clignotants (rouges : ennemis, verts : alliés)
     const aimSp = myTurn && u ? B.mode || hsp : null;
@@ -2564,7 +2961,7 @@ export class PisteScene extends MiniScene {
     // barres de vie et états, par-dessus tout
     // (avec, au-dessus des ennemis, la chance de toucher du personnage choisi s'il peut encore tirer)
     const aimU = myTurn && u && (B.mode ? B.mode.aim.kind === 'enemy' && (B.mode.aim.shot || B.mode.aim.melee)
-      : hsp ? this.aimOfSp(u, hsp)?.shot : !u.acted) ? u : null;
+      : hsp ? this.aimOfSp(u, hsp)?.shot : this.canAttack(u)) ? u : null;
     for (const o of shown) if (!o.dead || (o.side === 'p')) this.drawUnitBar(ctx, o, aimU);
     // pendant le tour des bandits : une flèche au-dessus de celui qui joue
     if (B.side === 'e' && !B.over) {
@@ -2580,7 +2977,15 @@ export class PisteScene extends MiniScene {
     }
     // l'info de ce qui est survolé (unité, case de destination, tonneau)
     this.drawBanner(ctx); // le bandeau de tour passe sous l'info survolée et les commandes
-    if (mc && !B.confirm) this.drawTargetInfo(ctx, myTurn ? u : null, mc);
+    // la fiche de la case survolée : elle attend que le pointeur se pose (elle ne masque pas le terrain au passage)
+    const hk = mc ? mc.y * m.w + mc.x : -1;
+    if (!this._hov || this._hov.k !== hk) this._hov = { k: hk, t: this.now };
+    const wait = hovU ? 600 : 1200, since = this.now - this._hov.t;
+    if (mc && !B.confirm && since >= wait) {
+      ctx.globalAlpha = Math.min(1, (since - wait) / 150);
+      this.drawTargetInfo(ctx, myTurn ? u : null, mc);
+      ctx.globalAlpha = 1;
+    }
     this.drawHud(ctx);
     this.drawTopBar(ctx);
     if (B.confirm) this.drawConfirm(ctx);
@@ -2628,7 +3033,7 @@ export class PisteScene extends MiniScene {
   sprintReach(u) {
     const c = this._sprint;
     if (c && c.uid === u.uid && c.x === u.x && c.y === u.y && c.mv === u.mvBonus) return c.R;
-    this._sprint = { uid: u.uid, x: u.x, y: u.y, mv: u.mvBonus, R: K.reach(this.B, u, u.mv + u.mvBonus + 3) };
+    this._sprint = { uid: u.uid, x: u.x, y: u.y, mv: u.mvBonus, R: K.reach(this.B, u, (u.mv + u.mvBonus + 3) * (u.ap >= 2 ? 2 : 1)) };
     return this._sprint.R;
   }
   // depuis la case (x, y) : les ennemis que u pourrait viser (shots), et ceux qui pourraient l'y viser (threats)
@@ -2736,7 +3141,7 @@ export class PisteScene extends MiniScene {
   attackPreview(u, t) {
     const B = this.B, md = B.mode;
     if (md && md.aim.kind !== 'enemy') return null;
-    if (!md && u.acted) return null;
+    if (!md && !this.canAttack(u)) return null;
     const wp = K.weaponOf(u), dry = wp?.clip != null && u.ammo <= 0;
     const melee = md ? !!md.aim.melee : K.adjacent(u, t) && (u.it === 'couteau' || !wp || dry);
     if (!melee && dry && !md) return { ok: false, why: 'À SEC : RECHARGE' };
@@ -2805,7 +3210,7 @@ export class PisteScene extends MiniScene {
       const sel = selU && o.uid === selU.uid;
       const focus = B.side === 'e' && B.focus === o.uid;
       ctx.fillStyle = sel ? GOLD : SIDE_COL[o.side];
-      ctx.globalAlpha *= sel || focus ? 1 : o.side === 'p' && this.spent(o) && B.side === 'p' ? 0.3 : 0.65;
+      ctx.globalAlpha *= sel || focus ? 1 : 0.6;
       const rr = o.boss ? 10 : 8;
       for (let k = 0; k < 32; k++) { const b = (k / 32) * Math.PI * 2 + (sel ? now / 400 : 0); if (!sel || k % 3) ctx.fillRect(Math.round((x + Math.cos(b) * rr) * 2) / 2, Math.round((y - 1 + Math.sin(b) * rr * 0.5) * 2) / 2, 1, 0.5); }
       ctx.globalAlpha = o.dead ? 1 - deadK : 1;
@@ -2891,12 +3296,13 @@ export class PisteScene extends MiniScene {
     const st = [];
     if (o.st.bleed) st.push('s_bleed');
     if (o.st.mark) st.push('s_mark');
-    if (o.st.affut) st.push('s_affut');
+    if (o.st.affut || o.st.guet) st.push('s_affut');
+    if (o.st.panic || o.st.stun) st.push('s_pin');
     if (o.st.retranche || o.st.profil) st.push('s_shield');
     if (o.st.pinned) st.push('s_pin');
     if (o.st.fondu) st.push('s_ghost');
     const sy = y - (o.armMax ? 3 : 0) - 3;
-    st.forEach((id, k) => drawIcon(ctx, id, x - (st.length - 1) * 2.5 + k * 5, sy));
+    st.forEach((id, k) => drawIcon(ctx, id, x - (st.length - 1) * 4 + k * 8, sy - 1));
     if (o.side === 'p' && o.cran) {
       ctx.fillStyle = GOLD;
       for (let k = 0; k < o.cran; k++) ctx.fillRect(x - w / 2 + k * 3, y + 4, 2, 1);
@@ -2934,32 +3340,50 @@ export class PisteScene extends MiniScene {
       if (p?.ok) {
         L.push([`TOUCHE ${p.info.hit} %  -  ESQUIVE ${p.info.esq} %`, hitCol(p.info.hit)]);
         L.push([`${p.r[0]}-${p.r[1]} DÉGÂTS${p.melee ? ' AU CONTACT' : `  -  ${K.COVER_NAMES[p.info.cover]}${p.info.bush ? ' + BUISSON' : ''}`}`, CREAM]);
+        L.push([`TIR : ${K.shotCost(u)} PA${K.shotEnds(u) ? ', FINIT LE TOUR' : ' (ARME RAPIDE)'}`, GREY]);
+        if (p.info.flank) L.push([`PRIS DE FLANC : +${PISTE.flankCrit} % DE CRITIQUES`, GOLD]);
         if (p.kill) L.push(['PEUT L\'ABATTRE', GOLD]);
         else if (p.killCrit) L.push(['PEUT L\'ABATTRE SUR UN CRITIQUE', GOLD]);
       } else if (p) L.push([p.why, SALMON]);
-      else if (u && u.acted && !md) L.push(['DÉJÀ AGI CE TOUR', GREY]);
+      else if (u && !this.canAttack(u) && !md) L.push([this.attackWhy(u) || 'PLUS DE PA', GREY]);
     } else if (t && t.side === 'p' && !t.dead) {
       L.push([`${t.mid ? this.fitName(t.mid, 120) : t.name}  ${t.hp}/${t.max} PV${t.armMax ? `  ${t.arm} ARM.` : ''}`, CREAM]);
       if (t.ko != null) L.push([`À TERRE : MORT DANS ${t.ko} TOUR${t.ko > 1 ? 'S' : ''} SANS SOINS`, SALMON]);
       else {
         L.push([`CRAN ${t.cran}/${t.cranMax}  -  ${K.weaponOf(t) ? `${K.weaponOf(t).name} ${K.weaponOf(t).clip != null ? `${t.ammo}/${K.weaponOf(t).clip}` : ''}` : 'À MAINS NUES'}`, GREY]);
         for (const s of this.statusLines(t)) L.push([s, BLUE]);
-        if (B.side === 'p') L.push(this.spent(t) ? ['A TOUT JOUÉ CE TOUR', GREY] : [`RESTE : ${this.todo(t).join(' ET ')}`, GREEN]);
+        if (t.uid === B.active) L.push([`À SON TOUR : ${t.ap} PA`, GREEN]);
+        else if (B.played?.has(t.uid)) L.push(['A JOUÉ CETTE MANCHE', GREY]);
+        else L.push([`INITIATIVE ${t.init}`, GREY]);
       }
     } else if (this._fc && this._fc.dest.x === mc.x && this._fc.dest.y === mc.y) {
       // la case de destination : distance, couvert, cibles et tireurs depuis là
       const { dest, fc, amb } = this._fc;
+      const cost = K.stepCost(u, dest.d);
       L.push([`ALLER ICI : ${dest.d} CASE${dest.d > 1 ? 'S' : ''}`, CREAM]);
+      L.push([cost >= u.ap ? `${cost} PA : PLUS RIEN APRÈS` : `${cost} PA : IL RESTERA ${u.ap - cost} PA`, cost >= u.ap ? GOLD : GREEN]);
       const SIDE = ['EN BAS À DROITE', 'EN HAUT À GAUCHE', 'EN BAS À GAUCHE', 'EN HAUT À DROITE'];
       const cov = K.coverSides(B.map, mc.x, mc.y).map((v, i) => (v ? `${v === 2 ? 'PLEIN' : 'DEMI'} ${SIDE[i]}` : null)).filter(Boolean);
       L.push([cov.length ? `COUVERT : ${cov.join(', ')}` : 'AUCUN COUVERT', cov.length ? BLUE : SALMON]);
-      if (u && !u.acted && u.w) L.push([fc.shots.length ? `${fc.shots.length} CIBLE${fc.shots.length > 1 ? 'S' : ''} DEPUIS ICI (MEILLEURE : ${Math.max(...fc.shots.map((s) => s.info.hit))} %)` : 'AUCUNE CIBLE DEPUIS ICI', fc.shots.length ? GOLD : GREY]);
+      if (u && this.canAttack(u) && u.ap - K.stepCost(u, dest.d) >= K.shotCost(u) && u.w) L.push([fc.shots.length ? `${fc.shots.length} CIBLE${fc.shots.length > 1 ? 'S' : ''} DEPUIS ICI (MEILLEURE : ${Math.max(...fc.shots.map((s) => s.info.hit))} %)` : 'AUCUNE CIBLE DEPUIS ICI', fc.shots.length ? GOLD : GREY]);
       const open = fc.threats.filter((s) => s.info.cover === 0).length;
       if (!fc.threats.length) L.push(['HORS DE VUE DES TIREURS', GREEN]);
       else L.push([`EN VUE DE ${fc.threats.length} TIREUR${fc.threats.length > 1 ? 'S' : ''}${open ? ` (${open} À DÉCOUVERT)` : ', À COUVERT'}`, open ? SALMON : GOLD]);
       if (amb) L.push(['EMBUSCADE : UN GUETTEUR TIRERA EN CHEMIN', SALMON]);
     } else if (!t && K.cellOf(B.map, mc.x, mc.y) === C.CHEST) {
       L.push(['TONNEAU DE POUDRE', CREAM], ['UN TIR LE FAIT SAUTER (3 × 3, 25-35 DÉGÂTS)', GOLD]);
+    } else if (!t && this.propAt(mc.x, mc.y)) {
+      const p = this.propAt(mc.x, mc.y);
+      const PROP = { lustre: ['LUSTRE', 'TIRE DESSUS : IL TOMBE (18-26 DÉGÂTS, ASSOMME) ET LA SALLE S\'ASSOMBRIT'], lanterne: ['LANTERNE', 'TIRE DESSUS : ELLE TOMBE ET MET LE FEU (3 MANCHES)'],
+        lampe: ['LAMPE À PÉTROLE', 'TIRE DESSUS : LE PÉTROLE S\'ENFLAMME AUTOUR'], whisky: ['TONNEAU DE WHISKY', 'TIRE DESSUS : L\'ALCOOL SE RÉPAND (UNE FLAMME ET TOUT S\'EMBRASE)'] }[p.kind];
+      L.push([PROP[0], CREAM], [PROP[1], GOLD], [this.reachHas(mc) ? 'MAJ + CLIC POUR TIRER (UN CLIC : Y ALLER)' : `CLIC : TIRER (${u ? K.shotCost(u) : 1} PA)`, GREY]);
+    } else if (!t && this.wagonAt(mc.x, mc.y)) {
+      L.push(['WAGONNET', CREAM], ['AU CONTACT, CLIC : POUSSE-LE (1 PA) ; IL ROULE SUR LES RAILS ET RENVERSE QUI EST SUR SON CHEMIN', GOLD]);
+    } else if (!t && B.map.chp?.[mc.y * B.map.w + mc.x]) {
+      const i = mc.y * B.map.w + mc.x;
+      L.push([`COUVERT : ${B.map.chp[i]} COUP${B.map.chp[i] > 1 ? 'S' : ''} AVANT DE CÉDER`, CREAM], ['LES BALLES RATÉES ET LES EXPLOSIONS L\'USENT', GREY]);
+    } else if (!t && B.map.fire?.has(mc.y * B.map.w + mc.x)) {
+      L.push(['EN FEU', '#ffa040'], [`${PISTE.fireHit} DÉGÂTS EN Y ENTRANT, PUIS BRÛLURE`, GOLD]);
     }
     if (!L.length) return;
     // la carte de ce qui est survolé : le nom en titre (la chance de toucher en grand à droite), le reste en texte fin
@@ -2976,9 +3400,15 @@ export class PisteScene extends MiniScene {
     const ap = this.spt(mc.x, mc.y, t ? 12 : 0);
     tooltip(ctx, ap.x + 6, ap.y, title, '', { prefer: 'right', top: 17, bottom: GRID_H - 2, maxW: 200, lines, right, titleCol: t ? (t.side === 'e' ? UI.red : UI.blue) : UI.goldHi });
   }
+  reachHas(mc) { const B = this.B, k = mc.y * B.map.w + mc.x; return !!(B.reach?.has(k) && !B.reach.get(k).occ && B.reach.get(k).d > 0); }
   // les états d'une unité, en clair
   statusLines(o) {
     const s = o.st, out = [];
+    if (s.panic) out.push('PANIQUE : 1 PA DE MOINS À SON TOUR');
+    if (s.stun) out.push('ASSOMMÉ : PERD SON PROCHAIN TOUR');
+    if (s.burn) out.push(`BRÛLE : -${PISTE.burn} PV AU DÉBUT DE SON TOUR`);
+    if (s.guet) out.push('AU GUET : TIRE SUR CE QUI BOUGE À SA PORTÉE');
+    if (s.rally) out.push('RALLIÉ : +1 PA AU PROCHAIN TOUR');
     if (s.bleed) out.push(`SAIGNE : -${PISTE.bleed} PV PAR TOUR (${s.bleed} TOUR${s.bleed > 1 ? 'S' : ''})`);
     if (s.mark) out.push('MARQUÉ : SANS COUVERT JUSQU\'AU PROCHAIN TOUR');
     if (s.affut) out.push('À L\'AFFÛT : TIRE SUR CE QUI BOUGE DANS SON CÔNE');
@@ -2989,25 +3419,23 @@ export class PisteScene extends MiniScene {
     return out;
   }
   // ce qu'il reste à faire à un allié ce tour
-  todo(o) { return [!o.moved && 'DÉPLACEMENT', !o.acted && 'ACTION'].filter(Boolean); }
+  todo(o) { return o.ap > 0 ? [`${o.ap} PA`] : []; }
   // les alliés qui ont encore quelque chose à faire ce tour
-  leftovers() { return this.B.units.filter((o) => o.side === 'p' && K.alive(o) && !this.spent(o)); }
+  leftovers() { const u = this.active; return u && u.side === 'p' && K.alive(u) && u.ap > 0 ? [u] : []; }
 
-  // le bandeau du haut : le tour et son camp, la bande (ce qui reste à chacun), munitions, ennemis, zone de danger
+  // le bandeau du haut : la manche, la file des tours (initiative, façon Empire of Sin), puis munitions, ennemis, danger
   drawTopBar(ctx) {
     const B = this.B, r = this.run.res, my = B.side === 'p' && !B.over;
-    ctx.fillStyle = 'rgba(18,10,6,0.82)'; ctx.fillRect(0, 0, W, 14);
+    ctx.fillStyle = 'rgba(18,10,6,0.86)'; ctx.fillRect(0, 0, W, 14);
     ctx.fillStyle = my ? '#c8a040' : '#a8301c'; ctx.fillRect(0, 14, W, 1);
-    const tl = `TOUR ${B.turn}`;
+    const tl = `MANCHE ${B.turn}`;
     txt(ctx, tl, 3, 3, my ? GOLD : SALMON);
-    this.hit(0, 0, textW(tl) + 5, 12, null, my ? `TOUR ${B.turn} : À TOI. CHAQUE PERSONNAGE A UN DÉPLACEMENT ET UNE ACTION. ESPACE : FIN DU TOUR` : `TOUR ${B.turn} : ${this.beasts ? 'LA MEUTE ATTAQUE' : 'LES BANDITS JOUENT'}`);
-    let x = textW(tl) + 7;
-    B.units.filter((o) => o.side === 'p').forEach((o, i) => { x = this.drawChip(ctx, o, i, x, 1) + 2; });
+    this.hit(0, 0, textW(tl) + 5, 12, null, `MANCHE ${B.turn} : CHACUN JOUE UNE FOIS, DANS L'ORDRE D'INITIATIVE (LA FILE À CÔTÉ). 2 POINTS D'ACTION PAR TOUR`);
     // à droite : le bouton de la zone de danger, puis ennemis restants, fournitures, balles (de droite à gauche)
     let rx = W - 2;
     const dw = textW('DANGER') + 8;
     rx -= dw;
-    this.btn(ctx, rx, 2, dw, 11, 'DANGER', () => { B.danger = !B.danger; }, { st: B.danger ? 'sel' : '', tip: 'ZONE DE DANGER (V) : LES CASES OÙ UN ENNEMI PEUT TIRER SANS BOUGER' });
+    this.btn(ctx, rx, 2, dw, 11, 'DANGER', () => { B.danger = !B.danger; }, { st: B.danger ? 'sel' : '', tip: 'ZONE DE DANGER (V) : LES CASES OÙ UN ENNEMI VU PEUT TIRER SANS BOUGER' });
     const foes = B.units.filter((e) => e.side === 'e' && !e.dead).length;
     const items = [['fourn', r.fourn], ['balles', r.balles], ['n_combat', foes]];
     const tips = { balles: `BALLES DE LA BANDE (POUR RECHARGER) : ${r.balles}`, fourn: `FOURNITURES (BANDAGES, TROUSSES, DYNAMITE…) : ${r.fourn}`, n_combat: `ENNEMIS DEBOUT : ${foes}` };
@@ -3017,32 +3445,39 @@ export class PisteScene extends MiniScene {
       statIcons(ctx, rx + 2, 3, [[id, v]], id === 'n_combat' ? SALMON : CREAM);
       this.hit(rx, 0, iw + vw + 6, 14, null, tips[id]);
     }
+    // la file : celui qui joue (cadre doré), puis les suivants ; ceux qui ont joué s'effacent à gauche
+    const x0 = textW(tl) + 8, x1 = rx - 4;
+    const list = (B.order || []).map((id) => this.unit(id)).filter((o) => o && !o.dead && true);
+    const cw = 13, gap = Math.max(1, Math.min(2, Math.floor((x1 - x0 - list.length * cw) / Math.max(1, list.length - 1))));
+    let x = x0;
+    list.forEach((o) => {
+      if (x + cw > x1) return;
+      const cur = o.uid === B.active, done = B.played?.has(o.uid) && !cur, hidden = o.side === 'e' && !this.seen(o);
+      this.drawTurnChip(ctx, o, x, 1, cur, done, hidden);
+      x += cw + gap;
+    });
   }
-  // un allié dans le bandeau : numéro, tête, nom et PV, puis botte (déplacement) et viseur (action) allumés s'il les a encore
-  drawChip(ctx, o, i, x, y) {
-    const B = this.B, w = 60, h = 12, sel = o.uid === B.sel, my = B.side === 'p' && !B.over;
-    const down = o.ko != null, spent = !o.dead && !down && this.spent(o);
-    ctx.fillStyle = sel ? '#c8a040' : '#5a3e26'; ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = sel ? '#5a3a14' : '#2e1e14'; ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
-    ctx.globalAlpha = o.dead ? 0.35 : spent && my ? 0.5 : 1;
-    txt(ctx, `${i + 1}`, x + 2, y + 2, sel ? GOLD : GREY);
-    ctx.save();
-    ctx.beginPath(); ctx.rect(x + 8, y + 1, 9, h - 2); ctx.clip();
-    blit(ctx, this.bodyOf(o), x + 12.5, y + 21);
-    ctx.restore();
-    hd(ctx, hdFit(soft(o.mid ? this.shortName(o.mid) : o.name), 25), x + 18, y + 1.5, o.dead ? UI.faint : UI.cream);
-    if (!o.dead) bar(ctx, x + 18, y + 8, 24, 3, o.hp / o.max, down ? SALMON : o.hp < o.max * 0.35 ? SALMON : GREEN);
-    if (o.dead) txt(ctx, 'MORT', x + 44, y + 2, SALMON);
-    else if (down) txt(ctx, `KO ${o.ko}`, x + 44, y + 2, SALMON);
-    else if (my) {
-      ctx.globalAlpha = o.moved ? 0.25 : 1; drawIcon(ctx, 'botte', x + 47, y + 6);
-      ctx.globalAlpha = o.acted ? 0.25 : 1; drawIcon(ctx, 'viseur', x + 54.5, y + 6);
+  // un portrait de la file : la tête, un liseré bleu (la bande) ou rouge (les ennemis), les PV dessous
+  drawTurnChip(ctx, o, x, y, cur, done, hidden) {
+    const w = 13, h = 12, ally = o.side === 'p', down = o.ko != null;
+    ctx.globalAlpha = done ? 0.4 : 1;
+    ctx.fillStyle = cur ? '#f8d070' : ally ? '#4a78b8' : '#a8402c'; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = cur ? '#5a3a14' : '#24170f'; ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+    if (hidden) txt(ctx, '?', x + w / 2, y + 2, SALMON, 'center');
+    else {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x + 1, y + 1, w - 2, h - 3); ctx.clip();
+      if (o.kind === 'coyote') ctx.drawImage(coyoteSprite(0, false), x - 4, y - 3);
+      else blit(ctx, this.bodyOf(o), x + w / 2, y + 21);
+      ctx.restore();
+      ctx.fillStyle = '#1a0f0a'; ctx.fillRect(x + 1, y + h - 2, w - 2, 1);
+      ctx.fillStyle = down ? SALMON : ally ? GREEN : SALMON; ctx.fillRect(x + 1, y + h - 2, Math.max(0, (w - 2) * (o.hp / o.max)), 1);
     }
+    if (cur) { ctx.fillStyle = '#f8d070'; ctx.fillRect(x + w / 2 - 1.5, y + h + 0.5, 3, 1); ctx.fillRect(x + w / 2 - 0.5, y + h + 1.5, 1, 1); }
     ctx.globalAlpha = 1;
-    const tip = o.dead ? `${o.name} : MORT` : down ? `${o.name} : À TERRE, MORT DANS ${o.ko} TOUR${o.ko > 1 ? 'S' : ''} SANS SOINS`
-      : `${i + 1} : ${o.mid ? this.nameOf(o.mid) : o.name} - ${o.hp}/${o.max} PV - ${!my ? '' : spent ? 'A TOUT JOUÉ' : `RESTE : ${this.todo(o).join(' ET ')}`}`;
-    this.hit(x, y, w, h, my && K.alive(o) ? () => { this.select(o); sfx('spur'); } : null, tip, true);
-    return x + w;
+    const nm = o.mid ? this.nameOf(o.mid) : o.name;
+    const tip = hidden ? 'UN ENNEMI HORS DE VUE' : `${nm} - ${o.hp}/${o.max} PV - INITIATIVE ${o.init}${cur ? ' - JOUE MAINTENANT' : done ? ' - A JOUÉ' : ''}${down ? ' - À TERRE' : ''}`;
+    this.hit(x, y, w, h, hidden ? null : () => this.view?.centerOn(o.x, o.y), tip, true);
   }
 
   // le bandeau d'un tour (ou d'une embuscade) : un cartouche qui descend sous le bandeau du haut, reste, puis s'efface
@@ -3064,25 +3499,17 @@ export class PisteScene extends MiniScene {
     ctx.globalAlpha = 1;
   }
 
-  // finir le tour alors qu'il reste des choses à faire : on demande d'abord (ESPACE confirme, ÉCHAP annule)
+  // passer son tour sans rien avoir fait : on demande d'abord (ESPACE confirme, ÉCHAP annule)
   drawConfirm(ctx) {
-    const B = this.B, left = this.leftovers();
-    if (!left.length) { B.confirm = null; return; }
+    const B = this.B, u = this.active;
+    if (!u || u.side !== 'p' || u.ap <= 0) { B.confirm = null; return; }
     ctx.fillStyle = 'rgba(10,6,4,0.55)'; ctx.fillRect(0, 15, W, GRID_H - 15);
-    const w = 220, h = 40 + left.length * 9 + 22, x = Math.round((W - w) / 2), y = Math.round((GRID_H - h) / 2) + 4;
+    const w = 220, h = 66, x = Math.round((W - w) / 2), y = Math.round((GRID_H - h) / 2) + 4;
     frame(ctx, x, y, w, h, { accent: UI.lineHi, title: 'FIN DU TOUR' });
-    txt(ctx, 'FINIR LE TOUR ?', x + w / 2, y + 8, GOLD, 'center', 16);
-    hd(ctx, 'Il reste à jouer :', x + w / 2, y + 26, UI.dim, 'center');
-    left.forEach((o, i) => {
-      const ly = y + 36 + i * 9;
-      ctx.save(); ctx.beginPath(); ctx.rect(x + 10, ly - 2, 10, 9); ctx.clip();
-      blit(ctx, this.bodyOf(o), x + 15, ly + 18);
-      ctx.restore();
-      hd(ctx, o.mid ? this.nameOf(o.mid) : o.name, x + 24, ly, UI.cream);
-      hd(ctx, soft(this.todo(o).join(' et ')), x + w - 8, ly, UI.green, 'right');
-    });
+    txt(ctx, 'PASSER SON TOUR ?', x + w / 2, y + 8, GOLD, 'center', 16);
+    hd(ctx, `${u.mid ? this.nameOf(u.mid) : u.name} n'a rien fait : il lui reste ${u.ap} PA.`, x + w / 2, y + 27, UI.cream, 'center');
     const by = y + h - 19;
-    this.btn(ctx, x + 8, by, 98, 14, 'FINIR (ESPACE)', () => this.endTurn(true), { st: 'gold' });
+    this.btn(ctx, x + 8, by, 98, 14, 'PASSER (ESPACE)', () => this.endTurn(true), { st: 'gold' });
     this.btns[this.btns.length - 1].modal = true;
     this.btn(ctx, x + w - 106, by, 98, 14, 'CONTINUER (ÉCHAP)', () => { B.confirm = null; });
     this.btns[this.btns.length - 1].modal = true;
@@ -3097,16 +3524,20 @@ export class PisteScene extends MiniScene {
     ctx.fillStyle = UI.lineHi; ctx.fillRect(0, HUD_Y, W, 0.5);
     this.hoverSp = null;
     if (B.side === 'e' || B.over) {
-      const foes = B.units.filter((o) => o.side === 'e' && !o.dead), done = foes.filter((o) => o.done).length;
-      txt(ctx, B.over === 'win' ? 'VICTOIRE !' : B.over ? '…' : this.beasts ? 'LA MEUTE ATTAQUE…' : 'LES BANDITS JOUENT…', W / 2, HUD_Y + 8, B.over === 'win' ? GOLD : SALMON, 'center', 16);
-      if (!B.over && foes.length) hd(ctx, `${Math.min(foes.length, done)} sur ${foes.length} ont joué  ·  V : zone de danger`, W / 2, HUD_Y + 28, UI.dim, 'center');
+      const e = this.active;
+      if (B.over || !e) { txt(ctx, B.over === 'win' ? 'VICTOIRE !' : '…', W / 2, HUD_Y + 8, B.over === 'win' ? GOLD : SALMON, 'center', 16); return; }
+      const shown = this.seen(e);
+      txt(ctx, shown ? `AU TOUR DE : ${e.name}` : 'UN ENNEMI JOUE, HORS DE VUE…', W / 2, HUD_Y + 8, SALMON, 'center', 16);
+      const left = B.order ? B.order.slice(B.cur + 1).map((id) => this.unit(id)).filter((o) => o && K.alive(o)) : [];
+      const nextP = left.find((o) => o.side === 'p');
+      hd(ctx, nextP ? `Ensuite : ${nextP.mid ? this.nameOf(nextP.mid) : nextP.name}${left[0] !== nextP ? ` (après ${left.indexOf(nextP)} ennemi${left.indexOf(nextP) > 1 ? 's' : ''})` : ''}  ·  V : zone de danger` : 'V : zone de danger', W / 2, HUD_Y + 28, UI.dim, 'center');
       return;
     }
     if (!u) return;
     // la fiche : portrait encadré, nom, arme et munitions
     const look = u.mid ? (u.mid.id === 'chef' ? this.myChar : u.mid.look) : null;
     frame(ctx, 3, HUD_Y + 3, 34, 34, { accent: UI.lineHi, fill: '#4a3424' });
-    if (look) ctx.drawImage(S.characterSprite(look, { blink: this.now % 3300 < 120, t: this.now }), 8, 3, 32, 32, 4, HUD_Y + 4, 32, 32);
+    if (look) this.headShot(ctx, look, 4, HUD_Y + 4, 32, true);
     txt(ctx, fitText(u.mid ? this.nameOf(u.mid) : u.name, 76), 41, HUD_Y + 4, UI.cream);
     const w = K.weaponOf(u);
     const wl = w ? `${soft(u.w ? K.gearName(u.w) : w.name)}${w.clip != null ? `  ${u.ammo}/${w.clip}` : ''}` : 'À mains nues';
@@ -3122,15 +3553,16 @@ export class PisteScene extends MiniScene {
     for (let k = 0; k < u.cranMax; k++) { ctx.globalAlpha = k < u.cran ? 1 : 0.22; drawIcon(ctx, 'cran_s', 44 + k * 5, HUD_Y + 34.5); }
     ctx.globalAlpha = 1;
     this.hit(39, HUD_Y + 31, u.cranMax * 5 + 4, 7, null, `CRAN ${u.cran}/${u.cranMax} : TOUCHER (+1, +2 SUR UN CRITIQUE), ESQUIVER, SOIGNER ET ABATTRE EN DONNENT. IL PAIE LES COUPS SPÉCIAUX.`);
-    const todo = (id, x, ok, tip) => {
-      ctx.globalAlpha = ok ? 1 : 0.22;
-      drawIcon(ctx, id, x, HUD_Y + 34.5);
-      ctx.globalAlpha = 1;
-      this.hit(x - 5, HUD_Y + 30, 10, 9, null, tip);
-    };
-    if (u.mvBonus) hd(ctx, `+${u.mvBonus}`, 80, HUD_Y + 32, UI.goldHi, 'right');
-    todo('botte', 88, !u.moved, u.moved ? 'DÉPLACEMENT : DÉJÀ FAIT CE TOUR' : `DÉPLACEMENT : ${u.mv + (u.mvBonus || 0)} CASES`);
-    todo('viseur', 101, !u.acted, u.acted ? 'ACTION : DÉJÀ FAITE CE TOUR' : 'ACTION : TIRER, COUP SPÉCIAL, OBJET OU RECHARGER');
+    // les points d'action : deux grosses pastilles dorées (trois avec le ralliement)
+    const apMax = Math.max(PISTE.ap, u.ap);
+    for (let k = 0; k < apMax; k++) {
+      const px = 84 + k * 8, py = HUD_Y + 31, on = k < u.ap;
+      ctx.fillStyle = UI.edge; ctx.fillRect(px - 0.5, py - 0.5, 7, 7);
+      ctx.fillStyle = on ? '#f8c048' : '#3a2a1c'; ctx.fillRect(px, py, 6, 6);
+      if (on) { ctx.fillStyle = '#fff0b0'; ctx.fillRect(px + 1, py + 1, 2, 1); ctx.fillStyle = '#b07a20'; ctx.fillRect(px, py + 5, 6, 1); }
+    }
+    hd(ctx, 'PA', 82, HUD_Y + 31.5, UI.dim, 'right');
+    this.hit(76, HUD_Y + 29, 30, 10, null, `POINTS D'ACTION : ${u.ap} SUR ${PISTE.ap}. SE DÉPLACER : 1 PA (ZONE BLEUE, ${u.mv + (u.mvBonus || 0)} CASES) OU 2 PA (ZONE JAUNE) ; TIRER : ${K.shotCost(u)} PA${K.shotEnds(u) ? ', ET LE TOUR S\'ARRÊTE' : ' (ARME RAPIDE : ON PEUT ENCORE BOUGER)'} ; RECHARGER, UN OBJET, UN COUP SPÉCIAL : 1 PA`);
     // les tuiles d'action
     const TX = 120, TW = 34, TY = HUD_Y + 2, TH = 36;
     // trois coups spéciaux | objet, recharger | suivant : un petit écart entre les groupes
@@ -3153,12 +3585,14 @@ export class PisteScene extends MiniScene {
           fn: why ? null : () => this.pressItem(u), hov: why ? null : { id: u.it, item: true },
           tip: it ? `${it.name}${it.use ? ` (${u.itUses} RESTANT${u.itUses > 1 ? 'S' : ''})` : ''} : ${it.text}${it.fourn ? ' (1 FOURNITURE)' : ''}${it.dmg ? ` - ${it.dmg[0]}-${it.dmg[1]} DÉGÂTS EN 3 × 3` : ''}${why && it.use ? ` - ${why}` : ''}` : 'OBJET : AUCUN' };
       } else if (tl.kind === 'reload') {
-        const canR = w && w.clip != null && !u.acted && u.ammo < w.clip && this.run.res.balles > 0;
+        const canR = w && w.clip != null && u.ap >= 1 && u.ammo < w.clip && this.run.res.balles > 0;
         o = { icon: 'recharger', label: 'Recharger', key: 'R', st: canR ? '' : 'off', fn: canR ? () => this.reload(u) : null,
           tip: w?.clip != null ? `RECHARGER (R) : PREND L'ACTION ET DES BALLES DE LA BANDE (${this.run.res.balles} EN RÉSERVE)` : 'RECHARGER : CETTE ARME N\'EN A PAS BESOIN' };
       } else if (tl.kind === 'next') {
+        const why = this.guetWhy(u);
         o = B.mode ? { icon: 'annuler', label: 'Annuler', key: 'Échap', fn: () => { B.mode = null; }, tip: 'ANNULER : QUITTER LA VISÉE (CLIC DROIT, ÉCHAP)' }
-          : { icon: 'suivant', label: 'Suivant', key: 'Tab', fn: () => this.cycleUnit(), tip: 'SUIVANT : LE PERSONNAGE QUI A ENCORE À JOUER (TAB)' };
+          : { icon: 's_affut', label: 'Au guet', key: 'G', st: why ? 'off' : '', fn: why ? null : () => this.guet(u),
+            tip: `AU GUET (G, 1 PA, FINIT LE TOUR) : IL TIRE SUR LE PREMIER ENNEMI QUI BOUGE À SA PORTÉE ET EN VUE, À -${PISTE.guetMalus} %${why ? ` - ${why}` : ''}` };
       } else o = { label: '', st: 'off' };
       const hover = o.label ? this.hit(x, TY, TW, TH, o.fn, o.tip) : false;
       actionTile(ctx, x, TY, TW, TH, { ...o, now: this.now, st: o.st === 'off' ? 'off' : o.st === 'sel' ? 'sel' : hover ? 'on' : '' });
@@ -3166,8 +3600,8 @@ export class PisteScene extends MiniScene {
     });
     // fin du tour : doré quand toute la bande a joué
     const left = this.leftovers(), ex = 338, ey = HUD_Y + 3, ew = 44, eh = 34, ready = !left.length;
-    const hov = this.hit(ex, ey, ew, eh, () => this.endTurn(), ready ? 'FIN DU TOUR (ESPACE) : TOUTE LA BANDE A JOUÉ'
-      : `FIN DU TOUR (ESPACE) : IL RESTE À JOUER ${left.map((o) => `${o.mid ? this.shortName(o.mid) : o.name} (${this.todo(o).join(', ')})`).join(', ')}`);
+    const hov = this.hit(ex, ey, ew, eh, () => this.endTurn(), ready ? 'FIN DU TOUR (ESPACE) : PLUS DE POINTS D\'ACTION, AU SUIVANT DE LA FILE'
+      : `FIN DU TOUR (ESPACE) : ${u.mid ? this.shortName(u.mid) : u.name} PASSE LA MAIN (IL LUI RESTE ${u.ap} PA)`);
     const glow = ready ? 0.5 + 0.5 * Math.sin(this.now / 260) : 0;
     ctx.fillStyle = UI.edge; ctx.fillRect(ex - 0.5, ey - 0.5, ew + 1, eh + 1);
     ctx.fillStyle = ready ? (hov ? '#9a7424' : `rgb(${100 + 30 * glow},${76 + 22 * glow},${22})`) : hov ? '#46301e' : '#2e2016';
@@ -3195,7 +3629,7 @@ export class PisteScene extends MiniScene {
       epaule: '8-12 DÉGÂTS, +12 SI ELLE HEURTE UN OBSTACLE', meche: `${d(ITEMS.dynamite.dmg)} EN 3 × 3, PORTÉE ${ITEMS.dynamite.range}`,
       affut: `PORTÉE ${u.range}`, semonce: 'PORTÉE 5',
     }[id];
-    return `${sp.name} (${this.costOf(u, id)} CRAN${sp.free ? ', SANS PRENDRE L\'ACTION' : ''}) : ${sp.text}${extra ? ` - ${extra}` : ''}`;
+    return `${sp.name} (${this.costOf(u, id)} CRAN${sp.free ? ', SANS PA' : SHOT_SP.has(id) ? `, TIR : ${K.shotCost(u)} PA` : ', 1 PA'}) :${sp.text}${extra ? ` - ${extra}` : ''}`;
   }
 
   modeHelp(md) {
@@ -3289,6 +3723,11 @@ const INTRO_PAL = {
   neige: { sky: ['#9ab0d0', '#aec0da', '#c2d0e2', '#d8e2ec'], sun: [300, 40, 11], sunCol: '#ffffff', far: 'peaks', farCol: '#8a98b0', ground: ['#eef3fb', '#e2e9f5', '#d6dfee', '#cad4e6'], dot: '#b0bcd4' },
   lair: { sky: ['#3e2442', '#6a3248', '#a0443e', '#d06a3a'], sun: [190, 118, 22], sunCol: '#f8a050', far: 'mesa', farCol: '#4a1c14', farLight: '#6a2a1a', ground: ['#b8583a', '#a84e34', '#984630', '#883e2a'], dot: '#6a2a1a' },
 };
+
+// ------------------------------------------------------------ coups spéciaux : ceux qui sont des tirs (règle des armes : 1 PA, le
+// tour s'arrête sauf arme rapide, un seul par tour) et les postures (1 PA, le tour s'arrête)
+const SHOT_SP = new Set(['double', 'feu', 'volee', 'barbelee', 'jugement', 'semonce', 'epaule']);
+const STANCE_SP = new Set(['affut', 'profil', 'retranche']);
 
 // ------------------------------------------------------------ l'icône de chaque coup spécial (tuiles d'action)
 // chaque coup spécial a son icône détaillée (pisteicons.js), sous le même nom

@@ -1327,13 +1327,13 @@ export function portrait(c, scale = 3, opts = {}) {
 
 // ------------------------------------------------------------- Fusils
 // Un modèle par partie, tiré de la graine (scene.js) : mécanisme (pompe, levier, deux coups), bois et métal.
-const WOODS = {
+export const WOODS = {
   walnut: { b: '#8a5228', l: '#b07038', d: '#5a3218', dd: '#3e2010' },
   cherry: { b: '#9a3e22', l: '#c4623a', d: '#6a2614', dd: '#4a180c' },
   dark: { b: '#5a3420', l: '#7c4c30', d: '#3a2014', dd: '#26140a' },
   blond: { b: '#b88a48', l: '#dcb070', d: '#8a6030', dd: '#5a3c1c' },
 };
-const METALS = {
+export const METALS = {
   blued: { b: '#5c626c', l: '#b8bec6', d: '#3a3e46', x: '#2e3136' },
   nickel: { b: '#a4a8b0', l: '#eceff2', d: '#6a707a', x: '#868c96' },
   brass: { b: '#c89a40', l: '#f4d47a', d: '#8a6420', x: '#a87a28' },

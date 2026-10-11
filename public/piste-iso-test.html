@@ -11,6 +11,7 @@
 import { IsoView, TW, TH } from './js/pisteiso.js';
 import { bodySprite, gunSprite } from './js/pistelook.js';
 import { lookOf, blit } from './js/brawlart.js';
+import * as PM from './js/pistemaps.js';
 window.onerror = (m, s, l, c, e) => { document.getElementById('errlog').textContent += `${e?.stack || m}\n`; };
 window.onunhandledrejection = (e) => { document.getElementById('errlog').textContent += `${e.reason?.stack || e.reason}\n`; };
 
@@ -132,6 +133,60 @@ function makeMap(theme, w, h, seed) {
   return { theme, env: theme, name: `essai ${theme}`, w, h, cells, base: cells.slice(), fog: false, dark: theme === 'mine', deploy: { p: [], e: [], amb: [], boss: { x: 0, y: 0 } }, lights, seed };
 }
 
+// ------------------------------------------------------------ champs v2 de la carte (contrat 2), simulés s'ils manquent
+// &time=aube|midi|crepuscule|nuit, &sky=tempete|brume|blizzard, &fire=1 (quelques cases en feu), &dmg=1 (couverts abîmés),
+// &puddle=1 (flaques), &debris=1 (débris au sol)
+function fakeV2(m) {
+  const w = m.w, h = m.h, n = w * h, R = rng(m.seed + 77), D = PM.DECO || {};
+  const at = (x, y) => (x >= 0 && y >= 0 && x < w && y < h ? m.cells[y * w + x] : C.VOID);
+  const dco = (i) => (m.deco ? m.deco[i] : 0);
+  m.deco ||= new Uint8Array(n);
+  if (q.get('time')) m.time = q.get('time');
+  m.time ||= ['aube', 'midi', 'crepuscule', 'nuit'][Math.floor(R() * 4)];
+  if (q.get('sky')) m.sky = q.get('sky');
+  if (m.time === 'nuit' && m.sky === 'jour') m.sky = 'nuit';
+  const lights = (m.lights || []).filter((l) => l.kind);
+  const free = (x, y) => at(x, y) === C.FLOOR || at(x, y) === C.PATH;
+  if (!lights.length) {
+    // des sources de lumière selon le thème (comme le générateur le fera)
+    for (const l of m.lights || []) lights.push({ ...l, kind: m.theme === 'mine' ? 'lanterne' : 'feu', h: m.theme === 'mine' ? 16 : 3 });
+    for (let i = 0; i < n; i++) {
+      const x = i % w, y = Math.floor(i / w), t = m.cells[i], d = dco(i);
+      if (d === D.FEU) lights.push({ x, y, r: 4, kind: 'feu', h: 3 });
+      if (d === D.REVERBERE) lights.push({ x, y, r: 4, kind: 'reverbere', h: 24 });
+      if (m.theme === 'saloon' && t === C.TABLE && R() < 0.5) lights.push({ x, y, r: 2.5, kind: 'lampe', h: 9, prop: `l${i}` });
+      if (m.theme === 'saloon' && t === C.COUNTER && R() < 0.2) lights.push({ x, y, r: 2.5, kind: 'lampe', h: 13, prop: `l${i}` });
+      if (m.theme === 'mine' && t === C.PILLAR && R() < 0.5) lights.push({ x, y, r: 4, kind: 'lanterne', h: 16, prop: `l${i}` });
+      if (m.theme === 'hacienda' && t === C.PILLAR && d === D.COLONNE && R() < 0.4) lights.push({ x, y, r: 3.5, kind: 'torche', h: 18 });
+      if ((m.theme === 'ville' || m.theme === 'saloon') && t === C.WALL && m.time === 'nuit' && R() < 0.08 && free(x, y + 1)) lights.push({ x, y, r: 2.5, kind: 'fenetre', h: 11 });
+    }
+    if (m.theme === 'saloon') {
+      let k = 0;
+      for (let tries = 0; tries < 400 && k < 3; tries++) {
+        const x = 2 + Math.floor(R() * (w - 4)), y = 2 + Math.floor(R() * (h - 4)), i = y * w + x;
+        if (m.cells[i] === C.FLOOR && dco(i) === D.PLANCHER && free(x + 1, y) && free(x, y + 1) && free(x - 1, y) && free(x, y - 1) && !lights.some((l) => Math.abs(l.x - x) + Math.abs(l.y - y) < 5)) {
+          lights.push({ x, y, r: 5, kind: 'lustre', h: 30, prop: `lu${k}` }); k++;
+        }
+      }
+    }
+    if ((m.time === 'nuit' || m.time === 'aube') && !lights.some((l) => l.kind === 'feu') && !['saloon', 'mine'].includes(m.theme)) {
+      for (let tries = 0; tries < 300; tries++) { const x = Math.floor(R() * w), y = Math.floor(R() * h); if (at(x, y) === C.FLOOR) { lights.push({ x, y, r: 4, kind: 'feu', h: 3 }); m.deco[y * w + x] = D.FEU ?? 0; break; } }
+    }
+    m.lights = lights;
+  }
+  m.props ||= m.lights.filter((l) => l.prop).map((l) => ({ id: l.prop, kind: l.kind, x: l.x, y: l.y, hp: 1, light: l }));
+  m.dmg ||= new Uint8Array(n);
+  m.chp ||= new Uint8Array(n);
+  if (q.has('dmg')) for (let i = 0; i < n; i++) if ([C.CRATE, C.TABLE, C.FENCE, C.SAND, C.COUNTER, C.CHEST, C.BUSH].includes(m.cells[i]) && R() < 0.6) m.dmg[i] = 1 + (R() < 0.5 ? 1 : 0);
+  m.fire ||= new Map();
+  if (q.has('fire')) for (let k = 0, tries = 0; k < 4 && tries < 500; tries++) { const i = Math.floor(R() * n); if (m.cells[i] === C.FLOOR) { m.fire.set(i, { t: 3 }); k++; } }
+  m.puddle ||= new Map();
+  if (q.has('puddle')) { const kinds = ['whisky', 'petrole', 'eau', 'sang']; for (let k = 0, tries = 0; k < 8 && tries < 500; tries++) { const i = Math.floor(R() * n); if (m.cells[i] === C.FLOOR || m.cells[i] === C.PATH) { m.puddle.set(i, kinds[k % 4]); k++; } } }
+  if (q.has('debris')) { const kinds = ['DEBRIS_BOIS', 'DEBRIS_SAC', 'DEBRIS_PIERRE']; for (let k = 0, tries = 0; k < 6 && tries < 500; tries++) { const i = Math.floor(R() * n); if (m.cells[i] === C.FLOOR && D[kinds[k % 3]] != null) { m.deco[i] = D[kinds[k % 3]]; k++; } } }
+  m.lightsVer ||= 0; m.fxVer ||= 0;
+  m.scorch ||= [];
+}
+
 // ------------------------------------------------------------ personnages factices
 const LOOKS = [
   { skin: 2, hairColor: 1, outfitColor: 0, hat: 'cowboy', hatColor: 1, beard: 'stubble' },
@@ -173,9 +228,13 @@ function load() {
   iv?.free();
   const sizes = { desert: [26, 18], canyon: [28, 20], prairie: [26, 18], foret: [28, 20], neige: [24, 18], mine: [30, 22], saloon: [24, 17], ville: [30, 20], hacienda: [26, 20] };
   const [w, h] = big ? [36, 26] : sizes[theme];
-  map = makeMap(theme, w, h, seed);
+  // par défaut : une vraie carte du générateur (pistemaps.js) ; &fake=1 : les cartes d'essai faites ici
+  map = q.has('fake') || !PM.makeBattle ? makeMap(theme, w, h, seed) : PM.makeBattle(seed * 7919, { theme, region: 'desert' });
+  fakeV2(map);
   iv = new IsoView(map, { top: 15, bottom: 176 });
   actors = makeActors(map);
+  for (const a of actors) a.z = iv.groundZ(a.x, a.y);
+  if (map.theme === 'mine' || map.time === 'nuit') actors[0] && (actors[0].light = { r: 2.6 });
   if (actors[0]) iv.centerOn(actors[0].x, actors[0].y, { smooth: false });
   const cm = q.get('cam'); if (cm) { const [x, y] = cm.split(',').map(Number); iv.setCamera(x, y); }
   const t0 = performance.now(); iv.prewarm(1e9); window.__warm = performance.now() - t0;
@@ -234,8 +293,8 @@ function frame(now) {
   if (hover) { iv.drawTiles(ctx, [hover], 'rgb(255,242,176)', 0.5); iv.drawOutline(ctx, [hover], '#fff8d0'); }
   const see = actors.filter((a) => a.side === 'p');
   iv.drawScene(ctx, t, actors, { seeThrough: see, hover });
+  if (dark) iv.drawLight(ctx, t);
   if (fog) { const { vis, exp } = visibleSets(); iv.drawFog(ctx, vis, exp); }
-  if (dark && map.dark) iv.drawDark(ctx, map.lights, actors);
   const el = performance.now() - t0;
   timings.push(el); if (timings.length > 60) timings.shift();
   // bandeaux de l'interface (pour juger la zone utile)
@@ -269,7 +328,7 @@ let drag = null;
 const gp = (e) => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * 384, y: (e.clientY - r.top) / r.height * 216 }; };
 cv.addEventListener('mousedown', (e) => { drag = { ...gp(e), moved: 0 }; cv.style.cursor = 'grabbing'; });
 addEventListener('mouseup', (e) => {
-  if (drag && drag.moved < 2) { const p = gp(e), c = iv.toCell(p.x, p.y); if (c) iv.centerOn(c.x, c.y); }
+  if (drag && drag.moved < 2) { const p = gp(e), c = iv.toCell(p.x, p.y); if (c) { iv.flash(c.x, c.y, e.shiftKey ? { r: 5, ms: 400, col: '#ffb060' } : { r: 2.5 }); if (e.altKey) iv.centerOn(c.x, c.y); } }
   drag = null; cv.style.cursor = 'grab';
 });
 cv.addEventListener('mousemove', (e) => {

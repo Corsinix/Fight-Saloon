@@ -7,6 +7,9 @@ export const W = 384, H = 216;
 export const CUT_MS = 5000;
 export const HELP_MS = 3500;
 export const COUNTDOWN = CUT_MS + HELP_MS;
+// Plus de compte à rebours sous les règles : l'horloge de la partie reste figée à START_GATE.at tant que tous les
+// joueurs n'ont pas cliqué (prêts), puis repart START_GATE.go ms avant le départ (net.js côté hôte, miniscene.js)
+export const START_GATE = { at: -1200, go: 500 };
 export const PLAYER_COLORS = ['#f0705a', '#7ab0f0', '#b8e070', '#f8d070', '#c890f0', '#60d8c8'];
 export const MAX_PLAYERS = 6;
 export const TEAM_NAMES = ['ROUGES', 'BLEUS']; // équipes de l'assaut du fort (ici pour l'écran de fin, sans charger l'arbitre)

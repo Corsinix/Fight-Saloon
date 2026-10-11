@@ -6,7 +6,7 @@ import { Room, roomFelt } from './room.js';
 import { Cutscene } from './cutscene.js';
 import { MODES } from './worlds.js';
 import * as FX from './itemfx.js';
-import * as VM from './vmguns.js';
+import * as RL from './rlart.js';
 import { revealText } from './uikit.js';
 
 export const W = 384, H = 216;
@@ -24,30 +24,29 @@ const color = (live) => (live ? 'ROUGE' : 'BLANCHE');
 // 0 avant a, monte jusqu'à 1 entre a et b, reste à 1 jusqu'à c, redescend à 0 en d
 const prof = (el, a, b, c, d) => (el <= a || el >= d ? 0 : el < b ? ease((el - a) / (b - a)) : el <= c ? 1 : 1 - ease((el - c) / (d - c)));
 
-// ---- Objets tenus en volume (sprites.js : gunRig, CAM3) : la caméra est mes yeux, l'adversaire est sur le plan z = 0.
-// Ce que je tiens moi-même (vue subjective) est dessiné comme les armes en main du FPS (vmguns.js).
-const CAM = { cx: 192, cy: 108, d: 180 }, V3 = S.V3;
-// épaules de l'adversaire (buste characterSprite ×2 : torse de x 6 à 42, épaules à la ligne 44 du sprite) : l'articulation
-// est rentrée d'une demi-largeur de bras, que le bras ne déborde pas du torse (OPP_SH : en unités du buste)
-// (g : repère de son buste, pour dessiner ses bras en gros pixels calés sur ceux du sprite : itemfx.js, bustArm)
+// ---- Objets tenus : ce que je tiens moi-même (vue subjective) et ce que tient l'adversaire (son fusil, son derringer,
+// ses poings) sont dessinés en pixel art 2D (rlart.js : pièces ombrées à plat et cernées) ; ses avant-bras et ses bras
+// sont des tubes ombrés de la même façon (itemfx.js : oppLimb, oppArm).
+// épaules de l'adversaire (buste characterSprite ×2 : torse de x 6 à 42, épaules à la ligne 45 du sprite, rentrées
+// d'une demi-largeur de bras) : (166, oy + 90) et (218, oy + 90) à l'écran
 const OPP_SH = { l: [11, 45], r: [37, 45] };
 const oppShoulder = (oy, side) => {
   const s = side > 0 ? OPP_SH.r : OPP_SH.l;
-  return { x: OPP_X + 2 * s[0], y: oy + 2 * s[1], r: 5.5, g: { x: OPP_X, y: oy, s: 2 } };
+  return { x: OPP_X + 2 * s[0], y: oy + 2 * s[1] };
 };
-// son fusil retourné contre lui, raccourci le long de son axe (gunPose, drawOppGun)
-const SELF_SHORT = 0.72;
-// Point du monde vu en (sx, sy) et à la distance L de fixed, du côté de la caméra (dir 1) ou du fond (dir -1)
-function solveZ(fixed, sx, sy, L, dir, cam = CAM) {
-  const at = (z) => { const s = cam.d / (cam.d - z); return [cam.cx + (sx - cam.cx) / s, cam.cy + (sy - cam.cy) / s, z]; };
-  let a = fixed[2], b = dir > 0 ? cam.d - 8 : fixed[2] - 600;
-  for (let i = 0; i < 28; i++) {
-    const m = (a + b) / 2, d = Math.hypot(...V3.sub(at(m), fixed));
-    if (d < L) a = m; else b = m;
-  }
-  return at((a + b) / 2);
+// ses poings posés sur la table (à ma gauche, à ma droite)
+const OPP_REST = [{ x: 158, y: 137 }, { x: 226, y: 137 }];
+// son fusil soulevé puis tourné en joue en 5 images (u : 0 posé → 1 tenu) ; contre lui, sa main gauche remonte de la
+// pompe (s = 1) jusque sous la bouche (s = 0) pendant les deux dernières
+const OPP_U = [0.15, 0.35, 0.55, 0.75, 0.9], OPP_SU = [1, 1, 1, 0.6, 0.25];
+// toutes les images clés de son fusil (rendues d'avance quand rien ne bouge : warmHeld) ; self : contre lui
+function oppGunFrames(self) {
+  const F = [{ u: 0, s: 1 }, { u: 1, s: 0 }, { u: 1, s: 0, fire: 0, kick: 1, hd: 1 }, { u: 1, s: 0, fire: 1, kick: 0.3, hd: 1 }, { u: 1, s: 0, hd: 1 }];
+  OPP_U.forEach((u, i) => F.push({ u, s: self ? OPP_SU[i] : 1 }, { u, s: 1 }));
+  if (self) F.push({ u: 1, s: 0.5, hd: 1 }, { u: 1, s: 1, hd: 1 });
+  for (const pump of [0.6, 1, 0.35]) F.push({ u: 1, s: 1, pump });
+  return F;
 }
-// Repère du fusil (carcasse) tendu de la plaque de couche butt à la bouche muz (points du monde) ; roll : canté
 // Fer à cheval cloué au bord de la table : l'icône et ses trois clous (trous de l'icône 16 × 16, depuis son centre) ;
 // hs : de combien chaque clou dépasse encore (0 : enfoncé, on ne voit que sa tête)
 const SHOE_NAILS = [[-6, 0], [5, 0], [-1, -6]];
@@ -59,13 +58,6 @@ function nailedShoe(ctx, cx, cy, hs = [0, 0, 0]) {
     if (h > 0) { ctx.fillStyle = '#8a909a'; ctx.fillRect(x, y - h + 1, 1, h - 1); }
     ctx.fillStyle = '#d8dce4'; ctx.fillRect(x - (h > 0 ? 1 : 0), y - h, h > 0 ? 3 : 1, 1);
   });
-}
-function gunBetween(kind, butt, muz, roll = 0) {
-  const L = 33 + S.gunEnd(false, kind) - 34, k = Math.hypot(...V3.sub(muz, butt)) / L;
-  const F0 = S.frame3([0, 0, 0], V3.sub(muz, butt), [Math.sin(roll), -Math.cos(roll), 0], k);
-  // la crosse tombe sous l'axe du canon : on redresse l'axe pour que la bouche arrive bien sur muz
-  const F = S.frame3([0, 0, 0], V3.sub(F0.A, V3.k(F0.U, 7.5 / L)), F0.U, k);
-  return S.frame3(V3.add(butt, V3.add(V3.k(F.A, 33 * k), V3.k(F.U, 6.4 * k))), F.A, F.U, k);
 }
 
 // Texte en vrai pixel art : le navigateur lisse les lettres (pixels à moitié transparents) et,
@@ -293,18 +285,24 @@ export class Scene {
     this.warmHeld();
   }
 
-  // Mes armes en main (vmguns.js) rendues d'avance, une image par tâche et seulement quand rien ne bouge : chacune coûte
+  // Mes armes en main (rlart.js) dessinées d'avance, une image par tâche et seulement quand rien ne bouge : chacune coûte
   // quelques dizaines de ms la première fois, le tir ou le derringer ne saccadent pas
   warmHeld() {
     const st = this.state;
     if (!st) return;
-    const sk = this.skin(this.me), cl = this.cloth(this.me), g = this.gun, sw = !!st.sawed, key = `${g}|${sw}|${sk}|${cl}`;
+    const sk = this.skin(this.me), cl = this.cloth(this.me), g = this.gun, sw = !!st.sawed, osk = this.skin(this.opp);
+    const key = `${g}|${sw}|${sk}|${cl}|${osk}`;
     if (this.warmKey === key) return;
     this.warmKey = key;
-    const jobs = [['idle', 0], ['fire', 0], ['fire', 1], ['reload', 0], ['reload', 1], ['reload', 2]].map(([a, f]) => () => VM.rlGunView(g, a, f, sk, cl, sw));
-    for (let f = 0; f < 6; f++) jobs.push(() => VM.rlSelfView(g, f, sk, cl, sw));
-    for (const [a, f] of [['idle', 0], ['fire', 0], ['fire', 1]]) jobs.push(() => VM.rlDerringerView(a, f, sk, cl));
-    for (const [side, far] of [[1, false], [-1, false], [1, true], [-1, true]]) jobs.push(() => VM.rlFist(side, sk, cl, far));
+    const jobs = [['idle', 0], ['fire', 0], ['fire', 1], ['reload', 0], ['reload', 1], ['reload', 2]].map(([a, f]) => () => RL.rlGunView(g, a, f, sk, cl, sw));
+    for (let f = 0; f < 6; f++) jobs.push(() => RL.rlSelfView(g, f, sk, cl, sw));
+    for (const [a, f] of [['idle', 0], ['fire', 0], ['fire', 1]]) jobs.push(() => RL.rlDerringerView(a, f, sk, cl));
+    for (const [side, far] of [[1, false], [-1, false], [1, true], [-1, true]]) jobs.push(() => RL.rlFist(side, sk, cl, far));
+    // les siens (vue 1) : son fusil (prise, visée, tir, réarmement, contre lui), son derringer, ses poings
+    for (const self of [false, true]) for (const f of oppGunFrames(self)) jobs.push(() => RL.rlOppGunView(g, sw, self ? 'self' : 'aim', f, osk));
+    for (const f of ['r0', 'r1', 'aim', 'fire0', 'fire1']) jobs.push(() => RL.rlOppDerringerView(f, osk));
+    for (let a = 0; a < RL.RL_FIST_N; a++) for (const s of [-1, 1]) jobs.push(() => RL.rlOppFist(s, a, osk));
+    for (let k = 0; k < 4; k++) jobs.push(() => RL.rlOppFist(1, 12, osk, k));
     clearTimeout(this.warmT);
     const step = () => {
       if (this.warmKey !== key || !jobs.length) return;
@@ -583,7 +581,6 @@ export class Scene {
           // recul : le fusil part en arrière et le canon se relève, puis revient
           const recoil = after > 0 && after < 320 && ev.live ? (after < 60 ? after / 60 : 1 - ease((after - 60) / 260)) : 0;
           // réarmement : la main avant tire la pompe vers soi puis la renvoie (ou casse le fusil, ou ouvre le levier)
-          const pumping = after > 700 && after < 1000 ? Math.sin(((after - 700) / 300) * Math.PI) : 0;
           // le tremblement monte avec le suspense, puis la main se fige juste avant le coup
           const nerve = el > 420 && el < Tb - 120 ? Math.min(1, (el - 420) / (Tb - 420)) : 0;
           const tremble = Math.round(Math.sin(el / 37) * (0.6 + nerve * 1.4));
@@ -595,17 +592,13 @@ export class Scene {
             ctx.fillRect(0, 0, W, H);
           }
           if (mode === 'meAim' || mode === 'meSelf') {
-            // vue subjective : l'arme en main du FPS ; coup parti (éclair puis fumée) ou réarmement (3 images)
+            // vue subjective : l'arme en main (rlart.js) ; coup parti (éclair puis fumée) ou réarmement (3 images)
             const fire = ev.live && after >= 0 && after < 420 ? (after < 90 ? 0 : 1) : -1;
             const rack = after >= 700 && after < 1000 ? Math.floor((after - 700) / 100) : -1;
             const click = !ev.live && after >= 0 && after < 70 ? 1 : 0;
             this.drawMyGun(ctx, mode, { rise, recoil, fire, rack, click, sawed: ev.sawed, tremble, sway, breath: Math.sin(el / 260) * nerve });
-          } else this.drawOppGun(ctx, mode, { rise, recoil, pump: pumping, sawed: ev.sawed, tremble, sway, breath: Math.sin(el / 260) * nerve });
-          // (mon arme a son propre éclair, dessiné avec elle comme au FPS)
-          if (ev.live && after >= 0 && after < 120 && by !== me) {
-            const m = this.muzzlePos(by, ev.target);
-            S.drawFlash(ctx, m.x, m.y, Math.round(Math.max(10, (this.held?.muzzle.r || 4) * 4)), el / 50);
-          }
+          } else this.drawOppGun(ctx, mode, el, { Tb, live: ev.live, sawed: ev.sawed, tremble, sway, breath: Math.sin(el / 260) * nerve });
+          // (chaque arme a son propre éclair, dessiné avec elle)
           // filet de fumée qui monte du canon après le coup
           if (ev.live && after > 60 && after < 1000 && this.now - (A.wisp || 0) > 70) {
             A.wisp = this.now;
@@ -802,13 +795,16 @@ export class Scene {
               // la lame mord le canon au point de coupe et va et vient le long de son axe
               const u = mine ? { x: 0.75, y: 0.66 } : { x: 0.8, y: -0.6 };
               const osc = el > 300 && el < 1500 ? Math.sin((el - 300) / 50) * 7 : 0;
-              const d = osc + (1 - k) * 70;
-              const cx = cutX + u.x * d, cyy = cy - 4 + u.y * d;
+              // (chez moi la scie arrive du bas de l'écran ; chez lui, elle est dans son poing, qui part de sa place sur la table)
+              const d = osc + (mine ? (1 - k) * 70 : 0);
+              let cx = cutX + u.x * d, cyy = cy - 4 + u.y * d;
+              if (!mine) { const hx0 = cx + u.x * 19, hy0 = cyy + u.y * 19; cx += lerp(OPP_REST[1].x - hx0, 0, k); cyy += lerp(OPP_REST[1].y - hy0, 0, k); }
               const heel = { x: cx + u.x * 14, y: cyy + u.y * 14 };
-              FX.saw(ctx, cx - u.x * 16, cyy - u.y * 16, heel.x, heel.y, 7);
               const hx = heel.x + u.x * 5, hy = heel.y + u.y * 5;
-              if (mine) FX.fpArm(ctx, hx, hy, this.skin(me), this.cloth(me), 1, { small: true });
-              else FX.oppArm(ctx, oppShoulder(this.oppY, 1), hx, hy, this.skin(op), this.sleeve(op), 1);
+              if (mine) {
+                FX.saw(ctx, cx - u.x * 16, cyy - u.y * 16, heel.x, heel.y, 7);
+                FX.fpArm(ctx, hx, hy, this.skin(me), this.cloth(me), 1, { small: true });
+              } else FX.oppArm(ctx, oppShoulder(this.oppY, 1), hx, hy, this.skin(op), this.sleeve(op), 1, (c) => { c.globalAlpha = Math.min(1, k * 3); FX.saw(c, cx - u.x * 16, cyy - u.y * 16, heel.x, heel.y, 7); c.globalAlpha = 1; });
             };
             break;
           }
@@ -1007,7 +1003,11 @@ export class Scene {
               } else if (placed) shoe(ctx);
               // le marteau, dans l'autre main : la tête tombe pile sur le clou du coup en cours
               const kk = mine ? prof(el, 300, 620, 1550, 1850) : prof(el, 300, 620, 1550, 1850);
-              if (kk <= 0) return;
+              if (kk <= 0) {
+                // (chez lui, son autre poing reste posé tant que le marteau n'est pas sorti : il disparaissait)
+                if (!mine && hk > 0) FX.oppArm(ctx, oppShoulder(this.oppY, 1), OPP_REST[1].x, OPP_REST[1].y, sk, cl, 1);
+                return;
+              }
               const i = Math.max(0, strikeOf(el)), n = nails[i < 0 ? 2 : i];
               const L = lift(el);
               // chez lui, la main au-dessus du fer, du côté de son épaule gauche (le bras ne passe pas devant le fer) ; chez moi, à droite
@@ -1084,17 +1084,24 @@ export class Scene {
             // recul : le canon se relève d'un coup puis revient ; la main tremble en visant
             const kick = (el) => (el > 1100 && el < 1350 ? (el < 1140 ? (el - 1100) / 40 : 1 - ease((el - 1140) / 210)) : 0);
             const shiver = (el) => (el > 600 && el < 1080 ? Math.sin(el / 45) * 0.8 : 0);
-            // trajet de la main : posée → botte (sous la table, ou sous l'écran) → visée → botte → posée
-            const route = (el, rest, boot, aim) => {
-              if (el < 150) return null;
-              if (el < 330) return { p: lerpP(rest, boot, ease((el - 150) / 180)), gun: false };
-              if (el < 600) return { p: lerpP(boot, aim, ease((el - 330) / 270)), gun: true };
-              if (el < 1800) return { p: aim, gun: true };
-              if (el < 2050) return { p: lerpP(aim, boot, ease((el - 1800) / 250)), gun: true };
-              if (el < 2250) return { p: lerpP(boot, rest, ease((el - 2050) / 200)), gun: false };
-              return null;
+            // trajet de son poing droit (à ma gauche) : posé → bord de la table → sa botte, sous la table (le bras passe
+            // derrière le bord : clip, coude sous la table : under) → ressort avec le derringer, encore levé (r0, r1) →
+            // visée → et retour. clip : hauteur au-dessus de laquelle il reste visible (216 : partout)
+            const TOP = S.TABLE_Y - 6, EDGE = { x: 153, y: 121 }, BOOT = { x: 150, y: 150 };
+            const seg = (el, a, b, t0, t1) => { const k = ease((el - t0) / (t1 - t0)); return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), k }; };
+            const route = (el, aim) => {
+              if (el < 150 || el >= 2250) return null;
+              if (el < 240) { const p = seg(el, OPP_REST[0], EDGE, 150, 240); return { p, gun: null, clip: lerp(216, TOP, p.k), under: p.k }; }
+              if (el < 330) return { p: seg(el, EDGE, BOOT, 240, 330), gun: null, clip: TOP, under: 1 };
+              if (el < 430) return { p: seg(el, BOOT, EDGE, 330, 430), gun: 'r0', clip: TOP, under: 1 };
+              if (el < 600) { const p = seg(el, EDGE, aim, 430, 600); return { p, gun: p.k < 0.35 ? 'r0' : p.k < 0.7 ? 'r1' : 'aim', clip: lerp(TOP, 216, p.k), under: 1 - p.k }; }
+              if (el < 1800) return { p: aim, gun: el >= 1100 && el < 1180 ? 'fire0' : el >= 1180 && el < 1450 ? 'fire1' : 'aim', clip: 216, under: 0 };
+              if (el < 1970) { const p = seg(el, aim, EDGE, 1800, 1970); return { p, gun: p.k < 0.3 ? 'aim' : p.k < 0.65 ? 'r1' : 'r0', clip: lerp(216, TOP, p.k), under: p.k }; }
+              if (el < 2050) return { p: seg(el, EDGE, BOOT, 1970, 2050), gun: 'r0', clip: TOP, under: 1 };
+              if (el < 2150) return { p: seg(el, BOOT, EDGE, 2050, 2150), gun: null, clip: TOP, under: 1 };
+              const p = seg(el, EDGE, OPP_REST[0], 2150, 2250);
+              return { p, gun: null, clip: lerp(TOP, 216, p.k), under: 1 - p.k };
             };
-            const lerpP = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) });
             if (!mine) { A.oppK = (el) => (el > 150 && el < 2250 ? 1 : 0); A.oppHand = 0; }
             A.pose = (ctx, el) => {
               if (!ev.hit && el >= 1100 && el < 2600) {
@@ -1105,31 +1112,33 @@ export class Scene {
                 ctx.globalAlpha = 1;
               }
               if (mine) {
-                // vue subjective : le derringer en main du FPS, qui monte du bas de l'écran et se braque droit devant,
-                // au viseur, sur lui (à hauteur de son buste) ; éclair puis fumée au coup de feu, comme au FPS
+                // vue subjective : le derringer en main (rlart.js), qui monte du bas de l'écran et se braque droit devant,
+                // au viseur, sur lui (à hauteur de son buste) ; éclair puis fumée au coup de feu
                 if (el < 330 || el >= 2050) return;
                 const up = el < 600 ? ease((el - 330) / 270) : el < 1800 ? 1 : 1 - ease((el - 1800) / 250);
                 const fire = el >= 1100 && el < 1450 ? (el < 1180 ? 0 : 1) : -1;
-                const img = VM.rlDerringerView(fire >= 0 ? 'fire' : 'idle', Math.max(0, fire), this.skin(by), this.cloth(by));
+                const img = RL.rlDerringerView(fire >= 0 ? 'fire' : 'idle', Math.max(0, fire), this.skin(by), this.cloth(by));
                 const dx = Math.round(shiver(el)), dy = Math.round((1 - up) * 150 + kick(el) * 5);
-                ctx.drawImage(img, VM.RL_X + dx, VM.RL_Y + dy);
+                ctx.drawImage(img, RL.RL_X + dx, RL.RL_Y + dy);
                 A.muz = { x: img.muz[0] + dx, y: img.muz[1] + dy };
                 return;
               }
-              // lui : comme les cow-boys du FPS qui tirent (fpsart.js : ppRig 'aim', ppGunAim), le poing droit levé devant
-              // sa poitrine, le derringer braqué sur moi (on voit ses deux bouches superposées), coude vers le bas
-              const sk = this.skin(by), r = route(el, { x: 158, y: 137, z: 0 }, { x: 148, y: 150, z: 0 }, { x: 184, y: this.oppY + 78, z: 0 });
+              // lui : son poing droit (à ma gauche) va chercher le derringer dans sa botte, sous la table, et le braque sur
+              // moi, bras tendu : derringer et main (rlart.js : rlOppDerringerView), on voit ses deux bouches
+              // superposées ; éclair puis fumée au coup de feu, recul. Son avant-bras suit (itemfx.js : oppLimb).
+              const sk = this.skin(by), sl = this.sleeve(by), r = route(el, { x: 184, y: this.oppY + 78 });
               if (!r) return;
-              const kk = kick(el), hx = r.p.x + shiver(el), hy = r.p.y - kk * 4;
-              const sh = oppShoulder(this.oppY, -1), g = sh.g, hu = [(hx - g.x) / 2, (hy - g.y) / 2];
-              const gun = r.gun ? (c) => this.oppDerringer(c, g, hu) : null;
-              if (r.gun) A.muz = { x: g.x + 2 * Math.round(hu[0]), y: g.y + 2 * (Math.round(hu[1]) - 5) };
-              // sous la table (sa botte) : le bras disparaît derrière le bord
-              const clip = el < 450 || el > 1930;
-              if (clip) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, S.TABLE_Y - 6); ctx.clip(); }
-              FX.oppArm(ctx, sh, hx, hy, sk, this.sleeve(by), -1, gun);
-              if (clip) ctx.restore();
-              if (r.gun && el >= 1100 && el < 1220) S.drawFlash(ctx, A.muz.x, A.muz.y, 12, el / 40);
+              const hx = Math.round(r.p.x + shiver(el)), hy = Math.round(r.p.y - kick(el) * 4);
+              const sh = oppShoulder(this.oppY, -1), down = { x: hx + 4, y: S.TABLE_Y + 16 };
+              const elbow = (e) => ({ x: lerp(e.x, down.x, r.under), y: lerp(e.y, down.y, r.under) });
+              if (r.clip < 216) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, Math.round(r.clip)); ctx.clip(); }
+              if (r.gun) {
+                const img = RL.rlOppDerringerView(r.gun, sk), L = hx - img.ax, T = hy - img.ay;
+                FX.oppLimb(ctx, sh, elbow(RL.rlOppElbow(sh, { x: hx, y: hy })), { x: L + img.wx, y: T + img.wy, r: img.wr }, sk, sl);
+                ctx.drawImage(img, L, T);
+                A.muz = { x: L + img.mx, y: T + img.my };
+              } else FX.oppArm(ctx, sh, hx, hy, sk, sl, -1, null, -1, elbow);
+              if (r.clip < 216) ctx.restore();
             };
             break;
           }
@@ -1341,40 +1350,24 @@ export class Scene {
     for (const px of [141, 243]) { S.disc(ctx, px, 105 + sway, 3, S.OUT); S.disc(ctx, px, 105 + sway, 2, '#8a5a30'); }
   }
 
-  // Avant-bras posés sur le rebord de la table, poings fermés ; l'adversaire pianote quand il attend.
-  // o.hide : main cachée (levée par une animation) ; o.cuff : { k (0 écartées → 1 serrées), bands, jiggle } menottes.
+  // Ses poings posés sur le rebord de la table, avant-bras vers lui (itemfx.js : oppArm, rlart.js : rlOppFist) ; il pianote
+  // quand il attend. o.hide : main cachée (levée par une animation) ; o.cuff : { k (0 écartées → 1 serrées), bands,
+  // jiggle } menottes.
   drawOppHands(ctx, ch, t, sway, o = {}) {
-    const sk = SKIN[ch?.skin ?? 1], skD = S.shade(sk, -0.22), skL = S.shade(sk, 0.15);
-    const cloth = CLOTH_COLORS[ch?.outfitColor ?? 2] || '#7a2a1e';
-    const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
+    const sk = SKIN[ch?.skin ?? 1], sl = this.sleeve(this.opp);
     const cuff = o.cuff, ck = cuff ? cuff.k : 0;
     const jig = cuff?.jiggle ? Math.round(Math.sin(t / 35)) : 0;
     const drum = !this.busy && !ck && (t % 4200) < 900;
-    const xs = [Math.round(lerp(152, 166, ck)) + jig, Math.round(lerp(220, 206, ck)) + jig];
-    [[xs[0], 1], [xs[1], -1]].forEach(([hx, side], i) => {
+    const wr = [];
+    OPP_REST.forEach((p, i) => {
       if (i === o.hide || o.hide === 2) return;
-      const y = 133;
-      // manche et manchette
-      R(hx - 2, 123, 16, 9, S.OUT); R(hx - 1, 124, 14, 7, cloth); R(hx - 1, 124, 14, 1, S.shade(cloth, 0.2)); R(hx + (side > 0 ? 9 : 1), 125, 3, 6, S.shade(cloth, -0.25));
-      R(hx - 1, 130, 14, 4, S.OUT); R(hx, 131, 12, 2, '#e8e0d0');
-      // poing
-      R(hx - 1, y, 14, 8, S.OUT); R(hx, y + 1, 12, 6, sk);
-      R(hx, y + 1, 12, 1, skL);
-      for (let k = 0; k < 4; k++) {
-        const up = drum && i === 1 && Math.floor(t / 90) % 4 === k ? 1 : 0;
-        R(hx + k * 3, y + 1 - up, 2, 2, up ? skL : sk);
-        if (up) R(hx + k * 3, y - 1, 2, 1, S.OUT);
-        if (k) R(hx + k * 3 - 1, y + 3, 1, 3, skD);
-      }
-      R(hx, y + 6, 12, 1, skD);
-      // pouce, côté intérieur
-      const tx = side > 0 ? hx + 11 : hx - 2;
-      R(tx - 1, y + 2, 5, 5, S.OUT); R(tx, y + 3, 3, 3, sk); R(tx, y + 3, 3, 1, skL);
+      const s = i ? 1 : -1, x = Math.round(lerp(p.x, 192 + s * 20, ck)) + jig;
+      wr[i] = FX.oppArm(ctx, oppShoulder(this.oppY, s), x, p.y, sk, sl, s, null, drum && i === 1 ? Math.floor(t / 90) % 4 : -1);
     });
-    // menottes : un bracelet sur chaque manchette, la chaîne entre les deux poings
-    if (cuff?.bands) {
-      for (const hx of xs) FX.cuffBand(ctx, hx + 6, 131, 16, 5);
-      FX.chain(ctx, xs[0] + 15, 132, xs[1] - 3, 132, 2);
+    // menottes : un bracelet à chaque poignet, la chaîne entre les deux poings
+    if (cuff?.bands && wr[0] && wr[1]) {
+      for (const w of wr) FX.cuffBand(ctx, w.wx, w.wy + 1, 12, 4);
+      FX.chain(ctx, wr[0].wx + 7, wr[0].wy + 2, wr[1].wx - 7, wr[1].wy + 2, 2);
     }
   }
 
@@ -1462,136 +1455,57 @@ export class Scene {
     return by === this.me ? { x: 216, y: 182 } : { x: 214, y: this.oppY + 80 };
   }
 
-  // Son derringer vu de face, braqué sur moi, tenu dans le poing p ([u, v], unités du buste) : la carcasse nickelée
-  // au-dessus du poing, les deux bouches superposées, le chien en haut, la crosse de nacre qui sort sous le poing
-  oppDerringer(c, g, p) {
-    const x = Math.round(p[0]), y = Math.round(p[1]);
-    const Q = (u, v, w, h, col) => { c.fillStyle = col; c.fillRect(g.x + g.s * u, g.y + g.s * v, g.s * w, g.s * h); };
-    Q(x - 2, y + 1, 4, 4, S.OUT); Q(x - 1, y + 2, 2, 2, '#e4dccb'); // crosse
-    Q(x - 3, y - 8, 6, 7, S.OUT); Q(x + 1, y - 9, 2, 2, S.OUT);
-    Q(x - 2, y - 7, 4, 5, '#a4a8b0'); Q(x - 2, y - 7, 4, 1, '#eceff2'); Q(x + 1, y - 7, 1, 5, '#6a707a'); Q(x + 1, y - 8, 1, 1, '#a4a8b0');
-    Q(x - 1, y - 6, 2, 1, '#0c0a0a'); Q(x - 1, y - 4, 2, 1, '#0c0a0a'); // les deux bouches
-  }
-
-  // Fusil de l'adversaire, dans le repère de son buste (characterSprite agrandi ×2) : 1 unité = 1 pixel du sprite, en
-  // (OPP_X + 2u, oppY + 2v) à l'écran ; caméra (mes yeux) en face de lui. Prises comme les cow-boys du FPS (fpsart.js :
-  // ppRig 'aimL', ppLongAim) : posé sur la table, épaulé et braqué sur moi, ou retourné contre lui.
-  oppCam() { return { cx: (W / 2 - OPP_X) / 2, cy: (H / 2 - this.oppY) / 2, d: CAM.d / 2 }; }
-  gunPose(mode, sawed = false) {
-    const g = this.gun, cam = this.oppCam(), L = S.gunEnd(false, g) - 1;
-    if (mode === 'rest') return S.frame3([(GUN_REST.x + 34 - OPP_X) / 2, (GUN_REST.y + 7 - this.oppY) / 2, 0], [1, 0, 0], [0, -1, 0], 0.5);
-    if (mode === 'oppAim') {
-      // crosse au creux de son épaule droite (à ma gauche), canon droit sur moi : la bouche devant son menton, à peine
-      // décalée vers l'épaule de tir ; derrière elle, la pompe, la carcasse et un bout de crosse
-      const butt = [14, 43, 4];
-      return gunBetween(g, butt, solveZ(butt, 22, 37.5, L * 0.7, 1, cam), 0.08);
-    }
-    // oppSelf : bouche calée sous son menton (de son côté gauche), le fusil en biais devant le torse, presque de profil,
-    // qui descend vers l'autre côté ; la crosse va vers la table, dans le plan de l'écran
-    // (à 45° environ ; plus court que posé sur la table : il est tenu un peu en arrière, plus loin de moi)
-    // repère posé directement : l'axe du canon passe par la bouche, sous le menton ; le fusil est raccourci le long de
-    // son axe (SELF_SHORT, appliqué au dessin : drawOppGun) pour que la poignée tombe à longueur de bras, au bord de la table
-    const muz = [28, 38.5, 3], A = V3.unit([0.85, -0.52, -0.1]), F = S.frame3([0, 0, 0], A, [-0.52, -0.85, 0], 0.55);
-    return S.frame3(V3.sub(muz, V3.k(V3.add(V3.k(F.A, (S.gunEnd(sawed, g) - 34) * SELF_SHORT), V3.k(F.U, 1.1)), F.k)), F.A, F.U, F.k);
-  }
-
-  // Mon fusil en vue subjective : le dessin des armes en main du FPS (vmguns.js), au même cadrage et à la même taille,
-  // à ma peau et à ma tenue. Chaque image est rendue une fois puis recopiée, décalée au pixel près : montée depuis le bas
-  // de l'écran (rise), tremblement, souffle, recul. o.fire : 0 éclair, 1 fumée (-1 : rien) ; o.rack : image 0, 1, 2 du
+  // Mon fusil en vue subjective, dessiné en 2D (rlart.js) à ma peau et à ma tenue. Chaque image est dessinée une fois
+  // puis recopiée, décalée au pixel près : montée depuis le bas de l'écran (rise), tremblement, souffle, recul. o.fire : 0 éclair, 1 fumée (-1 : rien) ; o.rack : image 0, 1, 2 du
   // réarmement (-1 : rien) ; o.click : petit sursaut du chien sur une cartouche à blanc.
   drawMyGun(ctx, mode, o) {
     const sk = this.skin(this.me), cl = this.cloth(this.me), self = mode === 'meSelf';
-    const img = self ? VM.rlSelfView(this.gun, o.fire === 0 ? 1 : o.fire === 1 ? 2 : o.rack >= 0 ? 3 + o.rack : 0, sk, cl, o.sawed)
-      : VM.rlGunView(this.gun, o.fire >= 0 ? 'fire' : o.rack >= 0 ? 'reload' : 'idle', o.fire >= 0 ? o.fire : Math.max(0, o.rack), sk, cl, o.sawed);
+    const img = self ? RL.rlSelfView(this.gun, o.fire === 0 ? 1 : o.fire === 1 ? 2 : o.rack >= 0 ? 3 + o.rack : 0, sk, cl, o.sawed)
+      : RL.rlGunView(this.gun, o.fire >= 0 ? 'fire' : o.rack >= 0 ? 'reload' : 'idle', o.fire >= 0 ? o.fire : Math.max(0, o.rack), sk, cl, o.sawed);
     const dx = Math.round(o.tremble + (o.sway?.[0] || 0) * 3);
     const dy = Math.round((o.sway?.[1] || 0) * 2 + (o.breath || 0) * 2 + (o.recoil || 0) * (self ? 4 : 6) + (o.click || 0) + ease(o.rise) * 150);
-    ctx.drawImage(img, VM.RL_X + dx, VM.RL_Y + dy);
+    ctx.drawImage(img, RL.RL_X + dx, RL.RL_Y + dy);
     // bouche (fumée, éclairs) et fenêtre d'éjection (douille), sur l'écran
     const [mx, my] = img.muz;
     this.held = { muzzle: { x: mx + dx, y: my + dy, r: self ? 6 : 2 }, port: self ? { x: mx + dx + 14, y: my + dy + 30 } : { x: 212 + dx, y: 196 + dy } };
   }
 
-  // Fusil tenu par l'adversaire (vue 1), en gros pixels calés sur son buste : le fusil (sprites.js : gunRig) est rendu
-  // dans un calque en unités du buste puis agrandi ×2, avec ses bras (itemfx.js : bustLimb, bustHand), comme les cow-boys
-  // du FPS : coudes vers le bas, près du corps, avant-bras qui remontent, mains refermées sur l'arme. Braqué sur moi : main droite
-  // à la poignée, main gauche sous la pompe, réunies devant sa poitrine ; contre lui : la main gauche plaque le canon
-  // sous son menton, la droite descend le long du fusil jusqu'à la détente, bras tendu.
-  // o : { rise (1 = encore posé sur la table), recoil, pump (0 → 1 : pompe tirée), sawed, tremble, sway [x, y], breath }
-  drawOppGun(ctx, mode, o) {
-    const oy = this.oppY, cam = this.oppCam(), self = mode === 'oppSelf';
-    let F = this.gunPose(mode, o.sawed);
-    const F0 = F; // (pose tenue, sans recul ni réarmement : les mains sous la bouche s'y calent)
-    // recul : en arrière le long du canon, la bouche se relève (puis revient sur moi)
-    if (o.recoil) {
-      const r = o.recoil;
-      F = S.frame3(V3.add(F.o, V3.k(F.A, -7 * r * F.k)), V3.add(F.A, V3.k(F.U, 0.12 * r)), F.U, F.k);
+  // Fusil tenu par l'adversaire (vue 1) : le même fusil que le mien, dessiné en 2D (rlart.js : rlOppGunView), une image clé à la fois, avec ses mains ; ses avant-bras vont des poignets de l'image
+  // à ses coudes (itemfx.js : oppLimb). Prise continue : ses poings posés glissent jusqu'au fusil sur la table, le
+  // soulèvent et le tournent en joue (5 images), le tiennent (tremblement, souffle), coup parti (éclair, fumée, recul)
+  // ou clic, réarmement (contre lui, sa main gauche redescend d'abord le long du canon jusqu'à la pompe), puis le
+  // reposent de la même façon et ses poings reviennent à leur place.
+  // el : temps depuis le début du tir ; o : { Tb (le coup), live, sawed, tremble, sway [x, y], breath }
+  drawOppGun(ctx, mode, el, o) {
+    const self = mode === 'oppSelf', vm = self ? 'self' : 'aim', after = el - o.Tb, oy = this.oppY;
+    const sk = this.skin(this.opp), sl = this.sleeve(this.opp);
+    let f = null, reach = -1;
+    if (el < 140) reach = ease(el / 140);
+    else if (el < 420) { const i = Math.min(4, Math.floor((el - 140) / 56)); f = { u: OPP_U[i], s: self ? OPP_SU[i] : 1 }; }
+    else if (after < 0) f = { u: 1, s: 0 };
+    else if (after < 560) f = { u: 1, s: 0, hd: 1, ...(o.live && after < 90 ? { fire: 0, kick: 1 } : o.live && after < 300 ? { fire: 1, kick: 0.3 } : {}) };
+    else if (after < 700) f = { u: 1, s: self && after < 630 ? 0.5 : 1, hd: 1 };
+    else if (after < 1000) f = { u: 1, s: 1, pump: [0.6, 1, 0.35][Math.min(2, Math.floor((after - 700) / 100))] };
+    else if (after < 1230) f = { u: OPP_U[4 - Math.min(4, Math.floor((after - 1000) / 46))], s: 1 };
+    else reach = 1 - ease((after - 1230) / 120);
+    if (reach >= 0) {
+      // le fusil reste posé sur la table ; ses poings glissent de leur place jusqu'à la poignée et la pompe (ou en reviennent)
+      ctx.drawImage(S.gunSprite(o.sawed, 0, this.gun), GUN_REST.x, GUN_REST.y);
+      const g0 = RL.rlOppGunView(this.gun, o.sawed, vm, { u: 0, s: 1 }, sk);
+      [-1, 1].forEach((s, i) => {
+        const to = g0.hc[s];
+        FX.oppArm(ctx, oppShoulder(oy, s), lerp(OPP_REST[i].x, to[0], reach), lerp(OPP_REST[i].y, to[1], reach), sk, sl, s);
+      });
+      this.held = { muzzle: { x: g0.muz[0], y: g0.muz[1], r: 2 }, port: { x: g0.port[0], y: g0.port[1] } };
+      return;
     }
-    // au réarmement, le coup sec de la pompe relève un peu le fusil
-    if (o.pump) F = S.frame3(V3.add(F.o, V3.k(F.U, -1.2 * o.pump * F.k)), V3.add(F.A, V3.k(F.U, 0.06 * o.pump)), F.U, F.k);
-    const dx = o.tremble + (o.sway?.[0] || 0) * 3, dy = (o.sway?.[1] || 0) * 2 + (o.breath || 0) * 2;
-    // tenu sans bouger (le long suspense) : dessiné une fois, recopié décalé de 2 px en 2 px (la grille du buste) ;
-    // en mouvement (prise, recul, réarmement), redessiné à chaque image
-    const still = !o.rise && !o.recoil && !o.pump;
-    if (!still && (dx || dy)) F = S.frame3(V3.add(F.o, [dx / 2, dy / 2, 0]), F.A, F.U, F.k);
-    if (o.rise > 0) F = S.lerpFrame(F, this.gunPose('rest'), ease(o.rise));
-    // contre lui : fusil raccourci le long de son axe (rendu à sa longueur à mesure qu'il revient sur la table)
-    if (self) F = { ...F, A: V3.k(F.A, lerp(SELF_SHORT, 1, ease(o.rise || 0))) };
-    // (deux-coups braqué sur moi : on ne le casse pas, ses canons basculés viendraient me crever l'écran)
-    const brk = !self && S.GUNS[this.gun]?.action === 'double' ? 0 : o.pump;
-    const rig = S.gunRig(this.gun, o.sawed, Math.round(brk * 8), F, cam);
-    const jx = still ? 2 * Math.round(dx / 2) : 0, jy = still ? 2 * Math.round(dy / 2) : 0;
-    const scr = (p) => ({ x: OPP_X + 2 * p.x + jx, y: oy + 2 * p.y + jy });
-    const m = scr(rig.muzzle), pt = scr(rig.port);
-    this.held = { muzzle: { x: m.x, y: m.y, r: rig.muzzle.r * 2 }, port: pt };
-    const sk = this.skin(this.opp), sl = { ...this.sleeve(this.opp), skin: sk };
-    // calque : unités u de -24 à 72, v de 8 à 104
-    const paint = (c) => {
-      c.setTransform(1, 0, 0, 1, 24, -8);
-      const g = { x: 0, y: 0, s: 1 };
-      // le fusil d'abord, puis chaque bras d'un seul tenant par-dessus (itemfx.js : bustLimb) : épaule → coude près du
-      // flanc → avant-bras → main refermée sur l'arme. Rien ne passe entre l'avant-bras et sa main.
-      rig.draw(c);
-      const at = (u, h) => S.proj3(S.at3(F, u, h), cam);
-      const up = ease(o.rise || 0); // 1 : encore posé sur la table
-      let L, R, eL = null;
-      if (self) {
-        // contre lui : sa main gauche (à ma droite) serre le devant de la pompe, sous son menton, coude au flanc ;
-        // la droite descend le long du fusil, bras presque tendu, jusqu'à la poignée, au bord de la table
-        R = at(rig.end - 12, -0.6);
-        L = at(-3.5, -2.6);
-        // (coude à mi-chemin, à peine plié vers l'extérieur ; repris par le coude ordinaire quand il repose le fusil)
-        const sh = OPP_SH.l, mid = [lerp(sh[0], L.x, 0.5) - 1, lerp(sh[1], L.y, 0.5) + 0.5], e0 = FX.bustElbow(sh, [L.x, L.y]);
-        eL = [lerp(mid[0], e0[0], up), lerp(mid[1], e0[1], up)];
-      } else {
-        // braqué sur moi : main droite (à ma gauche) à la poignée, un peu en retrait ; main gauche sous la pompe, juste
-        // sous la bouche du canon (la pompe elle-même est cachée derrière la bouche) ; au réarmement, elle tire la pompe
-        // (les deux mains réunies sous la bouche : la droite juste derrière la gauche, un peu plus haut, à ma gauche)
-        // (calées sur la bouche de la pose tenue, puis déplacées comme la pompe : au recul, la bouche toute proche de
-        // moi saute bien plus haut à l'écran que les mains)
-        const pump = at(rig.pumpU, rig.pumpH - 1), back = at(-3.5, -2.8);
-        const m0 = S.proj3(S.at3(F0, rig.end, 1.1), cam), p0 = S.proj3(S.at3(F0, rig.pumpU, rig.pumpH - 1), cam);
-        const mx = m0.x + pump.x - p0.x, my = m0.y + 1.9 * F0.k * m0.s + FX.BUST_HAND.h / 2 + pump.y - p0.y;
-        const under = { x: mx + 1.5, y: my + 0.5 + (o.pump || 0) }, grip = { x: mx - 4.5, y: my - 0.5 };
-        R = { x: lerp(under.x, pump.x, up), y: lerp(under.y, pump.y, up) };
-        L = { x: lerp(grip.x, back.x, up), y: lerp(grip.y, back.y, up) };
-      }
-      FX.bustLimb(c, g, OPP_SH.l, [L.x, L.y], sk, sl, -1, { el: eL });
-      FX.bustLimb(c, g, OPP_SH.r, [R.x, R.y], sk, sl, 1);
-      c.setTransform(1, 0, 0, 1, 0, 0);
-    };
-    this.oppLayer ||= S.makeCanvas(96, 96);
-    let img = this.oppLayer;
-    if (still) {
-      this.heldCache ||= S.lru(4);
-      const key = `${mode}|${this.gun}|${o.sawed}|${oy}|${sk}|${sl.up}|${sl.fore}`;
-      img = this.heldCache.get(key);
-      if (!img) { img = S.makeCanvas(96, 96); paint(img.getContext('2d')); this.heldCache.set(key, img); }
-    } else {
-      const c = img.getContext('2d');
-      c.clearRect(0, 0, 96, 96);
-      paint(c);
-    }
-    ctx.drawImage(img, OPP_X - 48 + jx, oy + 16 + jy, 192, 192);
+    const img = RL.rlOppGunView(this.gun, o.sawed, vm, f, sk), hold = f.u >= 1;
+    // tenu : tremblement et souffle au pixel près ; il suit son buste (balancement, recul quand il est touché)
+    const dx = hold ? Math.round(o.tremble + (o.sway?.[0] || 0) * 3) : 0;
+    const dy = (hold ? Math.round((o.sway?.[1] || 0) * 2 + (o.breath || 0) * 2) : 0) + Math.round((oy - OPP_Y) * f.u) - (f.kick === 1 ? 2 : 0);
+    for (const w of img.wr) FX.oppLimb(ctx, oppShoulder(oy, w.s), { x: w.e.x, y: w.e.y + oy - OPP_Y }, { x: w.x + dx, y: w.y + dy, r: w.r }, sk, sl);
+    ctx.drawImage(img, img.x + dx, img.y + dy);
+    this.held = { muzzle: { x: img.muz[0] + dx, y: img.muz[1] + dy, r: self ? 2 : 4 }, port: { x: img.port[0] + dx, y: img.port[1] + dy } };
   }
 
   // Coup au but sur l'adversaire : son chapeau s'envole (il reste nu-tête jusqu'à la manche suivante)

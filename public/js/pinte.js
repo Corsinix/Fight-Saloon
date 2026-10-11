@@ -29,7 +29,7 @@ const startAt = (ev, now) => (ev.at == null ? now : clampI(ev.at, now - 400, now
 // servie, calculés par la même glissade que le jeu, pour une chope seule (celles déjà posées ne comptent pas).
 // Cadran : une direction est verte si une puissance au moins y amène la chope à 50 cm du bout ou moins.
 // Jauge (une fois la direction bloquée) : rouge, elle tombe ; vert, elle reste sur le comptoir ; or, à 20 cm ou moins.
-const DIRS = 50, NEAR = 25, CLOSE = 10, POWS = 90;
+const DIRS = 50, NEAR = 25, CLOSE = 10, POWS = 90, MIN_RUN = 3;
 class Zones {
   constructor(mods, b) {
     this.mods = mods;
@@ -44,6 +44,22 @@ class Zones {
   // quelques directions à chaque image, pour ne jamais figer l'écran
   work(n) {
     for (; n > 0 && this.k <= DIRS; n--, this.k++) this.dir[this.k] = reachesAt(this.g.maxa * (2 * this.k / DIRS - 1), this.mods, this.b, NEAR);
+    if (this.k > DIRS && !this.clean) this.smooth();
+  }
+
+  // une fenêtre de moins de MIN_RUN crans (verte dans le rouge, ou l'inverse) prend la couleur de ses voisines :
+  // sur le cadran, ça faisait des pixels isolés, et une direction si étroite, l'aiguille ne s'y arrête pas exprès
+  smooth() {
+    // (sauf la seule fenêtre verte du cadran : tout rouge, on croirait la manche injouable)
+    const d = this.dir, greens = d.filter(Boolean).length;
+    this.clean = true;
+    for (let i = 0; i <= DIRS;) {
+      let j = i;
+      while (j < DIRS && d[j + 1] === d[i]) j++;
+      const only = d[i] && j - i + 1 === greens;
+      if (j - i + 1 < MIN_RUN && (i > 0 || j < DIRS) && !only) d.fill(i > 0 ? d[i - 1] : d[j + 1], i, j + 1);
+      i = j + 1;
+    }
   }
 
   // true / false, ou null si pas encore calculé
@@ -514,6 +530,26 @@ function drawPuddle(ctx, pd, now, g, still = false) {
 // cadran de direction et jauge de puissance (couleurs : voir Zones)
 const DIAL = { cx: 64, cy: 192, r: 20, k: (G) => (G.rails ? 1.3 : 0.7) / G.maxa };
 const BAR = { bx: 112, by: 182, bw: 180, bh: 8 };
+// l'arc du cadran, pixel par pixel : un anneau de 2 pixels d'épaisseur, chaque pixel avec sa direction
+// (des carrés 2×2 posés le long de l'arc se chevauchaient en escalier et laissaient des pixels qui dépassaient)
+const rings = new Map();
+function dialRing(maxa, kk) {
+  const key = `${maxa}|${kk}`;
+  let ring = rings.get(key);
+  if (ring) return ring;
+  const { cx, cy, r } = DIAL;
+  ring = [];
+  for (let y = cy - r - 2; y <= cy + 1; y++) {
+    for (let x = cx - r - 2; x <= cx + r + 2; x++) {
+      const dx = x - cx, dy = y - cy, d = Math.sqrt(dx * dx + dy * dy);
+      if (d < r - 0.5 || d >= r + 1.5) continue;
+      const ang = (Math.atan2(dy, dx) + Math.PI / 2) / kk;
+      if (Math.abs(ang) <= maxa) ring.push([x, y, ang]);
+    }
+  }
+  rings.set(key, ring);
+  return ring;
+}
 // jauge éteinte : avant de bloquer la direction, ou dans le noir
 let barOff = null;
 function barDark() {
@@ -526,6 +562,9 @@ function barDark() {
   ctx.fillStyle = '#5a3a26'; ctx.fillRect(2, 2, bw, 1);
   return barOff;
 }
+
+// flèche courbe du tord-boyaux (vers le bas ; retournée quand il tourne vers le haut)
+const CURL_ARROW = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 1], [6, 2], [7, 3], [7, 4], [7, 5], [7, 6], [6, 5], [8, 5], [5, 4], [9, 4]];
 
 // ------------------------------------------------------------ bulles d'aide (survol, ou toucher la légende)
 const TIP_W = 196;
@@ -620,11 +659,18 @@ export class PinteScene extends MiniScene {
   get myTurn() { return this.thrower === this.me && this.t >= this.cur.turnAt && this.playing; }
 
   // ---------------------------------------------------------- entrées
-  // un clic (ou un toucher) sur la légende ouvre sa bulle d'aide au lieu de lancer
+  // un clic (ou un toucher) sur la légende ne lance pas. À la souris, le survol montre déjà la bulle : on n'épingle
+  // rien (épinglée, elle restait affichée après avoir quitté la légende). Au doigt, le toucher ouvre la bulle,
+  // et le suivant (n'importe où, ou sur la même ligne) la referme.
   onFire(pos) {
     const h = pos && this.hits.find((z) => z.legend && inBox(z, pos.x, pos.y));
-    if (h) { this.pinned = { tip: h.tip, x: pos.x, y: pos.y, until: this.now + 3500 }; return; }
-    this.press();
+    const was = this.pinned;
+    this.pinned = null;
+    if (h) {
+      if (this.touch && was?.tip !== h.tip) this.pinned = { tip: h.tip, x: pos.x, y: pos.y, until: this.now + 3500 };
+      return;
+    }
+    if (!was) this.press();
   }
   onKey(k) { if (k === ' ' || k === 'enter') this.press(); }
 
@@ -1097,10 +1143,13 @@ export class PinteScene extends MiniScene {
     ctx.fillStyle = this.dirOk(aim.a) === false ? (pale ? 'rgba(176,48,32,0.9)' : 'rgba(240,112,90,0.8)') : pale ? 'rgba(40,26,18,0.65)' : 'rgba(253,246,224,0.7)';
     // points gardés tant que la direction ne change pas (toute la phase de puissance)
     let gd = this.guide;
-    if (!gd || gd.a !== aim.a || gd.cur !== this.cur) {
-      const mods = this.cur.mods || { lay: g.id }, v = speedFor(1, mods);
-      const sim = new Slide([{ id: 0, b: this.cur.beers?.[this.cur.turn] || 'blonde', x: P.START, y: P.D / 2, vx: v * Math.cos(aim.a), vy: v * Math.sin(aim.a) }], mods);
-      const q = sim.p[0], len = g.rails ? 200 : 120, pts = [];
+    const b = this.cur.beers?.[this.cur.turn] || 'blonde';
+    if (!gd || gd.a !== aim.a || gd.cur !== this.cur || gd.b !== b) {
+      // le tord-boyaux tourne surtout en fin de course : son guide va jusqu'au bout, à la puissance qui y mène
+      // (à pleine puissance et sur 120 unités, la courbe ne se voyait pas)
+      const curl = BEERS[b]?.curl, mods = this.cur.mods || { lay: g.id }, v = speedFor(curl ? 1 / P.REACH : 1, mods);
+      const sim = new Slide([{ id: 0, b, x: P.START, y: P.D / 2, vx: v * Math.cos(aim.a), vy: v * Math.sin(aim.a) }], mods);
+      const q = sim.p[0], len = curl ? P.L : g.rails ? 200 : 120, pts = [];
       let run = 0, next = 14, px = q.x, py = q.y;
       while (run < len && !sim.done && !q.out) {
         sim.step();
@@ -1108,7 +1157,7 @@ export class PinteScene extends MiniScene {
         px = q.x; py = q.y;
         if (run >= next) { next += 7; pts.push(sx(q.x), sy(q.y)); }
       }
-      gd = this.guide = { a: aim.a, cur: this.cur, pts };
+      gd = this.guide = { a: aim.a, cur: this.cur, b, pts };
     }
     for (let i = 0; i < gd.pts.length; i += 2) ctx.fillRect(gd.pts[i], gd.pts[i + 1], 2, 1);
   }
@@ -1122,9 +1171,9 @@ export class PinteScene extends MiniScene {
     // direction : cadran, vert là où une puissance au moins amène la chope près du bout, l'aiguille par-dessus
     const G = this.g, { cx, cy, r, k } = DIAL, kk = k(G);
     R(cx - r - 4, cy - r - 4, 2 * r + 9, r + 6, 'rgba(26,15,10,0.7)');
-    for (let s = 0; s <= DIRS; s++) {
-      const ang = G.maxa * (2 * s / DIRS - 1), v = -Math.PI / 2 + ang * kk, ok = dark ? null : this.dirOk(ang);
-      R(cx + Math.cos(v) * r, cy + Math.sin(v) * r, 2, 2, ok == null ? '#8a7a64' : ok ? '#b8e070' : '#f0705a');
+    for (const [x, y, ang] of dialRing(G.maxa, kk)) {
+      const ok = dark ? null : this.dirOk(ang);
+      R(x, y, 1, 1, ok == null ? '#8a7a64' : ok ? '#b8e070' : '#f0705a');
     }
     const v = -Math.PI / 2 + g.a * kk;
     for (let d = 0; d < r - 2; d++) R(cx + Math.cos(v) * d, cy + Math.sin(v) * d, 1, 1, '#fdf6e0');
@@ -1204,8 +1253,14 @@ export class PinteScene extends MiniScene {
   drawBeer(ctx, b, y, mine, pre = '') {
     const B = BEERS[b] || BEERS.blonde;
     const head = pre + (mine ? `ON TE SERT ${B.name}` : B.name);
-    const tw = Math.max(textW(head), textW(B.desc)), w = tw + 36, x = Math.round(W / 2 - w / 2);
+    const tw = Math.max(textW(head), textW(B.desc)), w = tw + (B.curl ? 48 : 36), x = Math.round(W / 2 - w / 2);
     plate(ctx, x, y, w, 26, B.col);
+    // tord-boyaux : une flèche qui part tout droit puis tourne vers le bas (ou le haut), comme la chope
+    if (B.curl) {
+      ctx.fillStyle = B.col;
+      const ox = x + w - 15, oy = y + 13;
+      for (const [dx, dy] of CURL_ARROW) ctx.fillRect(ox + dx, oy + B.curl * (dy - 3), 1, 1);
+    }
     // la chope du mineur, plus haute, est posée plus bas : sa mousse dépassait du cartouche
     const col = this.color(this.thrower);
     drawMug(ctx, x + 13, y + Math.max(22, mug(col, b).oy), col, 0, b);

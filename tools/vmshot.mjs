@@ -1,5 +1,5 @@
 // Capture de la page d'aperçu des armes en main (public/vm-test.html) avec Chrome sans fenêtre.
-//   node tools/vmshot.mjs <sortie.png> "<requête>" [largeur] [hauteur]
+//   node tools/vmshot.mjs <sortie.png> "<requête>" [largeur] [hauteur] [page, défaut vm-test.html]
 //   ex. node tools/vmshot.mjs shot.png "ids=bow,winchester&z=2" 1600 1400
 // Sert public/ sur un port libre le temps de la capture, puis affiche les erreurs JS relevées par la page.
 import http from 'node:http';
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
-const [out = 'vmshot.png', query = 'ids=colt', w = '1600', h = '1200'] = process.argv.slice(2);
+const [out = 'vmshot.png', query = 'ids=colt', w = '1600', h = '1200', page = 'vm-test.html'] = process.argv.slice(2);
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2', '.ttf': 'font/ttf' };
 const CHROMES = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -28,7 +28,7 @@ const server = http.createServer((req, res) => {
   });
 });
 server.listen(0, '127.0.0.1', () => {
-  const url = `http://127.0.0.1:${server.address().port}/vm-test.html?${query}`;
+  const url = `http://127.0.0.1:${server.address().port}/${page}?${query}`;
   const common = ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--window-size=${w},${h}`, '--virtual-time-budget=15000', '--no-first-run', '--no-default-browser-check',
     `--user-data-dir=${path.join(process.env.TEMP || '/tmp', `vmshot-${process.pid}`)}`];
   const run = (args) => new Promise((ok, ko) => {

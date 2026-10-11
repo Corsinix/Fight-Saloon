@@ -17,7 +17,7 @@ export const UI = {
 // on les remet en casse de phrase, en gardant les noms propres et les sigles.
 const PROPER = ['El Diablo', 'Dusty Gulch', 'Comanches', 'Jesse Cole', 'Doc Holloway', 'Big Martha', 'Révérend Cain', 'Tala',
   'Rosita Vargas', 'Silas Crow', "Sergent O'Malley", "O'Malley", 'Martha', 'Rosita', 'Silas', 'Jesse', 'Doc', 'Cain', 'Pinkerton'];
-const KEEP = new Set(['PV', 'XP', 'KO', 'TAB']);
+const KEEP = new Set(['PV', 'XP', 'KO', 'TAB', 'PA']);
 const softCache = new Map();
 export function soft(str) {
   str = String(str);
@@ -73,6 +73,7 @@ export function tooltip(ctx, ax, ay, title, body, { maxW = 196, prefer = 'up', t
   const h = (title ? 11 : 3) + (bodyLines.length + extra.length) * HD_LH + 3;
   let x, y;
   if (prefer === 'right') { x = ax + 10; y = ay - h / 2; if (x + w > W - 2) x = ax - w - 10; }
+  else if (prefer === 'left') { x = ax - w - 6; y = ay - h / 2; if (x < 2) x = ax + 6; }
   else { x = ax - w / 2; y = ay - h - 3; if (y < top) y = ay + ah + 3; }
   x = Math.max(2, Math.min(W - w - 2, x));
   y = Math.max(top, Math.min(bottom - h, y));

@@ -8,6 +8,7 @@
 // Chaque dessin est calculé une fois (pixel par pixel), gardé en cache, et posé avec drawFine.
 import * as S from './sprites.js';
 import { SKIN, CLOTH_COLORS, HAIR_COLORS, hatColorOf } from './data.js';
+import { artPixels, FIRE as ART_FIRE } from './pisteicons.js';
 
 export const F = 4; // pixels fins par pixel du jeu (le même que la carte)
 
@@ -21,6 +22,7 @@ const blend = (p, q, t) => {
 };
 // une palette de six teintes tirée d'une seule couleur (du plus sombre au plus clair)
 const rampOf = (base, lo = -0.62, hi = 0.34) => Array.from({ length: 6 }, (_, i) => hex(S.shade(base, lo + ((hi - lo) * i) / 5)));
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const hsh = (x, y, s) => {
   let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(s | 0, 1442695041);
   h = Math.imul(h ^ (h >>> 13), 1274126177);
@@ -248,54 +250,99 @@ function scaled(g, cx, cy, k) {
     stamp: (rows, pal, x, y, ang = 0, mirror = false, sc = 1) => g.stamp(rows, pal, X(x), Y(y), ang, mirror, sc * k),
   };
 }
+// l'emblème d'un lieu : le dessin détaillé de son icône (pisteicons.js), au pixel fin, passé en émail crème modelé
+// (les détails sombres restent à l'encre, les flammes gardent leurs couleurs) : la même image que dans les écrans
+// de récit, lisible d'un coup d'œil sur le fond de couleur du médaillon
+const EMBLEM = { combat: 'n_combat', event: 'n_event', comptoir: 'n_comptoir', camp: 'n_camp', recrue: 'n_recrue', cache: 'n_cache', prisonnier: 'n_prisonnier', repaire: 'n_repaire', depart: 'n_depart' };
+const lumOf = (p) => ((p & 255) * 0.3 + ((p >>> 8) & 255) * 0.55 + ((p >>> 16) & 255) * 0.15) / 255;
+const emblems = new Map(); // un emblème par type de lieu (les trois états du médaillon le partagent)
+function emblem(type, A) {
+  const key = `${type}|${A}`;
+  if (emblems.has(key)) return emblems.get(key);
+  const px = EMBLEM[type] && artPixels(EMBLEM[type], A);
+  emblems.set(key, px || null);
+  if (!px) return null;
+  for (let i = 0; i < px.length; i++) {
+    const p = px[i];
+    if (!p || ART_FIRE.has(p)) continue;
+    const l = lumOf(p), x = i % A, y = (i / A) | 0;
+    // (le dollar au pochoir de la bourse, vert sombre, passe à l'encre)
+    const green = type === 'comptoir' && ((p >>> 8) & 255) > (p & 255) + 6;
+    px[i] = l < 0.14 || green ? INKO : pick(CREAMR, 0.5 + l * 6, x, y);
+  }
+  return px;
+}
 export function medal(type, state = 'idle') {
   const key = `${type}|${state}`;
   if (medals.has(key)) return medals.get(key);
   const big = type === 'repaire', R0 = medalRadius(type) * F, size = Math.ceil(R0 * 2 + 14), cx = R0 + 5, cy = R0 + 5;
   const s = new Fine(size, size, cx, cy);
-  const seen = state === 'seen', unknown = !FACES[type];
+  const seen = state === 'seen', open = state === 'open', unknown = !FACES[type];
   // l'ombre portée, tramée et transparente
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-    const dx = (x + 0.5 - cx - 5) / (R0 + 1), dy = (y + 0.5 - cy - 7) / ((R0 + 1) * 0.8);
+    const dx = (x + 0.5 - cx - 4) / (R0 + 1), dy = (y + 0.5 - cy - 6) / ((R0 + 1) * 0.84);
     if (dx * dx + dy * dy <= 1 && bay(x, y) > 0.3) s.set(x, y, pack(10, 6, 4, 115));
   }
-  const rim = big ? IRON : state === 'open' ? BRASS : seen ? WOODO : WOOD;
+  const rim = big ? IRON : open ? BRASS : seen ? WOODO : WOOD;
   // le fond : la couleur du lieu (éteinte une fois visité), parchemin pour les lieux encore inconnus
-  const face = unknown ? (seen ? PARCHO : PARCH) : rampOf(seen ? S.mix(FACES[type], '#6a6258', 0.6) : FACES[type], -0.55, 0.22);
-  const rw = big ? 5 : 4; // épaisseur du cerclage
+  const face = unknown ? (seen ? PARCHO : PARCH) : rampOf(seen ? S.mix(FACES[type], '#6a6258', 0.6) : FACES[type], -0.58, 0.24);
+  const rw = big ? 6 : 5, Rf = R0 - rw; // épaisseur du cerclage, rayon du fond
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     const dx = x + 0.5 - cx, dy = y + 0.5 - cy, d = Math.hypot(dx, dy);
     if (d > R0 + 1) continue;
     if (d > R0) { s.set(x, y, OUT); continue; }
-    const nx = dx / R0, ny = dy / R0;
-    if (d > R0 - rw) {
-      // le cerclage : éclairé en haut à gauche, biseau sombre vers l'intérieur
-      const l = -0.55 * nx - 0.65 * ny, inner = d < R0 - rw + 1.2;
-      s.set(x, y, pick(rim, 2.7 + l * 2.3 - (inner ? 1.2 : 0) + (d > R0 - 1 ? -0.6 : 0), x, y));
+    const ux = dx / (d || 1), uy = dy / (d || 1);
+    if (d > Rf) {
+      // le cerclage, un tore : sa section est bombée, éclairée d'en haut à gauche ; un filet sombre contre le fond,
+      // les veines du bois (ou le brillant du métal) le long du tour
+      const t = clamp((d - (Rf + R0) / 2) / (rw / 2), -1, 1), nz = Math.sqrt(1 - t * t);
+      let l = 0.5 * (-0.55 * ux * t - 0.65 * uy * t) + 0.62 * nz - 0.2 - 0.25 * (uy + ux) * 0.5;
+      if (d < Rf + 1) l -= 0.55;
+      const ang = Math.atan2(dy, dx);
+      if (rim === WOOD || rim === WOODO) l += 0.18 * Math.sin(ang * 23 + Math.sin(ang * 5) * 2 + t * 2) - 0.08;
+      else if (l > 0.55 && (-ux - uy) > 0.7) l += 0.35; // le reflet du métal en haut à gauche
+      s.set(x, y, pick(rim, 1 + l * (rim.length - 1.2), x, y));
     } else {
-      // le fond, un peu bombé et grainé
-      const r1 = d / (R0 - rw), l = -0.4 * nx - 0.5 * ny + 0.35 * Math.sqrt(Math.max(0, 1 - r1 * r1));
-      const shadowRing = r1 > 0.86 ? -1 : 0; // l'ombre du cerclage sur le fond
-      s.set(x, y, pick(face, 3.1 + l * 1.8 + shadowRing + (hsh(x, y, 9) - 0.5) * 0.4, x, y));
+      // le fond émaillé, un peu bombé ; l'ombre du cerclage tout autour ; un filet de perles gravé près du bord
+      const r1 = d / Rf, nx = dx / Rf, ny = dy / Rf;
+      const l = -0.42 * nx - 0.52 * ny + 0.38 * Math.sqrt(Math.max(0, 1 - r1 * r1));
+      let lv = 3 + l * 1.9 + (hsh(x, y, 9) - 0.5) * 0.35;
+      if (r1 > 0.9) lv -= 1.1;
+      else if (!unknown && Math.abs(d - (Rf - 4)) < 0.6 && ((Math.atan2(dy, dx) * Rf) / 3.2 | 0) % 2 === 0) lv += (uy + ux < 0 ? 1.1 : -0.9);
+      s.set(x, y, pick(face, lv, x, y));
     }
   }
   // les rivets du cerclage de fer
-  if (big) for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + 0.2; s.ball(cx + Math.cos(a) * (R0 - 2.5), cy + Math.sin(a) * (R0 - 2.5), 1.3, 1.3, BRASS, 0.4); }
-  // le dessin du lieu, agrandi, en silhouette crème modelée (les flammes gardent leur couleur), cerné d'encre ;
-  // éteint sur un lieu déjà visité
-  const g = new Fine(size, size, cx, cy);
-  (GLYPHS[type] || GLYPHS.unknown)(scaled(g, cx, cy, big ? 1.25 : 1.3), cx, cy);
-  if (!unknown) {
-    for (let i = 0; i < g.px.length; i++) {
-      const p = g.px[i];
-      if (!p || KEEP.has(p)) continue;
-      const lum = ((p & 255) * 0.3 + ((p >>> 8) & 255) * 0.55 + ((p >>> 16) & 255) * 0.15) / 255;
-      g.px[i] = pick(CREAMR, 1.6 + lum * 4.4, i % size, Math.floor(i / size));
-    }
+  if (big) for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + 0.2; s.ball(cx + Math.cos(a) * (R0 - rw / 2), cy + Math.sin(a) * (R0 - rw / 2), 1.5, 1.5, BRASS, 0.4); }
+  // l'emblème au milieu, avec son ombre portée sur le fond (en relief) ; un lieu encore inconnu : trois points
+  // d'encre pâlis ; éteint sur un lieu déjà visité
+  const A = big ? 50 : 48, ex = Math.round(cx - A / 2), ey = Math.round(cy - A / 2) + (type === 'recrue' ? 1 : 0);
+  const em = unknown ? null : emblem(type, A);
+  if (em) {
+    const g = new Fine(A, A, 0, 0);
+    g.px.set(em);
     g.outline(INKO);
+    const inFace = (x, y) => Math.hypot(x + 0.5 - cx, y + 0.5 - cy) < Rf - 0.5;
+    for (let y = 0; y < A; y++) for (let x = 0; x < A; x++) {
+      if (!g.px[y * A + x]) continue;
+      const X = ex + x + 2, Y = ey + y + 2;
+      if (inFace(X, Y) && !(x + 2 < A && y + 2 < A && g.px[(y + 2) * A + x + 2])) s.set(X, Y, blend(s.get(X, Y), OUT, 0.42));
+    }
+    const bg = face[2];
+    for (let y = 0; y < A; y++) for (let x = 0; x < A; x++) {
+      const p = g.px[y * A + x];
+      if (p) s.set(ex + x, ey + y, seen ? blend(p, bg, 0.45) : p);
+    }
+  } else {
+    const g = new Fine(size, size, cx, cy);
+    GLYPHS.unknown(scaled(g, cx, cy, 1.3), cx, cy);
+    for (let i = 0; i < g.px.length; i++) if (g.px[i]) s.px[i] = seen ? blend(g.px[i], face[2], 0.45) : g.px[i];
   }
-  const bg = face[2];
-  for (let i = 0; i < g.px.length; i++) if (g.px[i]) s.px[i] = seen ? blend(g.px[i], bg, 0.45) : g.px[i];
+  // un éclat sur le cerclage de laiton des lieux où l'on peut aller
+  if (open) for (const [x, y, r] of [[cx - R0 * 0.62, cy - R0 * 0.62, 3]]) {
+    for (let k = -r; k <= r; k++) { s.set(x + k, y, BRASS[5]); s.set(x, y + k, BRASS[5]); }
+    s.set(x, y, hex('fffbe8'));
+  }
   const c = s.canvas();
   medals.set(key, c);
   return c;
@@ -356,12 +403,16 @@ export function pawn(look = {}, frame = -1) {
   legs.forEach(([dx, lift], i) => {
     const [hx, hy] = hips[i], far = i % 2 === 1;
     const fx = hx + dx, fy = 45 - lift;
-    stroke([[hx, hy + by], [hx + dx * 0.4, hy + 7 + by], [fx, fy - 1]], 1.4, 1.1, coat, far ? -1.2 : -0.2);
-    ball(fx, fy, 1.4, 1, boot, far ? -0.6 : 0);
+    // la cuisse à la couleur de la robe, le bas de la jambe sombre (un bai aux crins et aux balzanes noirs), le sabot
+    const kx = hx + dx * 0.4, ky = hy + 7 + by;
+    stroke([[hx, hy + by], [kx, ky]], 1.5, 1.25, coat, far ? -1.2 : -0.2);
+    stroke([[kx, ky], [fx, fy - 1]], 1.15, 1, mane, far ? -0.4 : 0.5);
+    ball(fx, fy, 1.4, 1, boot, far ? -0.6 : 0.2);
   });
   // la queue, qui flotte au galop
   const wave = frame < 0 ? 0 : [0, 1, 2, 1][frame];
   stroke([[13, 25 + by], [9, 28 + by - wave], [7, 34 + by - wave * 2]], 1.8, 1, mane, 0.3);
+  stroke([[12.4, 25.6 + by], [9.6, 28.4 + by - wave], [8.2, 32 + by - wave * 2]], 0.5, 0.4, mane, 1.6);
   // le corps, le poitrail, l'encolure et la tête
   ball(24, 28 + by, 12, 6.5, coat);
   ball(33, 26 + by, 5, 6, coat, 0.2);
@@ -372,9 +423,16 @@ export function pawn(look = {}, frame = -1) {
   dot(39, 13 + by, OUT);
   stroke([[37, 11 + by], [38, 9 + by]], 0.8, 0.6, coat, 0.6);
   stroke([[36, 12 + by], [33, 18 + by], [31, 22 + by]], 1.3, 1.1, mane, 0.4);
+  // la liste blanche sur le chanfrein, le licol
+  stroke([[40.6, 12.6 + by], [43.4, 15 + by]], 0.5, 0.5, CANVAS, 1.4);
+  stroke([[38, 12 + by], [38.6, 16.6 + by]], 0.45, 0.45, RED, 1);
   // la selle et la couverture
-  rect(19, 20 + by, 10, 3, (x, y, u, v) => pick(RED, 3 - (v - 20 - by) * 0.8, x, y));
+  // (une couverture rayée, la selle et son pommeau, le paquetage roulé derrière)
+  rect(19, 20 + by, 10, 3, (x, y, u, v) => (Math.abs(v - 21.6 - by) < 0.4 ? pick(CANVAS, 3.6, x, y) : pick(RED, 3 - (v - 20 - by) * 0.8, x, y)));
   rect(20, 18 + by, 8, 2, (x, y) => pick(GRIP, 2.6, x, y));
+  ball(28.4, 17.6 + by, 0.9, 0.9, GRIP, 0.8);
+  ball(18.8, 18.8 + by, 1.7, 1.5, CANVAS, -0.2);
+  stroke([[18.8, 17.4 + by], [18.8, 20.2 + by]], 0.35, 0.35, GRIP, 0);
   // le cavalier : la jambe, la botte dans l'étrier, le buste, le bras qui tient les rênes, la tête et le chapeau
   stroke([[24, 18 + by], [26, 27 + by]], 1.8, 1.5, pants);
   ball(26.5, 28.5 + by, 2.2, 1.5, boot);
@@ -384,9 +442,17 @@ export function pawn(look = {}, frame = -1) {
   stroke([[34, 17.5 + by], [39, 14 + by]], 0.5, 0.5, boot, 1);
   ball(24.5, 6 + by, 2.8, 3, skin, 0.3);
   rect(22, 7 + by, 2, 3, (x, y) => pick(hair, 2.5, x, y));
+  // l'œil (tourné vers la route), le foulard
+  dot(26, 5.6 + by, OUT);
+  rect(23, 8.6 + by, 3, 1, (x, y) => pick(RED, 3.2, x, y));
   if (look.hat !== 'none') {
-    ball(24.5, 3.6 + by, 6.2, 1.5, hat, 0.3);
-    ball(24.5, 1.8 + by, 3.4, 2.6, hat, 0.6, 3.6 + by);
+    // le chapeau de cow-boy : le bord relevé aux deux bouts, la calotte pincée, son ruban
+    ball(24.5, 3.7 + by, 6, 1.3, hat, 0.3);
+    ball(18.9, 3 + by, 1.3, 0.9, hat, 0.5);
+    ball(30.1, 3 + by, 1.3, 0.9, hat, 0.1);
+    ball(24.5, 1.8 + by, 3.1, 2.6, hat, 0.6, 3.6 + by);
+    rect(21.6, 2.6 + by, 6, 1, (x, y) => pick(hat, 0.6, x, y));
+    dot(24.5, -0.6 + by, hat[1]);
   } else ball(24.5, 3.8 + by, 3, 1.6, hair, 0.4);
   const c = s.outline(OUT).canvas();
   pawns.set(key, c);
