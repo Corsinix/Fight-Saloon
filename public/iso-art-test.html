@@ -1,0 +1,147 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Atelier des sprites isométriques</title><link rel="stylesheet" href="css/fonts.css">
+<style>
+  body { margin: 0; background: #1a0f0a; color: #fdf6e0; font: 13px monospace; }
+  header { padding: 6px 10px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  header label { display: flex; gap: 4px; align-items: center; }
+  canvas { image-rendering: pixelated; display: block; }
+  pre { margin: 4px 10px; color: #f0705a; white-space: pre-wrap; }
+</style></head>
+<body>
+<header>
+  <b>Atelier des sprites</b>
+  <label>Planche <select id="sheet"><option value="all">Bâtiments</option><option value="street">Rue de démonstration</option><option value="map">Carte et filtres</option></select></label>
+  <label>Zoom <select id="zoom"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label>
+  <label>Fond <select id="bg"><option value="sable">Sable</option><option value="prairie">Prairie</option><option value="nuit">Nuit</option></select></label>
+  <label>Variante <select id="variant"><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
+  <label>Sens <select id="rot"><option value="0">0 : façade à gauche</option><option value="1">1 : de côté</option><option value="2">2 : de dos</option><option value="3">3 : façade à droite</option></select></label>
+  <label><input type="checkbox" id="grid" checked> Losanges</label>
+  <label>Filtre <select id="filter"></select></label>
+</header>
+<pre id="errlog"></pre><pre id="info" style="color:#b8e070"></pre>
+<canvas id="cv"></canvas>
+<script type="module">
+// Planche des sprites de « La ville » (villeart.js, isokit.js) et de la carte (villeiso.js) : on modifie une recette,
+// on recharge la page. Paramètres d'adresse : ?sheet=all|street|map&zoom=2&bg=sable&variant=0&mirror=1&filter=coton
+// Capture : node tools/shot.mjs iso-art-test.html "sheet=all&zoom=2" planche.png 1600 1200
+const errlog = document.getElementById('errlog'), info = document.getElementById('info');
+const err = (m) => { errlog.textContent += m + '\n'; };
+window.onerror = (m, s, l, c, e) => err(String(e?.stack || m));
+window.onunhandledrejection = (e) => err(String(e.reason?.stack || e.reason));
+const q = new URLSearchParams(location.search);
+const $ = (id) => document.getElementById(id);
+for (const k of ['sheet', 'zoom', 'bg', 'variant', 'filter', 'rot']) if (q.has(k)) $(k).value = q.get(k);
+if (q.has('grid')) $('grid').checked = q.get('grid') === '1';
+
+const K = await import('./js/villekit.js');
+const A = await import('./js/villeart.js');
+const I = await import('./js/isokit.js');
+const { canvasText } = await import('./js/scene.js');
+let V = null;
+try { V = await import('./js/villeiso.js'); } catch (e) { err('villeiso.js : ' + e.message); }
+const { World } = await import('./js/villesim.js');
+
+$('filter').innerHTML = '<option value="">(aucun)</option>' + K.FILTERS.map((f) => `<option value="${f.id}">${f.name}</option>`).join('');
+if (q.has('filter')) $('filter').value = q.get('filter');
+
+const BG = { sable: ['#d8b888', '#c8a070'], prairie: ['#8aa050', '#7a9048'], nuit: ['#2a2238', '#221a30'] };
+const cv = $('cv');
+
+function sheetAll() {
+  // &from=20&count=16 : une partie de la planche ; &cols=4 : colonnes
+  const from = +(q.get('from') || 0), count = +(q.get('count') || 999);
+  const ids = K.BUILDING_IDS.slice(from, from + count);
+  const cols = +(q.get('cols') || 8), cellW = 120, cellH = 120;
+  const rows = Math.ceil(ids.length / cols);
+  const W = cols * cellW, H = rows * cellH;
+  const z = +$('zoom').value;
+  cv.width = W * z; cv.height = H * z;
+  const g = cv.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.scale(z, z);
+  const [b1, b2] = BG[$('bg').value];
+  ids.forEach((id, k) => {
+    const x = (k % cols) * cellW, y = Math.floor(k / cols) * cellH;
+    g.fillStyle = (k + Math.floor(k / cols)) % 2 ? b1 : b2;
+    g.fillRect(x, y, cellW, cellH);
+    const d = K.BUILDINGS[id];
+    const rot = +$('rot').value;
+    const [a, b] = rot & 1 ? [d.d, d.w] : [d.w, d.d];
+    const s = A.buildingSprite(id, +$('variant').value, rot);
+    const gx = Math.round(x + cellW / 2 - ((a + b) * 16) / 2), gy = y + cellH - 12 - (a + b) * 8;
+    if ($('grid').checked) {
+      // les losanges des cases de l'emprise
+      g.fillStyle = 'rgba(26,15,10,0.18)';
+      for (let i = 0; i < a; i++) for (let j = 0; j < b; j++) {
+        const cx = gx + (b * 16) + (i - j) * 16, cy = gy + (i + j) * 8;
+        for (let r = 0; r < 16; r++) { const hw = r < 8 ? 2 * (r + 1) : 2 * (16 - r); g.fillRect(cx - hw, cy + r, hw * 2, 1); }
+      }
+    }
+    const kk = s.k || 1;
+    g.drawImage(s, gx - s.ox / kk, gy - s.oy / kk, s.width / kk, s.height / kk);
+    g.font = '7px monospace'; g.textAlign = 'center'; g.fillStyle = '#1a0f0a'; g.fillText(id, x + cellW / 2, y + cellH - 3);
+  });
+  info.textContent = `${ids.length} bâtiments`;
+}
+
+async function sheetStreet() {
+  if (!V) return err('rue : villeiso.js manquant');
+  const z = +$('zoom').value;
+  const w = new World(+(q.get('seed') || 7), [{ key: 'a', name: 'A' }]);
+  // une rue : quelques bâtiments posés autour de la mairie (sans payer)
+  const town = w.towns[0];
+  town.money = 1e6; town.era = 4;
+  const [sx, sy] = w.map.starts[0];
+  const put = (t, x, y) => { const r = w.apply(0, { c: 'build', t, x: sx + x, y: sy + y }); if (!r.ok) info.textContent += `${t} : ${r.err}\n`; };
+  w.claim(0, sx, sy, 14);
+  ['saloon', 'magasin', 'sherif', 'banque', 'hotel', 'eglise'].forEach((t, k) => put(t, -4 + k * 2 + (k > 3 ? 1 : 0), -2));
+  ['maison', 'cabane', 'maison', 'brique', 'docteur', 'barbier'].forEach((t, k) => put(t, -4 + k * 2, 5));
+  put('ferme_mais', 6, 6); put('ranch', -8, 4); put('ecole', 4, -6); put('puits', -2, 8); put('eolienne', 0, 8);
+  for (let k = 0; k < 400; k++) w.step();
+  const view = new V.IsoView(w, 0);
+  // les habitants, à l'heure demandée (&heure=9)
+  const { Folk } = await import('./js/villefolk.js');
+  const folk = new Folk(w, 0);
+  view.folk = folk;
+  const hour = +(q.get('heure') || 9);
+  let t = 0;
+  while (folk.hour < hour || t < 1500) { t += 50; folk.update(50, 1, t); if (t > 600000) break; }
+  view.hour = folk.hour;
+  cv.width = 384 * 2 * z; cv.height = 216 * 2 * z;
+  const g = cv.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.scale(z, z);
+  view.zoom = 1;
+  view.center(sx + 1, sy + 1, 768, 432);
+  view.filter = $('filter').value || null;
+  view.draw(g, 768, 432, performance.now(), { me: 0, budget: 999 });
+  info.textContent += `rue de démonstration (graine ${w.seed})`;
+}
+
+function sheetMap() {
+  if (!V) return err('carte : villeiso.js manquant');
+  const z = +$('zoom').value;
+  const w = new World(+(q.get('seed') || 7), Array.from({ length: +(q.get('players') || 1) }, (_, i) => ({ key: 'p' + i, name: 'P' + i })));
+  const view = new V.IsoView(w, 0);
+  const W = w.n * 32 + 64, H = w.n * 16 + 96;
+  cv.width = Math.round(W * z / 2); cv.height = Math.round(H * z / 2);
+  const g = cv.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.scale(z, z);
+  view.zoom = 0.5;
+  view.center(w.n / 2, w.n / 2, W / 2, H / 2);
+  view.filter = $('filter').value || null;
+  view.draw(g, W / 2, H / 2, performance.now(), { me: 0, budget: 999 });
+  info.textContent = `carte ${w.n} × ${w.n}, graine ${w.seed}` + (view.filter ? `, filtre ${view.filter}` : '');
+}
+
+async function draw() {
+  info.textContent = '';
+  try {
+    await ({ all: sheetAll, street: sheetStreet, map: sheetMap })[$('sheet').value]();
+  } catch (e) { err(String(e.stack)); }
+}
+for (const id of ['sheet', 'zoom', 'bg', 'variant', 'rot', 'grid', 'filter']) $(id).onchange = draw;
+await document.fonts.ready.catch(() => {});
+draw();
+</script>
+</body></html>

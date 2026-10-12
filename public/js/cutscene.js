@@ -902,6 +902,48 @@ const SHOTS = {
     },
   },
 
+  // La ville : un chariot bâché arrive dans une vallée vide, au pied d'une mesa ; les colons plantent le panneau
+  // de la future ville au premier plan, pendant que la rivière brille au loin
+  ville: {
+    caption: 'UNE VALLÉE VIDE, 1870',
+    len: 3000,
+    rumors: ['ICI, UN JOUR, IL Y AURA UNE VILLE', 'LE RAIL ARRIVERA BIENTÔT', 'ON DIT QU\'IL Y A DE L\'OR DANS LES COLLINES'],
+    cues: [[200, 'moo'], [900, 'creak'], [1700, 'thud'], [2100, 'thud']],
+    draw(ctx, el, players) {
+      // la mesa au loin, la rivière qui brille
+      outlined(ctx, 250, 132, [[0, -24, 120, 24, '#9a4a2c'], [10, -30, 98, 6, '#b05a34']]);
+      R(ctx, 0, 150, W, 5, '#4a7ab8');
+      for (let x = (Math.floor(el * 0.05) % 9); x < W; x += 9) R(ctx, x, 151, 3, 1, '#a8d0f0');
+      R(ctx, 0, 155, W, 31, '#c8a070');
+      for (let i = 0; i < 26; i++) R(ctx, (i * 53) % W, 160 + (i * 17) % 22, 2, 1, '#a8804e');
+      // le chariot bâché et ses deux bœufs, qui avancent puis s'arrêtent au milieu
+      const x = Math.min(170, -60 + el * 0.15), moving = x < 170;
+      const t = moving ? el : 0;
+      cow(ctx, x + 46, 180, t, 1);
+      cow(ctx, x + 64, 182, t, 2);
+      outlined(ctx, x, 176, [[-20, -12, 44, 8, '#8a5a34'], [-22, -5, 48, 2, '#5a3a22']]);
+      outlined(ctx, x - 16, 164, [[0, -16, 36, 16, '#f0e6d0']]);
+      for (let k = 0; k < 4; k++) R(ctx, x - 14 + k * 11, 150, 1, 14, '#c8b898');
+      wheel(ctx, x - 12, 178, 6, moving ? el / 160 : 0);
+      wheel(ctx, x + 18, 178, 6, moving ? el / 160 : 0);
+      if (moving) puffs(ctx, 3, 140, 420, (el % 420) + 420, () => ({ x: x - 26, y: 180 }), { vx: -0.02, vy: -0.01, r0: 2, col: '214,170,110', a0: 0.5 });
+      // les colons descendent et plantent le panneau
+      if (!moving) {
+        const k = Math.min(1, (el - 1650) / 450);
+        const n = Math.max(2, Math.min(5, players.length + 1));
+        for (let i = 0; i < n; i++) person(ctx, 120 + i * 18, 190, i < players.length ? looks(players[i].character) : crowdLook(i + 3), Math.floor(el / 200) + i);
+        const px = 300, top = 196 - Math.round(52 * Math.max(0, k));
+        outlined(ctx, px, 200, [[0, -(200 - top), 4, 200 - top, '#7a4a24']]);
+        if (k >= 1) {
+          outlined(ctx, px - 30, top - 2, [[0, 0, 64, 20, '#c8a070']]);
+          canvasText(ctx, 'BIENVENUE', px + 2, top + 1, { color: '#5a2a14', shadow: '' });
+          canvasText(ctx, 'POP. 12', px + 2, top + 10, { color: '#4a2a14', shadow: '' });
+        }
+      }
+      S.tumbleweed(ctx, Math.round(W + 20 - el * 0.09), Math.round(196 - Math.abs(Math.sin(el / 150)) * 7), el);
+    },
+  },
+
   // Plan par défaut (jeu sans plan à lui) : les cavaliers des joueurs traversent le désert
   default: {
     caption: 'QUELQUE PART DANS L\'OUEST',

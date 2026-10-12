@@ -203,6 +203,21 @@ const GRIDS = {
     'kkkkkkkkkk',
   ],
   // la carte du territoire : un parchemin, la piste en pointillés et la croix du repaire
+  // La ville : une fausse façade western, son enseigne et son drapeau
+  ville: [
+    '......k......',
+    '......kRR....',
+    '......kRR....',
+    '...kkkkkkk...',
+    '..kBBBBBBBk..',
+    '..kByyyyyBk..',
+    'kkkkkkkkkkkkk',
+    'kbBbBbBbBbBbk',
+    'kbkukbBbkukbk',
+    'kbkukbnbkukbk',
+    'kbBbBbnbBbBbk',
+    'kkkkkkkkkkkkk',
+  ],
   piste: [
     '.kkkkkkkkkkk.',
     'kPppppppppppk',

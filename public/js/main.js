@@ -42,6 +42,7 @@ const MINI_SCENES = {
   bagarre: () => import('./bagarre.js').then((m) => m.BagarreScene),
   melee: () => import('./brawl.js').then((m) => m.BrawlScene),
   piste: () => import('./piste.js').then((m) => m.PisteScene),
+  ville: () => import('./ville.js').then((m) => m.VilleScene),
 };
 const sceneCls = {}; // jeu -> classe de sa scène, une fois chargée
 const sceneLoads = {}; // jeu -> chargement en cours
@@ -457,6 +458,7 @@ const SOLO = {
   bagarre: ['Bagarre', '5 cogneurs'],
   melee: ['La mêlée', '5 bots'],
   piste: ['La piste', 'ta bande'],
+  ville: ['La ville', 'ta ville'],
 };
 // Pages de 2 × 3 jeux, parcourues avec les flèches ; les cases vides annoncent les prochains jeux.
 const SOLO_PAGE = 6;

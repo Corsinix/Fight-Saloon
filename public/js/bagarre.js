@@ -43,6 +43,12 @@ const COUNT_START = 900, COUNT_MS = 800; // le compte de l'arbitre
 const MASH_DECAY = 0.0016; // la jauge pour se relever retombe (par ms)
 const HEAL_STEP = 1.2, HEAL_MAX = 15; // il est au tapis : gauche, droite, gauche… chaque alternance rend 1,2 PV (15 au plus)
 const BUBBLE_MS = 1700; // durée d'une bulle de dialogue
+const BUFFER_MS = 180; // un coup ou une esquive demandé un poil trop tôt part dès que possible (au lieu d'être perdu)
+const PERFECT_MS = 220; // esquive (ou parade) lancée sur l'éclair dans son œil : parfaite
+const PERFECT_OPEN = 1.4, PERFECT_STOP = 60; // il reste découvert plus longtemps, l'image se fige un instant
+const STREAK_BONUS = 0.03, STREAK_MAX = 0.3; // série de coups portés : +3 % de dégâts par coup, +30 % au plus
+const TRAIL_WAIT = 380, TRAIL_SPEED = 0.0006; // la part perdue d'une barre de forces reste un instant, puis fond
+const RECORDS_KEY = 'bagarre-records'; // meilleur temps de victoire contre chaque cogneur (dans ce navigateur)
 const INTRO_MS = 5200, BELL_MS = 1400, BETWEEN_MS = 5000, OVER_MS = 1900, RESULT_MS = 4200, CHAMP_MS = 6500;
 const F = BAGARRE.fighters;
 
@@ -502,65 +508,147 @@ function mug(R, x, y) {
   R(x + 6, y + 3, 2, 1, '#c8c0b0'); R(x + 7, y + 3, 1, 4, '#c8c0b0'); R(x + 6, y + 6, 2, 1, '#c8c0b0');
 }
 
-// Au tapis, sur le dos, vu depuis ses pieds : les semelles devant nous, le torse en raccourci, la tête au fond,
-// les bras en croix sur la toile, le chapeau tombé à côté. (×2, la ceinture en 0,0 comme les autres poses)
+// Au tapis, sur le dos, vu depuis ses pieds : les semelles (et les éperons) tout devant, les jambes et le torse en
+// raccourci, la tête au fond, roulée sur le côté. Un bras en croix sur la toile, l'autre rejeté au-dessus de la tête ;
+// le chapeau a roulé plus loin. Tout tient entre le fond du ring et le bas de l'image. (×2, comme les autres poses ;
+// son ombre sur la toile : lyingShadow)
 function drawLying(R, d, dmg) {
   const L = d.look, B = BUILD[L.build];
-  const skin = L.skin, skinD = S.shade(skin, -0.22), hairC = L.hair, armC = L.sleeves || skin;
-  const sh = B.sh - 2, wa = B.wa, bel = B.belly;
-  // les bras en croix
-  for (const sg of [-1, 1]) {
-    const sx = sg * (sh - 3), fx = sg * (sh + 20);
-    limb(R, sx, -26, fx, -34, B.arm + 2, B.arm + 1, OUT);
-    limb(R, sx, -26, fx, -34, B.arm, B.arm - 1, armC);
-    fist(R, fx, -34, 8, skin, sg);
+  const skin = L.skin, skinD = S.shade(skin, -0.22), skinL = S.shade(skin, 0.15), hairC = L.hair, armC = L.sleeves || skin;
+  const sh = B.sh - 1, wa = B.wa, bel = B.belly;
+  const SH = -31, WA = -17; // la ligne des épaules (au fond) et la taille (devant)
+  // les bras, sous le corps, en croix sur la toile (le droit rejeté un peu plus haut, vers la tête)
+  const arm = (x0, y0, x1, y1, x2, y2, sg) => {
+    const t = B.arm, o = Math.floor(t / 2) - 1;
+    limb(R, x0, y0, x1, y1, t + 2, t + 2, OUT); limb(R, x1, y1, x2, y2, t + 2, t + 1, OUT);
+    limb(R, x0, y0, x1, y1, t, t, armC); limb(R, x1, y1, x2, y2, t, t - 1, armC);
+    limb(R, x0, y0 - o, x1, y1 - o, 1, 1, S.shade(armC, 0.15)); // le reflet, le long du bras
+    if (L.sleeves) limb(R, lerp(x1, x2, 0.6), lerp(y1, y2, 0.6), x2, y2, t - 1, t - 1, skin);
+    fist(R, x2, y2, 7, skin, sg);
+  };
+  arm(-sh + 3, SH + 3, -sh - 12, SH + 8, -sh - 23, SH + 14, -1);
+  arm(sh - 3, SH + 2, sh + 11, SH - 2, sh + 22, SH - 8, 1);
+  // la tête, roulée sur le côté
+  const hd = B.head, hh = Math.round(hd * 0.7), x0 = Math.round(-hd / 2) - 3, y0 = SH - hh + 2, cx = x0 + Math.round(hd / 2);
+  // le chapeau a roulé derrière lui, à gauche (les cornes du Bison, elles, tiennent sur sa tête)
+  if (L.hatC && L.hat !== 'horns') {
+    const c = L.hatC, cd = S.shade(c, -0.3), cl = S.shade(c, 0.2), hx = x0 - 16, hy = y0 + 7;
+    const bw = L.hat === 'sombrero' ? 16 : 10, ch = L.hat === 'tophat' ? 10 : L.hat === 'bowler' ? 5 : 6, cw = L.hat === 'sombrero' ? 6 : 5;
+    // le bord, une ellipse aplatie (dessus clair, tranche sombre), puis la calotte arrondie et son ruban
+    const brim = (r) => Math.round(bw * Math.sqrt(1 - (r / 2.6) ** 2));
+    for (let r = -2; r <= 2; r++) R(hx - brim(r) - 1, hy + r - 1, brim(r) * 2 + 2, 3, OUT);
+    for (let r = -2; r <= 2; r++) R(hx - brim(r), hy + r, brim(r) * 2, 1, r > 0 ? cd : r < 0 ? cl : c);
+    R(hx - cw - 1, hy - ch - 1, cw * 2 + 2, ch + 2, OUT);
+    R(hx - cw, hy - ch, cw * 2, ch, c); R(hx - cw, hy - ch, 1, 1, OUT); R(hx + cw - 1, hy - ch, 1, 1, OUT);
+    R(hx - cw + 1, hy - ch + 1, 2, ch - 2, cl); R(hx + cw - 2, hy - ch + 1, 2, ch - 1, cd);
+    R(hx - cw, hy - 2, cw * 2, 2, L.hat === 'sombrero' ? '#a02a1a' : L.hat === 'tophat' ? '#7a1a2a' : cd);
   }
-  // le torse, de la ceinture aux épaules (raccourci : 18 lignes au lieu de 40)
-  for (let y = -27; y < -8; y++) {
-    const k = (y + 27) / 19;
-    const hw = Math.round(lerp(sh, wa, k) + bel * Math.sin(Math.PI * clamp(k * 1.2, 0, 1)) * 1.4);
+  // les cheveux étalés sur la toile autour de la tête
+  if (!L.bald) {
+    R(x0 - 2, y0 - 2, hd + 4, 5, hairC); R(x0 - 3, y0 + 1, 3, 7, hairC); R(x0 + hd, y0 + 1, 3, 7, hairC);
+    for (let k = 0; k < 6; k++) R(x0 - 1 + ((k * 7) % (hd + 2)), y0 - 2 + (k % 2), 1, 2, S.shade(hairC, 0.2));
+  } else { R(x0 - 1, y0 + 4, 2, 5, hairC); R(x0 + hd - 1, y0 + 4, 2, 5, hairC); }
+  R(x0 - 2, y0 + 5, 2, 5, skinD); R(x0 + hd, y0 + 5, 2, 5, skinD); // les oreilles
+  R(x0 + 1, y0, hd - 2, hh, skin); R(x0, y0 + 2, hd, hh - 4, skin);
+  R(x0 + hd - 3, y0 + 2, 2, hh - 4, skinD); R(x0 + 2, y0 + 1, 4, 1, skinL);
+  if (!L.bald) R(x0 + 1, y0, hd - 2, 2, hairC);
+  if (L.hat === 'horns') {
+    const horn = '#e8dcc0', hdk = '#b8ac90';
+    R(x0 - 8, y0 + 1, 8, 3, horn); R(x0 - 11, y0 - 2, 3, 4, horn); R(x0 - 12, y0 - 4, 2, 2, hdk);
+    R(x0 + hd, y0 + 1, 8, 3, horn); R(x0 + hd + 8, y0 - 2, 3, 4, horn); R(x0 + hd + 10, y0 - 4, 2, 2, hdk);
+    R(x0, y0 - 1, hd, 3, L.hatC);
+  }
+  // le visage : les coups encaissés, les yeux en croix, les sourcils de travers, la langue qui pend
+  const ey = y0 + Math.round(hh * 0.42), exL = cx - 6, exR = cx + 3, browC = S.shade(hairC, -0.1);
+  if (dmg) {
+    const bruise = S.mix(skin, '#5a2a6a', 0.5);
+    R(exR - 1, ey - 1, 5, 4, bruise);
+    if (dmg > 1) {
+      R(exL - 1, ey - 1, 5, 4, bruise);
+      R(cx + 2, y0 + 3, 6, 2, '#e8dcc0'); R(cx + 4, y0 + 2, 2, 4, '#e8dcc0'); R(cx + 4, y0 + 3, 2, 2, '#c8b890'); // le sparadrap
+    }
+  }
+  for (const ex of [exL, exR]) { R(ex, ey, 1, 1, OUT); R(ex + 2, ey, 1, 1, OUT); R(ex + 1, ey + 1, 1, 1, OUT); R(ex, ey + 2, 1, 1, OUT); R(ex + 2, ey + 2, 1, 1, OUT); }
+  R(exL - 1, ey - 3, 3, 1, browC); R(exL + 2, ey - 4, 2, 1, browC); R(exR, ey - 4, 2, 1, browC); R(exR + 2, ey - 3, 3, 1, browC);
+  if (L.nose === 'red') { R(cx - 2, ey + 3, 4, 3, '#d0503a'); R(cx - 1, ey + 3, 1, 1, '#f08070'); }
+  else { R(cx - 1, ey + 3, 2, 3, skinD); R(cx + 1, ey + 4, 1, 2, S.shade(skin, -0.35)); }
+  if (dmg > 1) { R(cx - 2, ey + 6, 1, 2, '#a02a1a'); R(cx - 3, ey + 8, 1, 1, '#7a1a10'); } // le nez qui saigne
+  const my = y0 + hh - 4;
+  if (L.beard === 'stubble') for (let k = 0; k < 10; k++) R(x0 + 3 + ((k * 5) % (hd - 6)), my - 1 + (k % 3), 1, 1, S.shade(skin, -0.35));
+  if (L.beard === 'full') { // sur les joues et sous le menton : la bouche reste visible
+    R(x0, my - 3, 4, 6, hairC); R(x0 + hd - 4, my - 3, 4, 6, hairC); R(x0 + 2, my + 2, hd - 4, 3, hairC); R(x0 + 4, y0 + hh, hd - 8, 2, hairC);
+    for (let k = 0; k < 6; k++) R(x0 + 2 + ((k * 7) % (hd - 4)), my - 2 + (k % 3) * 2, 1, 2, S.shade(hairC, 0.2));
+  }
+  R(cx - 3, my - 1, 6, 3, '#5a1a14'); R(cx - 3, my - 1, 6, 1, '#f4ecd8'); // bouche ouverte
+  R(cx, my + 1, 3, 2, '#d0605a'); R(cx + 1, my + 3, 2, 1, '#d0605a'); R(cx + 1, my + 1, 1, 1, '#f08070'); // la langue
+  if (L.tooth) R(cx + 1, my - 1, 1, 1, '#e0b040');
+  if (L.beard === 'mustache' || L.beard === 'handlebar' || L.beard === 'full') R(cx - 5, my - 3, 10, 2, hairC);
+  if (L.beard === 'handlebar') { R(cx - 7, my - 2, 2, 2, hairC); R(cx + 5, my - 2, 2, 2, hairC); R(cx - 8, my, 1, 2, hairC); R(cx + 7, my, 1, 2, hairC); } // les pointes retombent
+  if (L.beard === 'goatee') { R(cx - 4, my - 3, 8, 1, hairC); R(cx - 2, my + 2, 4, 3, hairC); }
+  // le cou, puis le torse en raccourci (il cache le bas du menton) : épaules arrondies, lumière à gauche
+  R(-4 - 2, SH - 3, 9, 4, skinD);
+  for (let y = SH; y < WA; y++) {
+    const k = (y - SH) / (WA - SH), r = y - SH;
+    let hw = Math.round(lerp(sh, wa, k) + bel * Math.sin(Math.PI * clamp(k * 1.1, 0, 1)) * 1.3);
+    if (r < 2) hw -= 2 - r;
     let col = skin;
-    if (L.top === 'stripes') col = Math.floor((y + 27) / 2) % 2 ? L.topC2 : L.topC;
+    if (L.top === 'stripes') col = Math.floor(r / 2) % 2 ? L.topC2 : L.topC;
     else if (L.top === 'vest') col = L.topC2;
     R(-hw, y, hw * 2, 1, col);
-    R(hw - 2, y, 2, 1, S.shade(col, -0.22));
-    if (L.top === 'vest') { const vw = Math.round(lerp(6, 2, k)); R(-vw, y, vw * 2, 1, L.topC); }
+    R(hw - 3, y, 3, 1, S.shade(col, -0.22)); R(-hw, y, 2, 1, S.shade(col, 0.14));
+    if (L.top === 'vest') {
+      const vw = Math.round(lerp(7, 2, clamp(k * 1.3, 0, 1)));
+      R(-vw, y, vw * 2, 1, L.topC);
+      if (r % 4 === 2 && k > 0.35) R(vw, y, 1, 1, '#e0b040');
+    }
   }
-  if (L.top === 'apron') { R(-wa + 3, -20, (wa - 3) * 2, 12, L.topC); R(-wa + 3, -20, (wa - 3) * 2, 1, '#c8c0b0'); }
-  if (L.top === 'bandolier') for (let i = 0; i <= 16; i++) { const x = lerp(-sh + 3, wa - 3, i / 16), y = lerp(-26, -10, i / 16); R(x - 2, y - 1, 4, 3, '#6a4020'); if (i % 3 === 0) R(x - 1, y - 2, 2, 2, '#e0b040'); }
-  if (L.top === 'fur') { R(-sh - 4, -29, 12, 9, L.topC); R(sh - 8, -29, 12, 9, L.topC); }
-  if (L.chestHair && L.top !== 'apron') for (let k = 0; k < 8; k++) R(-5 + ((k * 7) % 10), -24 + ((k * 5) % 9), 1, 1, S.shade(hairC, 0.15));
-  // ceinture, short, jambes vers nous et les semelles
-  if (L.belt) { R(-wa - 2, -10, wa * 2 + 4, 3, '#e0b040'); R(-5, -11, 10, 5, '#f8e08a'); R(-2, -10, 4, 3, '#c0392b'); }
-  else R(-wa - 2, -10, wa * 2 + 4, 3, '#3a2214');
-  R(-wa - 2, -7, wa * 2 + 4, 8, L.pants); R(-1, -4, 2, 5, S.shade(L.pants, -0.35));
+  const bare = L.top !== 'stripes' && L.top !== 'vest';
+  if (bare) {
+    R(-12, SH + 5, 9, 1, skinD); R(3, SH + 5, 9, 1, skinD); R(-1, SH + 2, 2, 5, skinD); // pectoraux
+    if (bel > 3) { R(-wa + 5, WA - 9, 9, 2, skinL); R(-wa + 4, WA - 7, 4, 2, skinL); } // la bedaine qui pointe au plafond
+    else if (!bel) for (let k = 0; k < 2; k++) { R(-6, SH + 8 + k * 3, 4, 1, skinD); R(2, SH + 8 + k * 3, 4, 1, skinD); }
+    R(-1, WA - 3, 2, 2, S.shade(skin, -0.4)); // nombril
+    if (L.chestHair) for (let k = 0; k < 12; k++) R(-6 + ((k * 7) % 12), SH + 2 + ((k * 5) % 9), 1, 1, S.shade(hairC, 0.15));
+  }
+  if (L.top === 'apron') {
+    const aw = wa - 3;
+    R(-aw + 1, SH + 1, 2, 7, L.topC); R(aw - 3, SH + 1, 2, 7, L.topC); // bretelles
+    R(-aw, SH + 7, aw * 2, WA - SH - 7, L.topC); R(-aw, SH + 7, aw * 2, 1, '#c8c0b0'); R(aw - 2, SH + 8, 2, WA - SH - 8, '#c8c0b0');
+    R(-4, SH + 10, 8, 4, '#d8d0c0');
+  }
+  if (L.top === 'bandolier') for (let i = 0; i <= 22; i++) {
+    const x = lerp(-sh + 4, wa - 2, i / 22), y = lerp(SH + 1, WA - 1, i / 22);
+    R(x - 2, y - 1, 4, 3, '#6a4020');
+    if (i % 3 === 0) R(x - 1, y - 3, 2, 2, '#e0b040');
+  }
+  if (L.top === 'fur') {
+    const fc = L.topC, fd = S.shade(fc, -0.3);
+    R(-sh - 4, SH - 3, 13, 10, fc); R(sh - 9, SH - 3, 13, 10, fc);
+    for (let k = 0; k < 10; k++) { R(-sh - 3 + ((k * 5) % 11), SH - 2 + ((k * 7) % 9), 2, 1, fd); R(sh - 8 + ((k * 3) % 11), SH - 2 + ((k * 11) % 9), 2, 1, fd); }
+  }
+  if (L.top === 'vest') { R(-3, SH - 1, 6, 3, '#a02a2a'); R(-1, SH, 2, 1, '#6a1a1a'); } // nœud papillon
+  // la ceinture (celle du champion : or et pierre rouge), le short
+  let sy = WA + 2;
+  if (L.belt) {
+    R(-wa - 2, WA, wa * 2 + 4, 3, '#e0b040'); R(-wa - 2, WA, wa * 2 + 4, 1, '#f8e08a');
+    R(-6, WA - 1, 12, 6, '#f8e08a'); R(-5, WA, 10, 4, '#e0b040'); R(-2, WA + 1, 4, 2, '#c0392b');
+    sy = WA + 3;
+  } else R(-wa - 2, WA, wa * 2 + 4, 2, '#3a2214');
+  R(-wa - 2, sy, wa * 2 + 4, 6, L.pants); R(-wa - 2, sy, wa * 2 + 4, 1, S.shade(L.pants, 0.2));
+  R(-1, sy + 1, 2, 5, S.shade(L.pants, -0.35));
+  // les jambes vers nous, écartées, et les bottes : semelle face à nous, talon, éperon
   for (const sg of [-1, 1]) {
-    const lx = sg * Math.round(wa * 0.55);
-    R(lx - 6, 1, 12, 5, S.shade(L.pants, -0.15)); // le bas des jambes, raccourci
-    R(lx - 6, 6, 12, 11, '#3a2214'); R(lx - 5, 7, 10, 6, '#5a3a22'); R(lx - 5, 13, 10, 3, '#2a1810'); // la semelle et le talon
-    R(lx - 4, 7, 3, 1, '#7a5a3a');
+    const lx = sg * Math.round(wa * 0.5), bx = sg * Math.round(wa * 0.62 + 6), by = -2;
+    limb(R, lx, sy + 4, bx, by, 13, 13, OUT);
+    limb(R, lx, sy + 4, bx, by, 11, 11, S.shade(L.pants, -0.1));
+    limb(R, lx - sg * 4, sy + 4, bx - sg * 4, by, 2, 2, S.shade(L.pants, -0.3)); // l'ombre à l'intérieur de la jambe
+    R(bx - 6, by - 2, 12, 13, OUT);
+    R(bx - 5, by - 1, 10, 6, '#5a3a22'); R(bx - 5, by - 1, 10, 1, '#7a5a3a'); R(bx - 4, by, 2, 3, '#6a4a2e');
+    R(bx - 5, by + 5, 10, 1, '#1a0f0a'); // la cambrure
+    R(bx - 4, by + 6, 8, 3, '#2a1810'); R(bx - 4, by + 6, 8, 1, '#3a2418'); // le talon
+    R(bx - 1, by + 9, 3, 1, '#c8c0b0'); R(bx - 2, by + 9, 1, 1, '#8a8f98'); R(bx + 2, by + 9, 1, 1, '#8a8f98'); // l'éperon
   }
-  // la tête, renversée en arrière : on voit le menton, la bouche ouverte, les yeux en croix ; les cheveux au fond
-  const hd = B.head, hh = Math.round(hd * 0.72), x0 = -Math.round(hd / 2), y0 = -28 - hh;
-  R(-4, -31, 8, 4, skinD); // le cou
-  R(x0 + 1, y0, hd - 2, hh, skin); R(x0, y0 + 2, hd, hh - 4, skin);
-  R(x0 + hd - 3, y0 + 2, 2, hh - 4, skinD);
-  if (!L.bald) { R(x0, y0, hd, 3, hairC); R(x0, y0 + 2, 2, 4, hairC); R(x0 + hd - 2, y0 + 2, 2, 4, hairC); }
-  const cx = 0, ey = y0 + Math.round(hh * 0.38), exL = cx - 6, exR = cx + 3;
-  for (const ex of [exL, exR]) { R(ex, ey, 1, 1, OUT); R(ex + 2, ey, 1, 1, OUT); R(ex + 1, ey + 1, 1, 1, OUT); R(ex, ey + 2, 1, 1, OUT); R(ex + 2, ey + 2, 1, 1, OUT); }
-  if (dmg) R(exR - 1, ey - 1, 5, 1, S.mix(skin, '#5a2a6a', 0.5));
-  if (L.nose === 'red') R(cx - 2, ey + 3, 4, 2, '#d0503a'); else R(cx - 1, ey + 3, 2, 2, skinD);
-  const my = y0 + hh - 5;
-  if (L.beard === 'full') R(x0 + 2, my - 2, hd - 4, 7, hairC);
-  R(cx - 3, my, 6, 3, '#5a1a14'); R(cx - 1, my + 2, 3, 1, '#d0605a'); // bouche ouverte, la langue
-  if (L.beard === 'mustache' || L.beard === 'handlebar' || L.beard === 'full') R(cx - 5, my - 2, 10, 2, hairC);
-  if (L.beard === 'goatee') R(cx - 2, my + 3, 4, 3, hairC);
-  if (L.hat === 'horns') { R(x0 - 6, y0 + 1, 7, 3, '#e8dcc0'); R(x0 + hd - 1, y0 + 1, 7, 3, '#e8dcc0'); }
-  else if (L.hatC) { // le chapeau a roulé à côté de lui
-    const hx = sh + 22, hy = -48, c = L.hatC;
-    R(hx - 9, hy + 4, 18, 3, c); R(hx - 5, hy - 2, 10, 6, c); R(hx - 5, hy + 2, 10, 1, S.shade(c, -0.3));
-  }
-  return [cx, y0 + 2];
+  return [cx, ey];
 }
 
 const OPP = new Map(); // `${id}:${dégâts}:${pose}:${image}` -> sprite
@@ -766,7 +854,13 @@ const WALLS = {
   // la grange de Dodge City : planches et lanternes
   barn(g) {
     R2(g, 0, 0, W, H, '#2a1a12');
-    for (let x = 0; x < W; x += 14) { R2(g, x, 0, 1, 120, '#1e120c'); R2(g, x + 1, 0, 1, 120, '#3a2418'); }
+    for (let x = 0, k = 0; x < W; x += 14, k++) { // planches : fil du bois, nœuds, clous
+      R2(g, x, 0, 1, 120, '#1e120c'); R2(g, x + 1, 0, 1, 120, '#3a2418');
+      for (let i = 0; i < 3; i++) { const gx = x + 3 + ((k * 5 + i * 4) % 10); R2(g, gx, 0, 1, 120, i % 2 ? '#24160f' : '#301e14'); }
+      const ky = 8 + ((k * 23) % 30);
+      R2(g, x + 5, ky, 3, 4, '#1a0f0a'); R2(g, x + 6, ky + 1, 1, 2, '#3a2418');
+      for (const ny of [27, 44]) R2(g, x + 3, ny, 1, 1, '#8a8f98');
+    }
     R2(g, 0, 36, W, 4, '#4a2e1c'); R2(g, 0, 40, W, 1, OUT);
     for (const x of [22, 362]) { R2(g, x - 4, 28, 9, 2, '#8a8f98'); R2(g, x - 5, 30, 2, 4, '#8a8f98'); R2(g, x + 4, 30, 2, 4, '#8a8f98'); } // fers à cheval cloués
     for (const lx of [56, 192, 328]) lantern(g, lx);
@@ -855,37 +949,23 @@ function arena(id) {
       x: Math.round(i * 15 + (row % 2) * 7 + rr() * 6 - 6), y: 50 + row * 13, row,
       skin: pick2(rr, ['#c88a5a', '#e8b090', '#a86a40', '#f0c8a0']), shirt: pick2(rr, st.shirts),
       hat: rr() < 0.75 ? pick2(rr, st.hats) : null, som: rr() < (st.sombrero || 0), jump: rr(), arm: rr() < 0.4,
+      wear: pick2(rr, ['plain', 'plain', 'vest', 'braces', 'scarf']), extra: pick2(rr, ['#3a2a1a', '#5a3a24', '#8a2a2a', '#2a3a5a', '#4a4a3a']),
+      hair: pick2(rr, ['#2a1a10', '#4a3020', '#8a5a30', '#6a6a6a']), stache: rr() < 0.4, mug: st.wall === 'bar' && rr() < 0.5,
     });
   }
   fans.sort((a, b) => a.row - b.row);
   const crowd = [0, 1, 2, 3].map((fr) => {
     const c = S.makeCanvas(W, H), x = c.getContext('2d');
-    const hype = fr > 1, alt = fr % 2;
-    for (const f of fans) {
-      const dim = st.dim - (2 - f.row) * 0.12;
-      const b = hype ? ((alt ^ (f.jump < 0.5)) ? -3 : 0) : alt && f.jump < 0.55 ? -2 : 0;
-      const y = f.y + b, shirt = S.shade(f.shirt, dim), skin = S.shade(f.skin, dim);
-      R2(x, f.x - 6, y + 7, 13, 18, shirt);
-      R2(x, f.x - 3, y, 7, 8, skin);
-      if (f.hat) {
-        const hc = S.shade(f.hat, dim);
-        if (f.som) { R2(x, f.x - 8, y - 1, 17, 2, hc); R2(x, f.x - 3, y - 5, 7, 4, hc); }
-        else { R2(x, f.x - 5, y - 1, 11, 2, hc); R2(x, f.x - 3, y - 4, 7, 3, hc); }
-      }
-      if (hype && f.jump < 0.8) { // les deux bras levés
-        const up = alt ? 2 : 0;
-        R2(x, f.x - 8, y - 6 + up, 2, 13, shirt); R2(x, f.x - 8, y - 8 + up, 2, 2, skin);
-        R2(x, f.x + 6, y - 6 - up, 2, 13, shirt); R2(x, f.x + 6, y - 8 - up, 2, 2, skin);
-      } else if ((alt || hype) && f.arm) { R2(x, f.x + 5, y - 6, 2, 13, shirt); R2(x, f.x + 5, y - 8, 2, 2, skin); }
-    }
+    for (const f of fans) drawFan(x, f, st, fr > 1, fr % 2);
     return c;
   });
   // le ring : tapis (ou sable), poteaux, cordes
   const ring = S.makeCanvas(W, H), g = ring.getContext('2d');
   R2(g, 0, 104, W, 6, '#5a2a1a'); R2(g, 0, 104, W, 1, '#8a4a2a'); R2(g, 0, 110, W, 1, OUT);
+  for (let x = 6; x < W; x += 24) { R2(g, x, 105, 1, 5, '#3e1c12'); R2(g, x + 3, 107, 1, 1, '#c8a050'); R2(g, x + 20, 107, 1, 1, '#c8a050'); } // planches, rivets
   R2(g, 0, 111, W, H - 111, st.mat);
   if (st.sand) for (let k = 0; k < 260; k++) R2(g, (k * 97) % W, 112 + ((k * 61) % (H - 112)), 1, 1, S.shade(st.mat, k % 2 ? -0.12 : 0.1));
-  else for (let y = 116; y < H; y += 9) R2(g, 0, y, W, 1, S.shade(st.mat, -0.07));
+  matTexture(g, st);
   const spot = g.createRadialGradient(192, 170, 10, 192, 170, 190);
   spot.addColorStop(0, 'rgba(255,236,190,0.35)');
   spot.addColorStop(1, 'rgba(255,236,190,0)');
@@ -894,11 +974,14 @@ function arena(id) {
   const ROPES = [62, 76, 90], rope = st.rope, ropeD = S.shade(st.rope, -0.45);
   for (const ry of ROPES) {
     // les cordes du fond, puis celles des côtés qui descendent vers nous
+    // (torsadées : un reflet tous les quatre pixels)
+    const ropeL = S.shade(st.rope, 0.35);
     R2(g, 24, ry, 336, 2, rope); R2(g, 24, ry + 2, 336, 1, ropeD);
+    for (let x = 25; x < 360; x += 4) { R2(g, x, ry, 2, 1, ropeL); R2(g, x + 2, ry + 1, 1, 1, ropeD); }
     for (const [px, dir] of [[20, -1], [364, 1]]) {
       for (let k = 0; k < 90; k++) {
         const x = Math.round(px + dir * k * 0.55), y = Math.round(ry + k * 1.4);
-        R2(g, x, y, 2, 2, rope);
+        R2(g, x, y, 2, 2, k % 3 ? rope : ropeL);
         R2(g, x, y + 2, 2, 1, ropeD);
       }
     }
@@ -911,6 +994,114 @@ function arena(id) {
   return (ARENA = { id, st, wall, crowd, ring });
 }
 function pick2(rr, arr) { return arr[Math.floor(rr() * arr.length)]; }
+
+// Un spectateur (dessiné une fois par image de la foule) : une silhouette sombre le détache de ses voisins,
+// épaules arrondies, côté droit dans l'ombre, gilet, bretelles ou foulard, un visage (bouche ouverte quand la foule
+// hurle), chapeau à bandeau. hype : les bras en l'air (deux images, alt) ; sinon il remue tranquillement.
+function drawFan(g, f, st, hype, alt) {
+  const dim = st.dim - (2 - f.row) * 0.12;
+  const C = (c, k = 0) => S.shade(k ? S.shade(c, k) : c, dim);
+  const bob = hype ? ((alt ^ (f.jump < 0.5)) ? -3 : 0) : alt && f.jump < 0.55 ? -2 : 0;
+  const R = (dx, dy, w, h, col) => R2(g, f.x + dx, f.y + bob + dy, w, h, col);
+  const edge = '#140b08', shirt = C(f.shirt), shirtD = C(f.shirt, -0.3), shirtL = C(f.shirt, 0.14);
+  const skin = C(f.skin), skinD = C(f.skin, -0.25);
+  // les bras levés, derrière le corps (une chope au bout, au Longhorn)
+  const arm = (ax, lift, mug) => {
+    R(ax - 1, -9 - lift, 4, 16, edge); R(ax, -6 - lift, 2, 13, shirt); R(ax, -8 - lift, 2, 2, skin);
+    if (mug) { R(ax - 1, -13 - lift, 4, 5, edge); R(ax, -12 - lift, 2, 4, C('#e0a030')); R(ax, -12 - lift, 2, 1, C('#fdf6e0')); }
+  };
+  if (hype && f.jump < 0.8) { const up = alt ? 2 : 0; arm(-8, -up, false); arm(6, up, f.mug); }
+  else if ((alt || hype) && f.arm) arm(5, 0, f.mug && hype);
+  // le corps : silhouette, épaules arrondies, ombre à droite, reflet à gauche
+  R(-7, 7, 15, 20, edge); R(-4, -1, 9, 9, edge);
+  R(-5, 8, 11, 1, shirt); R(-6, 9, 13, 18, shirt);
+  R(-6, 9, 1, 18, shirtL); R(-5, 8, 3, 1, shirtL); R(3, 9, 4, 18, shirtD); R(4, 8, 2, 1, shirtD);
+  if (f.wear === 'vest') { R(-6, 10, 4, 17, C(f.extra)); R(3, 10, 4, 17, C(f.extra, -0.25)); R(-2, 12, 1, 1, C('#e0b040')); }
+  else if (f.wear === 'braces') { R(-4, 9, 1, 18, C('#2a1a10')); R(2, 9, 1, 18, C('#2a1a10')); }
+  else if (f.wear === 'scarf') { R(-3, 8, 7, 3, C(f.extra)); R(-1, 11, 3, 2, C(f.extra, -0.2)); }
+  else R(-2, 8, 5, 2, shirtL); // le col
+  // la tête : ombre à droite, deux yeux, la bouche (grande ouverte quand elle hurle), parfois une moustache
+  R(-1, 7, 3, 2, skinD);
+  R(-3, 0, 7, 8, skin); R(2, 1, 2, 7, skinD); R(-3, 7, 1, 1, edge); R(3, 7, 1, 1, edge);
+  R(-2, 3, 1, 1, edge); R(1, 3, 1, 1, edge);
+  if (hype) R(-1, 5, 2, 2, C('#5a1a14')); else R(-1, 6, 2, 1, skinD);
+  if (f.stache) R(-2, 5, 5, 1, C(f.hair));
+  if (!f.hat) { R(-3, -1, 7, 2, C(f.hair)); R(-3, 0, 1, 3, C(f.hair)); R(3, 0, 1, 3, C(f.hair)); }
+  else {
+    const hc = C(f.hat), hd = C(f.hat, -0.32), hl = C(f.hat, 0.2);
+    if (f.som) {
+      R(-9, -2, 19, 4, edge); R(-3, -7, 7, 6, edge);
+      R(-8, -1, 17, 2, hc); R(-8, 0, 17, 1, hd); R(-2, -6, 5, 5, hc); R(-2, -6, 5, 1, hl); R(-2, -2, 5, 1, C('#a02a1a'));
+    } else {
+      R(-6, -2, 13, 3, edge); R(-4, -6, 9, 5, edge);
+      R(-5, -1, 11, 2, hc); R(-5, 0, 11, 1, hd); R(-3, -5, 7, 4, hc); R(-3, -5, 7, 1, hl); R(0, -5, 1, 1, hd); R(-3, -2, 7, 1, hd);
+    }
+  }
+}
+
+// La toile du ring (dessinée une fois) : grain semé, lés cousus dont les coutures filent vers le fond, auréoles
+// d'usure et gouttes de sang séché, l'emblème de la salle à demi effacé, les bords dans l'ombre. Sur le sable de
+// Sonora : ratissage et traces de sabots à la place des coutures.
+function matTexture(g, st) {
+  let s = 77;
+  const rr = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
+  const top = 111, m = st.mat, dark = S.shade(m, -0.1);
+  for (let k = 0; k < 1500; k++) {
+    const x = Math.floor(rr() * W), y = top + Math.floor(rr() * (H - top)), v = rr();
+    R2(g, x, y, v < 0.15 ? 2 : 1, 1, S.shade(m, v < 0.55 ? -0.05 - v * 0.08 : 0.06));
+  }
+  if (st.sand) {
+    for (let y = top + 4, i = 0; y < H; i++, y += 4 + i) for (let x = (i * 13) % 7; x < W; x += 9) R2(g, x, y, 5, 1, S.shade(m, -0.07)); // le râteau
+    for (let k = 0; k < 9; k++) { // des traces de sabots
+      const x = Math.floor(rr() * W), y = top + 8 + Math.floor(rr() * (H - top - 16));
+      R2(g, x, y, 3, 2, S.shade(m, -0.18)); R2(g, x + 4, y + 1, 3, 2, S.shade(m, -0.18));
+    }
+  } else {
+    // les coutures des lés : elles convergent vers le fond (points de couture clairs)
+    for (let u = -5; u <= 5; u++) {
+      const x0 = 192 + u * 34, x1 = 192 + u * 112;
+      for (let y = top; y < H; y++) {
+        const x = Math.round(lerp(x0, x1, (y - top) / (H - top)));
+        R2(g, x, y, 1, 1, dark);
+        if (y % 3 === 0) R2(g, x + 1, y, 1, 1, S.shade(m, 0.08));
+      }
+    }
+    for (let y = top + 5, i = 0; y < H; i++, y += Math.round(6 + i * 3)) R2(g, 0, y, W, 1, S.shade(m, -0.05)); // de plus en plus espacées vers nous
+  }
+  // auréoles d'usure (eau, sueur), plus grandes devant ; quelques gouttes de sang séché
+  const blob = (cx, cy, rx, ry, col, dens) => {
+    for (let y = -ry; y <= ry; y++) for (let x = -rx; x <= rx; x++) {
+      const d = (x * x) / (rx * rx) + (y * y) / (ry * ry);
+      if (d <= 1 && rr() < dens * (1.15 - d)) R2(g, cx + x, cy + y, 1, 1, col);
+    }
+  };
+  for (let k = 0; k < 9; k++) {
+    const y = top + 6 + Math.floor(rr() * (H - top - 10)), z = 0.5 + (y - top) / (H - top);
+    blob(Math.floor(rr() * W), y, Math.round((6 + rr() * 10) * z), Math.round((2 + rr() * 2) * z), S.shade(m, -0.13), 0.55);
+  }
+  const blood = S.mix(m, '#7a1a10', 0.55);
+  for (let k = 0; k < 5; k++) blob(120 + Math.floor(rr() * 150), 140 + Math.floor(rr() * 50), 2, 1, blood, 0.9);
+  // l'emblème de la salle, en grand au centre, à demi effacé (on le devine autour des boxeurs)
+  const emb = S.mix(m, st.pad, 0.3), embL = S.mix(m, st.cap, 0.35);
+  ring(g, 192, 162, 150, 34, emb); ring(g, 192, 162, 149, 33, emb); ring(g, 192, 162, 138, 29, embL);
+  for (const sx of [42, 342]) { R2(g, sx - 1, 158, 3, 9, emb); R2(g, sx - 4, 161, 9, 3, emb); R2(g, sx, 161, 1, 3, embL); }
+  // sous le tablier du fond, une bande d'ombre ; les côtés et le devant de la toile plus sombres
+  R2(g, 0, top, W, 2, 'rgba(20,10,5,0.35)');
+  const side = g.createLinearGradient(0, 0, W, 0);
+  side.addColorStop(0, 'rgba(20,10,5,0.32)'); side.addColorStop(0.18, 'rgba(20,10,5,0)');
+  side.addColorStop(0.82, 'rgba(20,10,5,0)'); side.addColorStop(1, 'rgba(20,10,5,0.32)');
+  g.fillStyle = side; g.fillRect(0, top, W, H - top);
+}
+
+// l'ombre d'un cogneur étendu sur la toile (une fois)
+let LYING_SHADOW = null;
+function lyingShadow() {
+  if (LYING_SHADOW) return LYING_SHADOW;
+  const c = S.makeCanvas(150, 52), g = c.getContext('2d');
+  g.fillStyle = 'rgba(20,10,5,0.3)';
+  for (let y = -24; y <= 24; y++) { const hw = Math.round(72 * Math.sqrt(1 - (y / 25) ** 2)); g.fillRect(75 - hw, 26 + y, hw * 2, 1); }
+  return (LYING_SHADOW = c);
+}
 
 // découpe un texte en lignes d'au plus max caractères
 function wrap(text, max = 46) {
@@ -926,9 +1117,16 @@ function wrap(text, max = 46) {
   return out;
 }
 
-function bar(ctx, x, y, w, h, k, col, right = false) {
+const loadRecords = () => { try { return JSON.parse(localStorage.getItem(RECORDS_KEY) || '{}') || {}; } catch { return {}; } };
+const saveRecords = (r) => { try { localStorage.setItem(RECORDS_KEY, JSON.stringify(r)); } catch { /* stockage indisponible */ } };
+const mmss = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+
+// trail : la part qu'un coup vient de faire perdre, encore affichée en clair derrière la barre
+function bar(ctx, x, y, w, h, k, col, right = false, trail = 0) {
   ctx.fillStyle = OUT; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
   ctx.fillStyle = '#3a2418'; ctx.fillRect(x, y, w, h);
+  const tw = Math.round(w * clamp(trail, 0, 1));
+  if (tw) { ctx.fillStyle = '#fdf6e0'; ctx.fillRect(right ? x + w - tw : x, y, tw, h); }
   const fw = Math.round(w * clamp(k, 0, 1));
   ctx.fillStyle = col; ctx.fillRect(right ? x + w - fw : x, y, fw, h);
   ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fillRect(right ? x + w - fw : x, y, fw, 1);
@@ -970,6 +1168,7 @@ export class BagarreScene extends MiniScene {
       this.touch ? 'STICK GAUCHE, DROITE : ESQUIVE - BAS : GARDE - SE BAISSER : SOUS LES GRANDS REVERS'
         : 'GAUCHE DROITE : ESQUIVE - BAS : GARDE - BAS BAS OU C : SE BAISSER',
       'CHAQUE COUP A SA PARADE : SIGNES D\'ABORD, PUIS À TOI DE LIRE SES GESTES',
+      'ESQUIVE SUR L\'ÉCLAIR DANS SON ŒIL : PARFAITE, IL RESTE DÉCOUVERT',
       'IL EST AU TAPIS ? ALTERNE GAUCHE ET DROITE POUR REPRENDRE DES FORCES',
       'COUPS, ESQUIVES ET CONTRES REMPLISSENT LA BARRE DE SPÉCIAL',
       this.touch ? 'BARRE PLEINE : DEUX DOIGTS EN MÊME TEMPS = COUP SPÉCIAL'
@@ -1021,6 +1220,7 @@ export class BagarreScene extends MiniScene {
   setPhase(ph) {
     this.run.phase = ph;
     this.run.at = this.lt;
+    this.buf = null;
     this.hooks.onState?.(this.state); // le HUD (et la musique) suivent les étapes du combat
   }
 
@@ -1029,7 +1229,7 @@ export class BagarreScene extends MiniScene {
     return {
       def, n: this.run.n, round: 1, clock: 0, ms: 0, count: null, res: null, tip: null,
       me: { hp: 100, hearts: HEARTS, sp: 0, kd: 0, kdT: 0, kdGiven: 0, act: null, hurtUntil: 0, tiredUntil: 0, down: null, downAt: 0, taken: 0, landed: 0,
-        hist: [], poisonUntil: 0 },
+        hist: [], poisonUntil: 0, streak: 0, best: 0, counters: 0, perfects: 0 },
       op: { hp: def.hp, max: def.hp, st: 'idle', at: this.lt, dur: 0, atk: null, chain: null, quick: false, guard: def.guard[0], combo: 0, idleHits: 0,
         next: 0, kd: 0, kdT: 0, kdGiven: 0, taken: 0, flash: -1e9, hitAt: -1e9, hitHigh: false, hitSide: 1, rage: false, res: null, tauntKind: def.taunt,
         seq: [], seen: {}, guide: true, dmg: 0, waveAt: 0 },
@@ -1040,6 +1240,8 @@ export class BagarreScene extends MiniScene {
     const def = ROSTER[Math.min(this.run.n, F - 1)];
     forgetFighters(def);
     this.f = this.newFight(def);
+    this.f.best = loadRecords()[def.id]; // son record contre lui, sur l'affiche
+    this.trails = {};
     bossMusic('mini-bagarre', !!def.champ); // le champion a son thème
     this.warmUp(0);
     this.ref = { x: 318, y: 122, near: false, enter: 0 };
@@ -1096,6 +1298,10 @@ export class BagarreScene extends MiniScene {
     f.res = { win, how };
     f.me.act = null;
     if (win) {
+      // le meilleur temps contre ce cogneur, gardé dans ce navigateur
+      const rec = loadRecords(), old = rec[f.def.id];
+      f.record = { old, fresh: !(old <= f.ms) };
+      if (f.record.fresh) { rec[f.def.id] = Math.round(f.ms); saveRecords(rec); }
       if (how === 'DEC') this.opSet('idle');
       else this.opSet('ko');
       this.excite = 6000;
@@ -1167,6 +1373,7 @@ export class BagarreScene extends MiniScene {
     if (l && !p.l) this.defend('dodgeL');
     if (r && !p.r) this.defend('dodgeR');
     if (dn && !p.dn) {
+      this.blockAt = this.lt; // (garde levée sur l'éclair : parade parfaite)
       if (this.lt - this.lastDown < 300) this.defend('duck');
       this.lastDown = this.lt;
     }
@@ -1210,13 +1417,34 @@ export class BagarreScene extends MiniScene {
     const other = this.lastFist;
     this.lastFist = { side, at: this.lt };
     if (other && other.side !== side && this.lt - other.at < DOUBLE_MS && me.sp >= SPECIAL_MAX) return this.special();
-    if (me.act || this.lt < me.hurtUntil || this.blocking) return;
-    if (this.lt < me.tiredUntil) {
-      if (!(this.lt - (this.tiredMsg || -1e9) < 900)) { this.tiredMsg = this.lt; this.popup(ME_X, 112, 'À BOUT DE SOUFFLE…', '#f0a0a0'); }
-      return;
+    this.queue({ kind: 'punch', side, high });
+  }
+
+  // un geste demandé pendant qu'un autre se termine (ou qu'on encaisse) est gardé un instant, puis part dès que possible
+  queue(g) {
+    this.buf = this.move(g) ? null : { ...g, at: this.lt };
+  }
+
+  // lance le geste ; faux s'il faut attendre (geste en cours, coup encaissé), vrai s'il est parti ou refusé pour de bon
+  move(g) {
+    const me = this.f.me;
+    if (me.down) return true;
+    if (g.kind === 'punch') {
+      if (this.blocking) return true;
+      if (me.act || this.lt < me.hurtUntil) return false;
+      if (this.lt < me.tiredUntil) {
+        if (!(this.lt - (this.tiredMsg || -1e9) < 900)) { this.tiredMsg = this.lt; this.popup(ME_X, 112, 'À BOUT DE SOUFFLE…', '#f0a0a0'); }
+        return true;
+      }
+      me.act = { kind: 'punch', side: g.side, high: g.high, t0: this.lt };
+      sfx('swish');
+      return true;
     }
-    me.act = { kind: 'punch', side, high, t0: this.lt };
-    sfx('swish');
+    if (this.lt < me.hurtUntil) return false;
+    if (me.act && !(me.act.kind === 'punch' && me.act.hit)) return false; // un coup parti peut s'interrompre pour esquiver
+    me.act = { kind: g.kind, t0: this.lt };
+    sfx(g.kind === 'duck' ? 'duck' : 'dodge');
+    return true;
   }
 
   // le coup spécial : il remplace le coup déjà parti, passe toutes les gardes et coupe l'adversaire dans son élan
@@ -1229,6 +1457,7 @@ export class BagarreScene extends MiniScene {
     me.act = { kind: 'special', t0: this.lt };
     me.sp = 0;
     this.lastFist = null;
+    this.buf = null;
     // il coupe l'adversaire dans son élan : son coup en préparation attend l'impact (qui l'envoie au tapis ou le sonne)
     const op = this.f.op;
     if (op.st === 'tell') op.dur = Math.max(op.dur, this.lt - op.at + SPECIAL_HIT + 40);
@@ -1248,11 +1477,7 @@ export class BagarreScene extends MiniScene {
 
   defend(kind) {
     if (this.run?.phase !== 'fight') return;
-    const me = this.f.me;
-    if (me.down || this.lt < me.hurtUntil) return;
-    if (me.act && !(me.act.kind === 'punch' && me.act.hit)) return; // un coup parti peut s'interrompre pour esquiver
-    me.act = { kind, t0: this.lt };
-    sfx(kind === 'duck' ? 'duck' : 'dodge');
+    this.queue({ kind });
   }
 
   // ses parades, retenues : l'adversaire malin finit par punir celle que tu répètes
@@ -1424,9 +1649,12 @@ export class BagarreScene extends MiniScene {
     const d = this.myDef();
     this.remember(d);
     const ok = d && a.beat.includes(d);
+    // parfaite : l'esquive (ou la garde, contre le direct) est partie sur l'éclair dans son œil, pas bien avant
+    const perfect = op.perfect = !!ok && (d === 'block' ? !!a.parry && this.lt - (this.blockAt ?? -1e9) < PERFECT_MS : this.lt - me.act.t0 < PERFECT_MS);
     if (a.kind === 'throw') sfx('glass', ok ? 0.25 : 0.05); // la fiole (ou la chope) se brise derrière toi, ou sur toi
     if (ok && a.kind === 'charge' && d !== 'block' && this.lt - me.act.t0 < 260) { // ¡olé ! esquivé au dernier moment
       op.res = 'ole';
+      me.perfects++;
       sfx('ole'); sfx('cheer', 0.1);
       this.charge(20);
       this.popup(ME_X, 104, '¡OLÉ !', GOLD, true);
@@ -1434,9 +1662,17 @@ export class BagarreScene extends MiniScene {
       return;
     }
     if (ok && d === 'block' && !a.parry) { op.res = 'blocked'; this.loseHearts(1); sfx('block'); this.shake = 2; }
-    else if (ok && d === 'block') { op.res = 'dodged'; sfx('parry'); this.shake = 3; this.charge(8); this.popup(ME_X, 112, 'PARÉ !', GREEN); }
-    else if (ok) { op.res = 'dodged'; sfx('swish'); this.charge(6); }
-    else {
+    else if (ok && d === 'block') {
+      op.res = 'dodged'; sfx('parry'); this.shake = 3;
+      this.charge(perfect ? 18 : 8);
+      this.popup(ME_X, 112, perfect ? 'PARADE PARFAITE !' : 'PARÉ !', perfect ? GOLD : GREEN);
+    } else if (ok) { op.res = 'dodged'; sfx('swish'); this.charge(perfect ? 14 : 6); if (perfect) this.popup(ME_X, 112, 'ESQUIVE PARFAITE !', GOLD); }
+    if (perfect) { // il reste découvert plus longtemps (afterStrike), l'image se fige, la foule apprécie
+      me.perfects++;
+      this.hitStop = this.lt + PERFECT_STOP;
+      sfx('ooh', 0.08);
+    }
+    if (!ok) {
       // mauvaise parade : on le dit, et le coup porte quand même
       if (d) { sfx('wrong'); this.popup(ME_X, 112, d === 'block' ? 'GARDE ENFONCÉE !' : d === 'duck' ? 'PAS EN DESSOUS !' : 'MAUVAIS CÔTÉ !', SALMON); }
       this.hitMe(a);
@@ -1449,6 +1685,7 @@ export class BagarreScene extends MiniScene {
     const dmg = Math.round(a.dmg * (op.rage ? 1.15 : 1));
     me.hp = Math.max(0, me.hp - dmg);
     me.taken += dmg;
+    me.streak = 0;
     this.loseHearts(3);
     if (me.act?.kind === 'special' && !me.act.hit) me.sp = SPECIAL_MAX; // spécial coupé avant l'impact : la barre n'est pas perdue
     me.sp = Math.max(0, me.sp - 20); // un coup encaissé vide un peu la barre
@@ -1479,7 +1716,7 @@ export class BagarreScene extends MiniScene {
       return;
     }
     if (op.chain?.length) return this.attack(ATK[op.chain.shift()], CHAIN_GAP);
-    if (op.res === 'dodged') { this.opSet('open', a.open); op.combo = 0; }
+    if (op.res === 'dodged') { this.opSet('open', Math.round(a.open * (op.perfect ? PERFECT_OPEN : 1))); op.combo = 0; }
     else if (op.res === 'blocked') this.opSet('reset', 380);
     else this.opIdle();
   }
@@ -1497,6 +1734,7 @@ export class BagarreScene extends MiniScene {
       else if (op.dur - el <= win) {
         if (a.kd && !high) return this.counterKd();
         mult = 1.6; star = true; stun = 900; label = 'CONTRE !';
+        me.counters++;
       } else mult = 0;
     } else if (st === 'open' || st === 'stun') mult = op.combo >= d.combo ? 0 : 1.4;
     else if (st === 'taunt') {
@@ -1511,7 +1749,11 @@ export class BagarreScene extends MiniScene {
       mult = guarded ? 0 : 1;
     }
     if (!special && !mult) return this.blocked();
-    const dmg = special ? SPECIAL_DMG : (high ? 4 : 3.2) * mult;
+    // la série : chaque coup porté d'affilée (sans en encaisser ni cogner dans sa garde) frappe un peu plus fort
+    me.streak++;
+    me.best = Math.max(me.best, me.streak);
+    const dmg = special ? SPECIAL_DMG : (high ? 4 : 3.2) * mult * (1 + Math.min(STREAK_MAX, (me.streak - 1) * STREAK_BONUS));
+    if (me.streak % 5 === 0) { this.popup(OPP_X, 46, `SÉRIE DE ${me.streak} !`, GOLD); this.charge(8); }
     op.hp -= dmg;
     op.taken += dmg;
     me.landed++;
@@ -1568,6 +1810,7 @@ export class BagarreScene extends MiniScene {
   // la bedaine de Gros Bill : le coup au corps rebondit, et il en profite pour riposter
   bounce() {
     const op = this.f.op;
+    this.f.me.streak = 0;
     this.loseHearts(1);
     sfx('thud');
     this.popup(OPP_X, (this.headLine || 100) + 20, 'ÇA REBONDIT !', '#f0a0a0');
@@ -1579,6 +1822,7 @@ export class BagarreScene extends MiniScene {
 
   blocked() {
     const f = this.f, op = f.op;
+    f.me.streak = 0;
     this.loseHearts(1);
     sfx('block');
     this.opSet('block', 260);
@@ -1590,6 +1834,7 @@ export class BagarreScene extends MiniScene {
   // la charge contrée au corps : il s'écroule d'un coup
   counterKd() {
     const me = this.f.me;
+    me.counters++;
     this.charge(30);
     sfx('smack');
     this.spark(OPP_X, 128, 3);
@@ -1636,6 +1881,7 @@ export class BagarreScene extends MiniScene {
   countTick(dt) {
     const f = this.f, c = f.count, me = f.me, op = f.op, el = this.lt - c.t0;
     if (me.down) me.down.mash = Math.max(0, me.down.mash - dt * MASH_DECAY);
+    if (c.who === 'op' && !c.dust && el >= 420) { c.dust = true; this.dust(OPP_X, 176, 18); this.shake = Math.max(this.shake, 5); } // il s'écrase sur la toile
     if (c.tko) { if (el >= 2200) this.endBout(c.who === 'op', 'TKO'); return; }
     const n = el < COUNT_START ? 0 : Math.min(10, Math.floor((el - COUNT_START) / COUNT_MS) + 1);
     if (n !== c.n) { c.n = n; if (n) sfx('count'); }
@@ -1680,7 +1926,11 @@ export class BagarreScene extends MiniScene {
     const run = this.run, el = this.lt - run.at;
     // sprites de l'adversaire préparés pendant sa présentation (quelques-uns par image)
     if (this.warm?.length && this.f) for (let k = 0; k < 3 && this.warm.length; k++) { const [n, fr, dmg] = this.warm.shift(); oppSprite(this.f.def, n, fr, dmg); }
-    if (this.f) this.refTick(dt);
+    if (this.f) {
+      this.refTick(dt);
+      this.trail('me', this.f.me.hp / 100, dt);
+      this.trail('op', Math.max(0, this.f.op.hp) / this.f.op.max, dt);
+    }
     switch (run.phase) {
       case 'wait': this.startBout(); break;
       case 'intro': if (el >= INTRO_MS) this.ringBell(); break;
@@ -1714,6 +1964,7 @@ export class BagarreScene extends MiniScene {
       if (me.act === a && el >= ACT_LEN[a.kind]) me.act = null;
     }
     if (this.run.phase !== 'fight') return; // le coup l'a envoyé au tapis
+    if (this.buf && (lt - this.buf.at > BUFFER_MS || this.move(this.buf))) this.buf = null; // le geste gardé en réserve part
     this.opTick();
     if (this.run.phase !== 'fight') return;
     if (f.clock >= BAGARRE.round) this.roundEnd();
@@ -1751,6 +2002,15 @@ export class BagarreScene extends MiniScene {
       const bob = r.walk && Math.floor(this.now / 130) % 2 ? -1 : 0;
       ctx.drawImage(spr, Math.round(r.x - spr.ox), r.y + bob - spr.oy);
     }
+  }
+
+  // la part perdue d'une barre de forces reste affichée un instant, puis fond : on voit ce que le coup a coûté
+  trail(key, k, dt) {
+    const t = (this.trails[key] ||= { k, last: k, at: 0 });
+    if (k < t.last) t.at = this.lt;
+    t.last = k;
+    if (k >= t.k) t.k = k;
+    else if (this.lt - t.at > TRAIL_WAIT) t.k = Math.max(k, t.k - dt * TRAIL_SPEED);
   }
 
   // à plusieurs : où en est chacun (round, forces), pour le tableau des autres
@@ -1959,6 +2219,7 @@ export class BagarreScene extends MiniScene {
     const x = OPP_X + dx + kx - spr.ox * 2, y = OPP_Y + dy + ky - spr.oy * 2;
     this.eyeAt = spr.eye ? [x + (spr.ox + spr.eye[0]) * 2, y + (spr.oy + spr.eye[1]) * 2] : null;
     const lying = name === 'lying';
+    if (lying) { const sh = lyingShadow(); ctx.drawImage(sh, OPP_X + dx - (sh.width >> 1), OPP_Y + dy - 34 - (sh.height >> 1)); } // son ombre sur la toile
     if (lean) {
       const l = leanOf(spr, lean);
       ctx.drawImage(l, OPP_X + dx - l.ox * 2, y, l.width * 2, l.height * 2);
@@ -2235,19 +2496,25 @@ export class BagarreScene extends MiniScene {
     if (full && this.run.phase === 'fight') {
       canvasText(ctx, this.touch ? 'DEUX DOIGTS EN MÊME TEMPS : COUP SPÉCIAL !' : 'CLIC GAUCHE + DROIT ENSEMBLE : COUP SPÉCIAL !', W / 2, H - 24, { color: blink ? GOLD : CREAM });
     }
-    bar(ctx, 6, 14, 100, 5, me.hp / 100, me.hp < 30 ? SALMON : GREEN);
+    const tr = this.trails || {};
+    bar(ctx, 6, 14, 100, 5, me.hp / 100, me.hp < 30 ? SALMON : GREEN, false, tr.me?.k);
     canvasText(ctx, f.def.name, W - 6, 2, { align: 'right', color: SALMON });
-    bar(ctx, W - 106, 14, 100, 5, op.hp / op.max, op.rage ? '#e04030' : '#f0a050', true);
+    bar(ctx, W - 106, 14, 100, 5, op.hp / op.max, op.rage ? '#e04030' : '#f0a050', true, tr.op?.k);
     const rem = Math.max(0, BAGARRE.round - f.clock), s = Math.ceil(rem / 1000);
     canvasText(ctx, `ROUND ${f.round}`, W / 2, 2, { color: GOLD });
     canvasText(ctx, `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, W / 2, 13, { color: rem < 10000 ? SALMON : CREAM });
     // en bas : le combat en cours et les chances qui restent
     const lives = BAGARRE.lives - this.run.losses;
     canvasText(ctx, `COMBAT ${f.n + 1}/${F} - ${lives} CHANCE${lives > 1 ? 'S' : ''}`, 6, H - 11, { align: 'left', color: '#c8b8a0' });
+    // la série en cours (et le bonus de dégâts qu'elle donne), dès trois coups d'affilée
+    if (me.streak >= 3) {
+      const pct = Math.round(Math.min(STREAK_MAX, me.streak * STREAK_BONUS) * 100); // (celui du prochain coup)
+      canvasText(ctx, `SÉRIE ${me.streak} : +${pct} %`, W - 6, H - 11, { align: 'right', color: me.streak >= 10 ? GOLD : CREAM });
+    }
   }
 
-  band(ctx, y, h) {
-    ctx.fillStyle = 'rgba(16,9,6,0.78)';
+  band(ctx, y, h, a = 0.78) {
+    ctx.fillStyle = `rgba(16,9,6,${a})`;
     ctx.fillRect(0, y, W, h);
   }
 
@@ -2279,10 +2546,10 @@ export class BagarreScene extends MiniScene {
         canvasText(ctx, 'AU TAPIS !', W / 2, 68, { size: 16, color: GOLD });
       }
       const full = (c.healed || 0) >= HEAL_MAX || f.me.hp >= 100, blink = Math.floor(this.now / 250) % 2;
-      this.band(ctx, H - 44, 30);
+      this.band(ctx, H - 27, 21, 0.5); // bas et transparent : on voit le cogneur étendu à travers
       canvasText(ctx, full ? 'TU AS REPRIS DES FORCES !' : this.touch ? 'TAPOTE À GAUCHE, À DROITE… : REPRENDS DES FORCES !'
-        : 'ALTERNE GAUCHE ET DROITE : REPRENDS DES FORCES !', W / 2, H - 41, { color: full ? GREEN : blink ? GOLD : CREAM });
-      bar(ctx, W / 2 - 60, H - 27, 120, 5, (c.healed || 0) / HEAL_MAX, GREEN);
+        : 'ALTERNE GAUCHE ET DROITE : REPRENDS DES FORCES !', W / 2, H - 25, { color: full ? GREEN : blink ? GOLD : CREAM });
+      bar(ctx, W / 2 - 60, H - 13, 120, 4, (c.healed || 0) / HEAL_MAX, GREEN);
     }
   }
 
@@ -2321,6 +2588,10 @@ export class BagarreScene extends MiniScene {
     ctx.drawImage(spr, spr.ox - 28, spr.oy - 100, 56, 58, W - 146 + off, 52, 112, 116);
     ctx.restore();
     if (el > 300) canvasText(ctx, 'VS', W / 2, 96, { size: 24, color: GOLD });
+    if (el > 300 && f.best) { // déjà battu : son meilleur temps contre lui
+      canvasText(ctx, 'TON RECORD', W / 2, 128, { color: '#c8b8a0' });
+      canvasText(ctx, mmss(f.best), W / 2, 138, { color: CREAM });
+    }
     const lines = wrap(`« ${d.quote} »`, 50);
     lines.forEach((l, i) => canvasText(ctx, l, W / 2, 174 + i * 10, { color: '#e2d2a6' }));
     if (el > 900 && Math.floor(this.now / 400) % 2) canvasText(ctx, this.touch ? 'TOUCHE L\'ÉCRAN : EN PISTE !' : 'CLIC : EN PISTE !', W / 2, H - 13, { color: GOLD });
@@ -2347,15 +2618,19 @@ export class BagarreScene extends MiniScene {
     canvasText(ctx, r.win ? 'VICTOIRE !' : 'DÉFAITE…', W / 2, 36, { size: 24, color: r.win ? GREEN : SALMON });
     const how = r.how === 'KO' ? 'PAR K.-O.' : r.how === 'TKO' ? 'PAR K.-O. TECHNIQUE' : `AUX POINTS (${f.dec[0]} - ${f.dec[1]})`;
     canvasText(ctx, `${how} - ROUND ${f.round}`, W / 2, 66, { color: CREAM });
-    canvasText(ctx, `COUPS PLACÉS ${me.landed} - DÉGÂTS ENCAISSÉS ${Math.round(me.taken)} - TEMPS ${Math.floor(f.ms / 60000)}:${String(Math.floor(f.ms / 1000) % 60).padStart(2, '0')}`, W / 2, 80, { color: '#c8b8a0' });
+    canvasText(ctx, `COUPS PLACÉS ${me.landed} - DÉGÂTS ENCAISSÉS ${Math.round(me.taken)} - TEMPS ${mmss(f.ms)}`, W / 2, 80, { color: '#c8b8a0' });
+    canvasText(ctx, `MEILLEURE SÉRIE ${me.best} - CONTRES ${me.counters} - ESQUIVES PARFAITES ${me.perfects}`, W / 2, 91, { color: '#c8b8a0' });
     let next;
     const left = BAGARRE.lives - run.losses - (r.win ? 0 : 1);
     if (r.win && f.n + 1 >= F) next = 'LE TITRE EST À TOI !';
     else if (r.win) next = `PROCHAIN ADVERSAIRE : ${ROSTER[f.n + 1].name}`;
     else if (left > 0) next = `REVANCHE ! IL TE RESTE ${left} CHANCE${left > 1 ? 'S' : ''}`;
     else next = 'TA TOURNÉE S\'ARRÊTE ICI.';
-    canvasText(ctx, next, W / 2, 104, { size: next.length > 24 ? 8 : 16, color: GOLD });
-    if (el > 1500 && Math.floor(this.now / 400) % 2) canvasText(ctx, this.touch ? 'TOUCHE L\'ÉCRAN POUR CONTINUER' : 'CLIC POUR CONTINUER', W / 2, 140, { color: CREAM });
+    canvasText(ctx, next, W / 2, 108, { size: next.length > 24 ? 8 : 16, color: GOLD });
+    const rec = f.record;
+    if (rec?.fresh) canvasText(ctx, rec.old ? `NOUVEAU RECORD ! (AVANT : ${mmss(rec.old)})` : 'PREMIÈRE VICTOIRE CONTRE LUI : RECORD À BATTRE !', W / 2, 126, { color: Math.floor(this.now / 250) % 2 ? GOLD : CREAM });
+    else if (rec) canvasText(ctx, `TON RECORD : ${mmss(rec.old)}`, W / 2, 126, { color: '#c8b8a0' });
+    if (el > 1500 && Math.floor(this.now / 400) % 2) canvasText(ctx, this.touch ? 'TOUCHE L\'ÉCRAN POUR CONTINUER' : 'CLIC POUR CONTINUER', W / 2, 142, { color: CREAM });
     this.drawOthers(ctx, 160);
   }
 

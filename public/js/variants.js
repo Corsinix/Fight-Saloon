@@ -15,6 +15,9 @@ export const VARIANTS = {
   pinte: { label: 'Salle', list: list(ROOM_NAMES) },
   course: { label: 'Terrain', list: list(COURSE_VARIANTS) },
   rts: { label: 'Carte', list: list(RTS_BIOMES, (b) => b.name) },
+  // La ville : le mode de jeu (rivalité par défaut)
+  // (les ids de MODES_VILLE, villekit.js, recopiés ici pour ne pas charger le jeu au démarrage)
+  ville: { label: 'Mode', any: 'Rivalité', list: list({ ruee: 'Ruée', metropole: 'Métropole', entraide: 'Entraide' }) },
   // La mêlée : le mode de jeu (la carte est tirée au hasard parmi celles du mode)
   // (mode histoire : « mode:carte » d'une carte story de brawlmaps/, cachée)
   melee: { label: 'Mode', any: 'Mode au hasard', list: [...list(BRAWL_MODE_NAMES), ...Object.entries(BRAWL_MAPS).flatMap(([mode, maps]) => maps.filter((m) => m.story).map((m) => ({ id: `${mode}:${m.id}`, name: m.name, hidden: true })))] },

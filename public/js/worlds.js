@@ -75,6 +75,9 @@ export const MODES = {
   // tactique au tour par tour façon Pathway : on forme sa bande, on l'équipe et on traverse le territoire jusqu'au repaire
   // d'El Diablo (pistekit.js, piste.js, pistegame.js). Chacun mène son expédition ; jouable seul, 45 min au plus.
   piste: { name: 'La piste', sub: 'Tactique : forme ta bande et traque El Diablo', min: 1, max: 6, duration: 2700000, unit: 'étapes', soloBots: 0 },
+  // gestion de ville façon Tropico 5, en vue isométrique : seul, ou jusqu'à 4 maires sur la même carte (villekit.js,
+  // villesim.js, villegame.js, ville.js). La simulation tourne en lockstep ; seul, pas de limite de temps (1870 à 1900).
+  ville: { name: 'La ville', sub: 'Bâtis ta ville de l’Ouest, seul ou face aux autres maires', min: 1, max: 4, duration: 3600000, unit: 'points', soloBots: 0 },
 };
 
 export function rng(seed) {

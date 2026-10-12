@@ -58,6 +58,7 @@ const REFEREES = {
   // « La mêlée » en vue de dessus : un arbitre pour ses cinq modes (la variante dit le mode)
   melee: [() => import('./brawlgame.js'), (m, players, v) => new m.BrawlGame(players, v)],
   piste: [() => import('./pistegame.js'), (m, players) => new m.PisteGame(players)],
+  ville: [() => import('./villegame.js'), (m, players, v) => new m.VilleGame(players, v)],
 };
 const MINI_REF = [() => import('./mini.js'), (m, players, v, mode) => new m.MiniGame(mode, players, v)];
 const refLoaded = {}; // mode -> module de l'arbitre, une fois chargé
