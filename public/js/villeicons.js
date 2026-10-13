@@ -59,6 +59,12 @@ const G = {
   rail: ['.....dd..', '.....dd..', 'ddddddrr.', 'deedddrr.', 'ddddddrr.', 'dddddddd.', '.d..d..d.', '.........', '.........'],
   francs: ['.........', '.........', '.eeeeeee.', '.eeeeeeY.', '...BBYe..', '...BB....', '..BBB....', '.........', '.........'],
   notables: ['..ddddd..', '..ddddd..', '..ddddd..', '..rrrrr..', 'ddddddddd', '...nnn...', '..nkn.kn.', '...nnn...', '.........'],
+  // ---- construction
+  route: ['..sssss..', '..swsws..', '..sssss..', '..swsws..', '..sssss..', '..swsws..', '..sssss..', '..swsws..', '..sssss..'],
+  demolir: ['.eeeeee..', '.eSSSSe..', '.eeeeee..', '...BB....', '...BB....', '...BB....', '...BB....', '...BB....', '.........'],
+  centrer: ['....y....', '..yyyyy..', '.yy...yy.', '.y..y..y.', 'yyy.y.yyy', '.y..y..y.', '.yy...yy.', '..yyyyy..', '....y....'],
+  tourner: ['...yyy...', '..yy.yy..', '.yy...yy.', '.y....yyy', '.y.......', '.yy...yy.', '..yy.yy..', '...yyy...', '.........'],
+  annuler: ['.........', '.rr...rr.', '..rr.rr..', '...rrr...', '....r....', '...rrr...', '..rr.rr..', '.rr...rr.', '.........'],
   // ---- menus
   filtres: ['.........', '..ddd....', '.dlllld..', 'dllulld..', 'dlluulld.', '.dlllld..', '..ddddbb.', '......bb.', '.......bb'],
   edits: ['.nnnnnn..', 'nccccccn.', '.cddddc..', '.cccccc..', '.cddddc..', '.cccccc..', '.cddrrc..', 'nccrrrcn.', '.nnnnnn..'],

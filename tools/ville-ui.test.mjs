@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { CATS, BUILDING_IDS } from '../public/js/villekit.js';
 
 globalThis.location = { hostname: 'test.invalid' };
-const { fitText, hitZone, CATEGORY_LABELS, BUILD_VISIBLE } = await import('../public/js/villeui.js');
+const { fitText, hitZone, CATEGORY_ICONS, BUILD_VISIBLE, HoverDelay, HOVER_DELAY } = await import('../public/js/villeui.js');
+const { hasVIcon } = await import('../public/js/villeicons.js');
 const { VilleScene } = await import('../public/js/ville.js');
 delete globalThis.location;
 
@@ -13,6 +14,7 @@ function scene() {
   Object.assign(s, {
     world: {}, ui: [], modal: null, uiModal: null, mouse: { x: 20, y: 50 },
     mode: 'idle', tab: null, sel: null, press: null, tabScroll: 0, filtersOpen: false,
+    tileHover: new HoverDelay(), uiHover: new HoverDelay(), now: 0,
   });
   return s;
 }
@@ -32,9 +34,79 @@ test('every building has a working tooltip, including deposits without a trade g
   assert.ok(s.buildingTip('briqueterie').some((line) => line.includes('ARGILE')));
 });
 
-test('all construction categories have visible labels', () => {
+test('construction categories and management controls have pixel icons', () => {
   assert.equal(CATS.length, 10);
-  for (const c of CATS) assert.ok(CATEGORY_LABELS[c.id]);
+  for (const c of CATS) assert.ok(hasVIcon(CATEGORY_ICONS[c.id]), c.id);
+  for (const id of ['filtres', 'edits', 'factions_m', 'commerce', 'almanach', 'objectif', 'maires', 'menu', 'aide', 'tourner', 'annuler', 'centrer']) assert.ok(hasVIcon(id), id);
+});
+
+test('hover waits one second and restarts when changing or leaving targets', () => {
+  const hover = new HoverDelay();
+  assert.equal(hover.ready('3:4', 100), false);
+  assert.equal(hover.ready('3:4', 100 + HOVER_DELAY - 1), false);
+  assert.equal(hover.ready('3:4', 100 + HOVER_DELAY), true);
+  assert.equal(hover.ready('4:4', 1200), false);
+  assert.equal(hover.ready(null, 1300), false);
+  assert.equal(hover.ready('4:4', 2400), false);
+  assert.equal(hover.ready('4:4', 2400 + HOVER_DELAY), true);
+  hover.reset();
+  assert.equal(hover.ready('4:4', 5000), false);
+});
+
+test('clicking terrain does not pin an inspector and restarts the hover delay', () => {
+  const s = scene();
+  s.tileHover.ready('3:4', 0);
+  s.clickMap({ in: true, x: 3, y: 4 });
+  assert.equal(s.sel, null);
+  assert.equal(s.tileHover.ready('3:4', 2000), false);
+  s.clickMap({ in: true, x: 3, y: 4, b: { id: 7 } });
+  assert.deepEqual(s.sel, { b: 7 });
+});
+
+test('render shows a transient tile inspector only after sustained hover', () => {
+  const s = scene(), inspected = [];
+  const ctx = Object.fromEntries(['save', 'beginPath', 'rect', 'clip', 'translate', 'restore'].map((key) => [key, () => {}]));
+  let tile = { in: true, x: 3, y: 4, b: null };
+  s.mouse.in = true;
+  s.world.byId = new Map();
+  s.view = { pick: () => tile, draw() {} };
+  for (const method of ['drawTop', 'drawBottom', 'drawNotes', 'drawMission', 'drawModal']) s[method] = () => {};
+  s.drawInspector = (ctx, b, preview) => inspected.push(preview);
+  s.render(ctx);
+  s.now = HOVER_DELAY - 1; s.render(ctx);
+  assert.equal(inspected.length, 0);
+  s.now = HOVER_DELAY; s.render(ctx);
+  assert.equal(inspected.length, 1);
+  assert.equal(inspected[0], tile);
+  assert.equal(s.sel, null);
+  tile = { ...tile, x: 4 };
+  s.now++; s.render(ctx);
+  assert.equal(inspected.length, 1);
+  s.now += HOVER_DELAY; s.render(ctx);
+  assert.equal(inspected.length, 2);
+  s.mouse.in = false; s.render(ctx);
+  assert.equal(inspected.length, 2);
+  s.mouse.in = true; s.now += HOVER_DELAY; s.render(ctx);
+  assert.equal(inspected.length, 2);
+  s.press = {}; s.now += HOVER_DELAY; s.render(ctx);
+  assert.equal(inspected.length, 2);
+});
+
+test('render delays UI tooltips even though hit zones are rebuilt each frame', () => {
+  const s = scene(), tips = [];
+  const ctx = Object.fromEntries(['save', 'beginPath', 'rect', 'clip', 'translate', 'restore'].map((key) => [key, () => {}]));
+  s.mouse.in = true;
+  s.view = { pick: () => ({ in: false }), draw() {} };
+  s.drawTop = () => s.zone(0, 20, 100, 100, null, ['FILTRES']);
+  for (const method of ['drawBottom', 'drawNotes', 'drawMission']) s[method] = () => {};
+  s.drawTip = (ctx, lines) => tips.push(lines);
+  s.render(ctx);
+  s.now = HOVER_DELAY - 1; s.render(ctx);
+  assert.equal(tips.length, 0);
+  s.now = HOVER_DELAY; s.render(ctx);
+  assert.deepEqual(tips, [['FILTRES']]);
+  s.resetHover(); s.render(ctx);
+  assert.equal(tips.length, 1);
 });
 
 test('disabled buttons and panel backgrounds block the map without masking child controls', () => {

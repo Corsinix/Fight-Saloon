@@ -2,11 +2,21 @@ import { textW } from './uikit.js';
 
 export const BUILD_Y = 102;
 export const BUILD_VISIBLE = 6;
-export const CATEGORY_LABELS = {
-  loger: 'LOGER', cultiver: 'CHAMP', extraire: 'MINES', industrie: 'USINES',
-  services: 'SOINS', ordre: 'ORDRE', commerce: 'VENTE', etat: 'VILLE',
-  routes: 'ROUTE', demolir: 'RASER',
+export const CATEGORY_ICONS = {
+  loger: 'logement', cultiver: 'mais', extraire: 'travail', industrie: 'outils',
+  services: 'sante', ordre: 'loi', commerce: 'commerce', etat: 'territoire',
+  routes: 'route', demolir: 'demolir',
 };
+export const HOVER_DELAY = 1000;
+
+export class HoverDelay {
+  reset() { this.key = null; this.since = 0; }
+  ready(key, now) {
+    if (key == null) { this.reset(); return false; }
+    if (key !== this.key) { this.key = key; this.since = now; }
+    return now - this.since >= HOVER_DELAY;
+  }
+}
 
 export function fitText(value, width, measure = textW) {
   const text = String(value);

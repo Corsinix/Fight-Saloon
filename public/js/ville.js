@@ -16,7 +16,7 @@ import { buildingSprite } from './villeart.js';
 import { makeSlots } from './slots.js';
 import { drawVIcon } from './villeicons.js';
 import { PLAYER_COLORS } from './worlds.js';
-import { BUILD_Y, BUILD_VISIBLE, CATEGORY_LABELS, fitText, hitZone } from './villeui.js';
+import { BUILD_Y, BUILD_VISIBLE, CATEGORY_ICONS, HoverDelay, fitText, hitZone } from './villeui.js';
 
 // des thèmes posés pour bâtir (les morceaux existent déjà dans audio.js)
 addSongs({}, { 'mini-ville': ['collines', 'feu', 'desert', 'coyote', 'piano', 'cantina', 'diligence'] });
@@ -82,6 +82,8 @@ export class VilleScene extends MiniScene {
     this.modal = null;
     this.sel = null;
     this.hover = null;
+    this.tileHover = new HoverDelay();
+    this.uiHover = new HoverDelay();
     this.ui = [];
     this.tipLines = null;
     this.notes = [];
@@ -94,6 +96,7 @@ export class VilleScene extends MiniScene {
     const sig = { signal: this.abort.signal };
     // glisser pour faire défiler (souris ou doigt), molette pour zoomer
     this.cv.addEventListener('pointermove', (e) => this.onPointerMove(e), sig);
+    this.cv.addEventListener('pointerleave', () => this.resetHover(), sig);
     window.addEventListener('pointerup', (e) => this.onPointerUp(e), sig);
     this.cv.addEventListener('wheel', (e) => { e.preventDefault(); this.onWheel(e.deltaY); }, { ...sig, passive: false });
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.autosave(true); }, sig);
@@ -153,6 +156,8 @@ export class VilleScene extends MiniScene {
     this.mode = 'idle';
     this.modal = null;
     this.sel = null;
+    this.hover = null;
+    this.resetHover();
     this.notes = [];
     this.chosen = new Set();
     // pour les bancs d'essai (tools/drive.mjs) : les empreintes de chaque mois et les resynchronisations
@@ -357,14 +362,21 @@ export class VilleScene extends MiniScene {
     if (!this.hitUI(p) && this.inMap(p)) this.zoomBy(-d, p.x, p.y);
   }
 
+  resetHover() {
+    this.tileHover.reset();
+    this.uiHover.reset();
+  }
+
   zoomBy(d, px, py) {
     if (!this.view) return;
+    this.resetHover();
     const z = d > 0 ? Math.min(2, this.view.zoom * 2) : Math.max(0.5, this.view.zoom / 2);
     this.view.setZoom(z, px, Math.max(0, py - TOP));
     this.view.clampCam(W, MAPH);
   }
 
   setMode(m, t = null) {
+    this.resetHover();
     this.mode = m;
     this.buildT = t;
     this.press = null;
@@ -381,6 +393,7 @@ export class VilleScene extends MiniScene {
   // clic gauche (appui) : l'interface d'abord, sinon la carte
   onFire(p) {
     if (!this.world || this.t < 0) return;
+    this.resetHover();
     if (this.uiModal !== this.modal) { this.press = null; return; }
     const hit = this.hitUI(p);
     if (hit) { if (hit.fn) { hit.fn(); sfx('ui'); } this.press = null; return; }
@@ -436,7 +449,8 @@ export class VilleScene extends MiniScene {
       else if (w.road[w.idx(tile.x, tile.y)] && w.owner[w.idx(tile.x, tile.y)] === me) this.cmd({ c: 'demolish', x: tile.x, y: tile.y });
       return;
     }
-    this.sel = tile.b ? { b: tile.b.id } : { x: tile.x, y: tile.y };
+    this.resetHover();
+    this.sel = tile.b ? { b: tile.b.id } : null;
     this.inspectorPage = 0;
     sfx('click');
   }
@@ -537,15 +551,19 @@ export class VilleScene extends MiniScene {
     this.drawBottom(ctx);
     if (this.filtersOpen) this.drawFilters(ctx);
     if (this.tab && !this.modal) this.drawBuildPanel(ctx);
-    if ((selB || this.sel) && !this.modal && !this.tab) this.drawInspector(ctx, selB);
+    const tileKey = this.hover && this.mode === 'idle' && !this.press && !this.sel && !this.tab && !this.modal
+      ? `${this.hover.x}:${this.hover.y}:${this.hover.b?.id ?? ''}` : null;
+    const showTile = this.tileHover.ready(tileKey, this.now);
+    if (selB && !this.modal && !this.tab) this.drawInspector(ctx, selB);
+    else if (showTile) this.drawInspector(ctx, this.hover.b, this.hover);
     this.drawNotes(ctx);
     this.drawMission(ctx);
     if (this.modal) this.drawModal(ctx);
+    const r = this.mouse.in && !this.press && !this.tipLines ? this.hitUI(this.mouse) : null;
+    const tipKey = r?.tip ? `${this.modal?.id ?? ''}:${this.tab ?? ''}:${this.tabScroll}:${r.x}:${r.y}:${r.w}:${r.h}` : null;
+    const showTip = this.uiHover.ready(tipKey, this.now);
     if (this.tipLines) this.drawTip(ctx, this.tipLines);
-    else {
-      const r = this.mouse.in ? this.hitUI(this.mouse) : null;
-      if (r?.tip) this.drawTip(ctx, typeof r.tip === 'function' ? r.tip() : r.tip);
-    }
+    else if (showTip) this.drawTip(ctx, typeof r.tip === 'function' ? r.tip() : r.tip);
   }
 
   // tracé de route en L (d'abord le long de x, puis de y) : [x, y, ok, raison, prix]
@@ -630,7 +648,7 @@ export class VilleScene extends MiniScene {
     this.zone(0, BOT, W, H - BOT, null);
     CATS.forEach((c, k) => {
       const on = this.tab === c.id || (c.id === 'routes' && this.mode === 'road') || (c.id === 'demolir' && this.mode === 'demolish');
-      this.btn(ctx, 2 + k * 38, BOT + 2, 37, 15, CATEGORY_LABELS[c.id], () => {
+      this.iconBtn(ctx, 2 + k * 38, BOT + 2, 37, 15, CATEGORY_ICONS[c.id], () => {
         this.filtersOpen = false;
         if (c.id === 'routes') { this.tab = null; this.setMode(this.mode === 'road' ? 'idle' : 'road'); this.roadKind = this.town.era >= 3 && this.roadKind === 2 ? 2 : 1; }
         else if (c.id === 'demolir') { this.tab = null; this.setMode(this.mode === 'demolish' ? 'idle' : 'demolish'); }
@@ -648,9 +666,10 @@ export class VilleScene extends MiniScene {
       ['AIDE', () => { this.modal = { id: 'aide' }; }],
     ];
     const widths = [47, 35, 51, 56, 39, 57, 49, 46];
+    const icons = ['filtres', 'edits', 'factions_m', 'commerce', 'almanach', this.solo ? 'objectif' : 'maires', 'menu', 'aide'];
     let bx = 2;
     items.forEach(([label, fn, key, on], k) => {
-      this.btn(ctx, bx, BOT + 19, widths[k] - 1, 15, label, fn, { on, tip: [label === 'PARTIE' ? 'SAUVEGARDES' : label === 'BILAN' ? 'ALMANACH DE LA VILLE' : label, ...(key ? [`RACCOURCI : ${key}`] : [])] });
+      this.iconBtn(ctx, bx, BOT + 19, widths[k] - 1, 15, icons[k], fn, { on, tip: [label === 'PARTIE' ? 'SAUVEGARDES' : label === 'BILAN' ? 'ALMANACH DE LA VILLE' : label, ...(key ? [`RACCOURCI : ${key}`] : [])] });
       bx += widths[k];
     });
     if (this.world.offers.some((o) => o.to === this.me)) { ctx.fillStyle = RED; ctx.fillRect(280, BOT + 20, 4, 4); }
@@ -664,13 +683,13 @@ export class VilleScene extends MiniScene {
     this.zone(0, y, W, 14, null);
     canvasText(ctx, fitText(status, active ? 218 : 280), 5, y + 3, { color: active ? GOLD : GREY, align: 'left' });
     if (active) {
-      if (this.mode === 'build') this.btn(ctx, 225, y + 1, 78, 12, 'TOURNER (R)', () => { this.rot = (this.rot + 1) & 3; });
+      if (this.mode === 'build') this.iconBtn(ctx, 225, y + 1, 78, 12, 'tourner', () => { this.rot = (this.rot + 1) & 3; }, { tip: ['TOURNER (R)'] });
       if (this.mode === 'road' && this.town.era >= 3) this.btn(ctx, 225, y + 1, 78, 12, this.roadKind === 2 ? 'PAVÉE' : 'CHEMIN', () => { this.roadKind = this.roadKind === 2 ? 1 : 2; });
-      this.btn(ctx, 307, y + 1, 74, 12, 'ANNULER', () => this.setMode('idle'));
+      this.iconBtn(ctx, 307, y + 1, 74, 12, 'annuler', () => this.setMode('idle'), { tip: ['ANNULER'] });
     } else {
       this.btn(ctx, 289, y + 1, 20, 12, '-', () => this.zoomBy(-1, W / 2, (TOP + BOT) / 2), { off: this.view.zoom <= 0.5, tip: ['RÉDUIRE LE ZOOM'] });
       this.btn(ctx, 311, y + 1, 20, 12, '+', () => this.zoomBy(1, W / 2, (TOP + BOT) / 2), { off: this.view.zoom >= 2, tip: ['AGRANDIR LE ZOOM'] });
-      this.btn(ctx, 334, y + 1, 47, 12, 'CENTRER', () => { const [x, y] = this.world.map.starts[this.me]; this.view.center(x + 1, y + 1, W, MAPH); }, { tip: ['REVENIR À LA MAIRIE'] });
+      this.iconBtn(ctx, 334, y + 1, 47, 12, 'centrer', () => { this.resetHover(); const [x, y] = this.world.map.starts[this.me]; this.view.center(x + 1, y + 1, W, MAPH); }, { tip: ['REVENIR À LA MAIRIE'] });
     }
   }
   tileLine(h) {
@@ -761,7 +780,7 @@ export class VilleScene extends MiniScene {
   }
 
   // ---------------------------------------------------------- inspecteur
-  drawInspector(ctx, b) {
+  drawInspector(ctx, b, preview = null) {
     const w = this.world, me = this.me;
     const x = W - 152, y = TOP + 3, pw = 149;
     const L = [];
@@ -798,7 +817,7 @@ export class VilleScene extends MiniScene {
       }
       if (b.t === 'journal' && b.p === me) btns.push(['FACTIONS', () => { this.modal = { id: 'factions' }; }]);
     } else {
-      const { x: tx, y: ty } = this.sel;
+      const { x: tx, y: ty } = preview || this.sel;
       if (!w.inMap(tx, ty)) return;
       const i = w.idx(tx, ty);
       title = K.TER_NAMES[w.map.ter[i]];
@@ -814,18 +833,21 @@ export class VilleScene extends MiniScene {
       if (w.dep[i] && w.depQ[i] && (w.dep[i] !== K.DEP.PETROLE || (w.reveal[i] >> me) & 1)) L.push([`FILON : ${GOODS[K.DEP_IDS[w.dep[i]]].name} (${w.depQ[i]})`, GOLD]);
       L.push([`CHALEUR : ${w.map.heat[i]} - SOL : ${w.map.soil[i]}`, GREY]);
     }
+    if (preview) btns.length = 0;
     const lines = [];
     for (const [s, c] of L) for (const l of wrap(s, pw - 8)) lines.push([l, c]);
     const per = 8, pages = Math.max(1, Math.ceil(lines.length / per));
     this.inspectorPage = Math.min(pages - 1, this.inspectorPage || 0);
-    const shown = lines.slice(this.inspectorPage * per, (this.inspectorPage + 1) * per);
+    const page = preview ? 0 : this.inspectorPage;
+    const shown = lines.slice(page * per, (page + 1) * per);
     const actionsH = Math.ceil(btns.length / 2) * 16;
-    const ph = 24 + shown.length * 9 + (pages > 1 ? 16 : 0) + actionsH;
+    const ph = 24 + shown.length * 9 + (!preview && pages > 1 ? 16 : 0) + actionsH;
     panel(ctx, x, y, pw, ph, 'ink');
-    this.inspectorRect = this.zone(x, y, pw, ph, null);
+    if (!preview) this.inspectorRect = this.zone(x, y, pw, ph, null);
     canvasText(ctx, fitText(title, pw - 27), x + 5, y + 5, { color: GOLD, align: 'left' });
-    this.zone(x + 3, y + 2, pw - 22, 12, null, [title]);
+    if (!preview) this.zone(x + 3, y + 2, pw - 22, 12, null, [title]);
     shown.forEach(([s, c], k) => canvasText(ctx, fitText(s, pw - 10), x + 5, y + 20 + k * 9, { color: c, align: 'left' }));
+    if (preview) return;
     if (pages > 1) {
       const py = y + 22 + shown.length * 9;
       this.btn(ctx, x + 5, py, 18, 13, '<', () => { this.inspectorPage--; }, { off: this.inspectorPage === 0 });
